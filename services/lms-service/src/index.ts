@@ -36,6 +36,11 @@ app.use("/lms/lessons", lessonsRouter);
 app.use("/lms/progress", progressRouter);
 app.use("/lms/sessions", sessionsRouter);
 app.use("/lms/stats", statsRouter);
+app.use("/api/lms/weeks", weeksRouter);    // add this
+app.use("/api/lms/lessons", lessonsRouter); // add this
+app.use("/api/lms/progress", progressRouter); // add this
+app.use("/api/lms/sessions", sessionsRouter); // add this
+app.use("/api/lms/stats", statsRouter);    // add this
 
 async function setupConsumers() {
   // When a user is enrolled → seed empty progress records for all published lessons in that cohort

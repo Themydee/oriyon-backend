@@ -34,6 +34,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/auth", authRouter);
+app.use("/api/auth", authRouter);
 
 // ─────────────────────────────────────────────
 // START

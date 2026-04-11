@@ -9,27 +9,93 @@ import { publishEvent } from "../rabbitmq";
 const router = Router();
 
 const submitSchema = z.object({
+  // Personal
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   email: z.string().email(),
   phone: z.string().min(7),
-  state: z.string().optional(),
+  age: z.string().optional(),
   gender: z.string().optional(),
-  ageRange: z.string().optional(),
-  occupation: z.string().optional(),
-  livestockExperience: z.string().optional(),
-  motivation: z.string().optional(),
+  address: z.string().optional(),
+  hasID: z.string().optional(),
+  businessName: z.string().optional(),
+  isCoop: z.string().optional(),
+  isCommunityMember: z.string().optional(),
+  joinCoop: z.string().optional(),
+
+  // Education
+  educationLevel: z.string().optional(),
+  fieldOfStudy: z.string().optional(),
+  graduationYear: z.string().optional(),
+  institution: z.string().optional(),
+
+  // Experience
+  hasGoatExperience: z.string().optional(),
+  goatExperienceRating: z.string().optional(),
+  ownsGoatFarm: z.string().optional(),
+  yearsOperated: z.string().optional(),
+  highestAnimals: z.string().optional(),
+
+  // Digital Literacy
+  isDigitallyLiterate: z.string().optional(),
+  digitalLiteracyRating: z.string().optional(),
+  internetUsage: z.string().optional(),
+  devices: z.array(z.string()).optional(),
+  onlineTraining: z.string().optional(),
+  platformExperience: z.string().optional(),
+  toolConfidence: z.string().optional(),
+
+  // Household
+  isBreadwinner: z.string().optional(),
+  hasDependants: z.string().optional(),
+  dependantsDetail: z.string().optional(),
+  dependantsSchoolAge: z.string().optional(),
+  hasDisabledInHousehold: z.string().optional(),
+  disabledDetail: z.string().optional(),
+
+  // Motivation
+  benefitedBefore: z.string().optional(),
+  benefitedDetail: z.string().optional(),
+  biggestChallenge: z.array(z.string()).optional(),
+  whyJoin: z.string().optional(),
+  hopesToAchieve: z.string().optional(),
+  willingTraceability: z.string().optional(),
+  hasAccess: z.array(z.string()).optional(),
+  willingChampion: z.string().optional(),
+  willingDonate: z.string().optional(),
+  committedFullTraining: z.string().optional(),
+
+  // References
+  reference1: z.string().optional(),
+  reference2: z.string().optional(),
+  understandsCredit: z.boolean().optional(),
+  declarationConfirmed: z.boolean().optional(),
 });
 
-// POST /applications  — public
+// POST /applications — public
 router.post("/", async (req: Request, res: Response) => {
   const parsed = submitSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success)
+    return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
+    // Serialize array fields to JSON strings for storage
+    const data = {
+      ...parsed.data,
+      devices: parsed.data.devices
+        ? JSON.stringify(parsed.data.devices)
+        : undefined,
+      biggestChallenge: parsed.data.biggestChallenge
+        ? JSON.stringify(parsed.data.biggestChallenge)
+        : undefined,
+      hasAccess: parsed.data.hasAccess
+        ? JSON.stringify(parsed.data.hasAccess)
+        : undefined,
+    };
+
     const [application] = await db
       .insert(applications)
-      .values(parsed.data)
+      .values(data)
       .returning();
 
     await publishEvent("application.submitted", {
@@ -51,11 +117,23 @@ router.post("/", async (req: Request, res: Response) => {
   }
 });
 
-// GET /applications  — admin only (role enforced at gateway)
+// GET /applications — admin only
 router.get("/", async (_req: Request, res: Response) => {
   try {
-    const all = await db.select().from(applications).orderBy(applications.submittedAt);
-    return res.json(all);
+    const all = await db
+      .select()
+      .from(applications)
+      .orderBy(applications.submittedAt);
+
+    // Parse JSON array fields back before returning
+    const parsed = all.map((a) => ({
+      ...a,
+      devices: a.devices ? JSON.parse(a.devices) : [],
+      biggestChallenge: a.biggestChallenge ? JSON.parse(a.biggestChallenge) : [],
+      hasAccess: a.hasAccess ? JSON.parse(a.hasAccess) : [],
+    }));
+
+    return res.json(parsed);
   } catch {
     return res.status(500).json({ error: "Failed to fetch applications" });
   }
@@ -69,15 +147,24 @@ router.get("/:id", async (req: Request, res: Response) => {
       .from(applications)
       .where(eq(applications.id, req.params.id))
       .limit(1);
-    if (!application) return res.status(404).json({ error: "Application not found" });
-    return res.json(application);
+
+    if (!application)
+      return res.status(404).json({ error: "Application not found" });
+
+    return res.json({
+      ...application,
+      devices: application.devices ? JSON.parse(application.devices) : [],
+      biggestChallenge: application.biggestChallenge
+        ? JSON.parse(application.biggestChallenge)
+        : [],
+      hasAccess: application.hasAccess ? JSON.parse(application.hasAccess) : [],
+    });
   } catch {
     return res.status(500).json({ error: "Failed to fetch application" });
   }
 });
 
-// PATCH /applications/:id  — shortlist / approve / reject
-// Auth enforced at gateway via authenticate + requireRole("admin")
+// PATCH /applications/:id — admin only
 router.patch("/:id", async (req: Request, res: Response) => {
   const schema = z.object({
     status: z.enum(["pending", "shortlisted", "approved", "rejected"]),
@@ -87,7 +174,8 @@ router.patch("/:id", async (req: Request, res: Response) => {
   });
 
   const parsed = schema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success)
+    return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
     const [updated] = await db
@@ -96,15 +184,11 @@ router.patch("/:id", async (req: Request, res: Response) => {
       .where(eq(applications.id, req.params.id))
       .returning();
 
-    if (!updated) return res.status(404).json({ error: "Application not found" });
+    if (!updated)
+      return res.status(404).json({ error: "Application not found" });
 
     if (updated.status === "approved") {
-      // Generate a fresh UUID for the new user.
-      // IMPORTANT: must NOT reuse updated.id (the application ID).
-      // This UUID is passed to both user-service and auth-service
-      // so they create matching records under the same identity.
       const userId = uuidv4();
-
       await publishEvent("application.approved", {
         applicationId: updated.id,
         userId,

@@ -38,6 +38,8 @@ app.get("/health", (_req, res) => {
 app.use("/users", userRouter);
 app.use("/cohorts", cohortRouter);
 app.use("/admin", adminRouter);
+app.use("/api/users", userRouter);   // add this
+app.use("/api/cohorts", cohortRouter); // add this
 
 // ─────────────────────────────────────────────
 // RABBITMQ CONSUMERS

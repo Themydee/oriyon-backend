@@ -26,6 +26,8 @@ app.get("/health", (_req, res) => {
 
 app.use("/contact", contactRouter);
 app.use("/newsletter", newsletterRouter);
+app.use("/api/contact", contactRouter);    // add this
+app.use("/api/newsletter", newsletterRouter); // add this
 
 // ─────────────────────────────────────────────
 // RABBITMQ CONSUMERS

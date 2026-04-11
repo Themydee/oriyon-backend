@@ -24,6 +24,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/applications", applicationsRouter);
+app.use("/api/applications", applicationsRouter); // add this
 
 async function bootstrap() {
   await connectRabbitMQ(process.env.RABBITMQ_URL!);

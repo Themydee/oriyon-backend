@@ -1,0 +1,373 @@
+{
+  "id": "012b9cae-2c08-4cdc-af28-62f9e187f0fe",
+  "prevId": "18c13e98-617b-4651-b263-54838f7d5f2a",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.applications": {
+      "name": "applications",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "first_name": {
+          "name": "first_name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_name": {
+          "name": "last_name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "age": {
+          "name": "age",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "gender": {
+          "name": "gender",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "address": {
+          "name": "address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "has_id": {
+          "name": "has_id",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "business_name": {
+          "name": "business_name",
+          "type": "varchar(150)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_coop": {
+          "name": "is_coop",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_community_member": {
+          "name": "is_community_member",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "join_coop": {
+          "name": "join_coop",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "education_level": {
+          "name": "education_level",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "field_of_study": {
+          "name": "field_of_study",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "graduation_year": {
+          "name": "graduation_year",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "institution": {
+          "name": "institution",
+          "type": "varchar(150)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "has_goat_experience": {
+          "name": "has_goat_experience",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "goat_experience_rating": {
+          "name": "goat_experience_rating",
+          "type": "varchar(5)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "owns_goat_farm": {
+          "name": "owns_goat_farm",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "years_operated": {
+          "name": "years_operated",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "highest_animals": {
+          "name": "highest_animals",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_digitally_literate": {
+          "name": "is_digitally_literate",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "digital_literacy_rating": {
+          "name": "digital_literacy_rating",
+          "type": "varchar(5)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "internet_usage": {
+          "name": "internet_usage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "devices": {
+          "name": "devices",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "online_training": {
+          "name": "online_training",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "platform_experience": {
+          "name": "platform_experience",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tool_confidence": {
+          "name": "tool_confidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_breadwinner": {
+          "name": "is_breadwinner",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "has_dependants": {
+          "name": "has_dependants",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dependants_detail": {
+          "name": "dependants_detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dependants_school_age": {
+          "name": "dependants_school_age",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "has_disabled_in_household": {
+          "name": "has_disabled_in_household",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "disabled_detail": {
+          "name": "disabled_detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "benefited_before": {
+          "name": "benefited_before",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "benefited_detail": {
+          "name": "benefited_detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "biggest_challenge": {
+          "name": "biggest_challenge",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "why_join": {
+          "name": "why_join",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hopes_to_achieve": {
+          "name": "hopes_to_achieve",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "willing_traceability": {
+          "name": "willing_traceability",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "has_access": {
+          "name": "has_access",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "willing_champion": {
+          "name": "willing_champion",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "willing_donate": {
+          "name": "willing_donate",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "committed_full_training": {
+          "name": "committed_full_training",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reference1": {
+          "name": "reference1",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reference2": {
+          "name": "reference2",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "understands_credit": {
+          "name": "understands_credit",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "declaration_confirmed": {
+          "name": "declaration_confirmed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "status": {
+          "name": "status",
+          "type": "application_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "cohort_id": {
+          "name": "cohort_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewed_by": {
+          "name": "reviewed_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "review_notes": {
+          "name": "review_notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "submitted_at": {
+          "name": "submitted_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {}
+    }
+  },
+  "enums": {
+    "public.application_status": {
+      "name": "application_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "shortlisted",
+        "approved",
+        "rejected"
+      ]
+    }
+  },
+  "schemas": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
