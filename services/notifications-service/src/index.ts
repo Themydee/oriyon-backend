@@ -96,7 +96,7 @@ async function setupConsumers() {
     "notifications.auth.password_reset_requested",
     async (payload) => {
       const { email, firstName, token } = payload as any;
-      const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+      const resetLink = `${process.env.FRONTEND_URL}/auth/reset-password?token=${token}`;
       const tpl = templates.passwordReset(firstName || "there", resetLink);
       await sendEmail({ to: email, ...tpl });
     }

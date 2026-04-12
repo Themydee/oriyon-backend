@@ -71,7 +71,8 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
       lastName,
       token,
       expiresAt: expiresAt.toISOString(),
-      setupLink: `${process.env.FRONTEND_URL}/set-password?token=${token}`,
+      
+      setupLink: `${process.env.FRONTEND_URL}/auth/setup?token=${token}`,
     });
 
     console.log(`[auth-service][handleUserCreated] Auth record + setup token created for ${email}`);
