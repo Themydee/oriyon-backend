@@ -11,6 +11,8 @@ import {
   lessonsRouter,
   progressRouter,
   sessionsRouter,
+  quizzesRouter,
+  week12Router,
 } from "./routes/lms";
 import statsRouter from "./routes/stats";
 import { progress, lessons, weeks } from "./db/schema";
@@ -36,6 +38,10 @@ app.use("/lms/lessons", lessonsRouter);
 app.use("/lms/progress", progressRouter);
 app.use("/lms/sessions", sessionsRouter);
 app.use("/lms/stats", statsRouter);
+app.use("/lms/quizzes", quizzesRouter);
+app.use("/lms/week12", week12Router);
+app.use("/api/lms/quizzes", quizzesRouter);
+app.use("/api/lms/week12", week12Router);
 app.use("/api/lms/weeks", weeksRouter);    // add this
 app.use("/api/lms/lessons", lessonsRouter); // add this
 app.use("/api/lms/progress", progressRouter); // add this
