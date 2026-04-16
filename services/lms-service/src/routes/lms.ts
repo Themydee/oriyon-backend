@@ -1,9 +1,11 @@
 import { Router, Request, Response } from "express";
-import { eq, and } from "drizzle-orm";
+import { eq, and, type InferModel } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../index";
 import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
+
+type WeekRow = InferModel<typeof weeks>;
 
 
 export const weeksRouter = Router();
@@ -36,11 +38,34 @@ async function fetchUser(userId: string): Promise<{ email: string; firstName: st
 weeksRouter.get("/", async (req: Request, res: Response) => {
   try {
     const { cohortId } = req.query;
-    const all = cohortId
-      ? await db.select().from(weeks).where(eq(weeks.cohortId, cohortId as string))
-      : await db.select().from(weeks);
-    return res.json(all);
-  } catch {
+
+    const condition = cohortId
+      ? and(
+          eq(weeks.cohortId, cohortId as string),
+          eq(weeks.isPublished, true)
+        )
+      : eq(weeks.isPublished, true);
+
+    const allWeeks = await db
+      .select()
+      .from(weeks)
+      .where(condition);
+
+    const weeksWithLessons = await Promise.all(
+      allWeeks.map(async (week) => {
+        const weekLessons = await db
+          .select()
+          .from(lessons)
+          .where(eq(lessons.weekId, week.id))
+          .orderBy(lessons.order);
+
+        return { ...week, lessons: weekLessons };
+      })
+    );
+
+    return res.json(weeksWithLessons);
+  } catch (err) {
+    console.error(err);
     return res.status(500).json({ error: "Failed to fetch weeks" });
   }
 });
@@ -438,7 +463,7 @@ quizzesRouter.get("/week/:weekId", async (req: Request, res: Response) => {
 quizzesRouter.get("/:id", async (req: Request, res: Response) => {
   try {
     const [quiz] = await db
-      .select()
+      .select() 
       .from(quizzes)
       .where(eq(quizzes.id, req.params.id))
       .limit(1);

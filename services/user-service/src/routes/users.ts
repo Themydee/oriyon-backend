@@ -39,13 +39,24 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
       .from(users)
       .where(eq(users.id, req.params.id))
       .limit(1);
+
     if (!user) return res.status(404).json({ error: "User not found" });
-    return res.json(user);
+
+    // Look up cohort membership
+    const [membership] = await db
+      .select()
+      .from(cohortMembers)
+      .where(eq(cohortMembers.userId, req.params.id))
+      .limit(1);
+
+    return res.json({
+      ...user,
+      cohortId: membership?.cohortId ?? null,
+    });
   } catch (err) {
     return res.status(500).json({ error: "Failed to fetch user" });
   }
 });
-
 // POST /users  — admin manually creates a user
 userRouter.post("/", async (req: Request, res: Response) => {
   const parsed = createUserSchema.safeParse(req.body);
@@ -216,4 +227,4 @@ cohortRouter.post("/:id/enrol", async (req: Request, res: Response) => {
   } catch (err) {
     return res.status(500).json({ error: "Failed to enrol user" });
   }
-});
+}); 
