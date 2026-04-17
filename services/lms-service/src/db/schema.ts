@@ -15,6 +15,21 @@ import {
 
 export const lessonTypeEnum = pgEnum("lesson_type", ["video", "document"]);
 export const sessionTypeEnum = pgEnum("session_type", ["online", "physical"]);
+// ─── Enums (add to existing enums section) ───────────────────────────────────
+export const questionTypeEnum = pgEnum("question_type", ["mcq", "short_answer","essay",]);
+
+export const examSessionStatusEnum = pgEnum("exam_session_status", ["in_progress",
+  "submitted",
+  "auto_submitted",
+  "timed_out",
+]);
+
+export const violationTypeEnum = pgEnum("violation_type", [
+  "tab_switch",
+  "fullscreen_exit",
+  "devtools",
+  "copy_paste",
+]);
 
 // ─── Weeks ────────────────────────────────────────────────────────────────────
 
@@ -152,4 +167,93 @@ export const sessionGroups = pgTable("session_groups", {
     .references(() => physicalSessions.id, { onDelete: "cascade" }),
   userId: uuid("user_id").notNull(),
   assignedAt: timestamp("assigned_at").notNull().defaultNow(),
+});
+
+
+// ─── Exams ────────────────────────────────────────────────────────────────────
+export const exams = pgTable("exams", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  cohortId: uuid("cohort_id").notNull(),
+  weekId: uuid("week_id").references(() => weeks.id, { onDelete: "set null" }),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  durationMinutes: integer("duration_minutes").notNull().default(60),
+  totalMarks: integer("total_marks").notNull().default(0),
+  isPublished: boolean("is_published").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: uuid("created_by").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ─── Exam Questions ───────────────────────────────────────────────────────────
+export const examQuestions = pgTable("exam_questions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  examId: uuid("exam_id")
+    .notNull()
+    .references(() => exams.id, { onDelete: "cascade" }),
+  type: questionTypeEnum("type").notNull(),
+  questionText: text("question_text").notNull(),
+  // For MCQ only: ["Option A", "Option B", "Option C", "Option D"]
+  options: jsonb("options").$type<string[]>(),
+  // For MCQ only: index of correct option (0-based)
+  correctOptionIndex: integer("correct_option_index"),
+  marks: integer("marks").notNull().default(1),
+  orderIndex: integer("order_index").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ─── Exam Sessions ────────────────────────────────────────────────────────────
+export const examSessions = pgTable("exam_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  examId: uuid("exam_id")
+    .notNull()
+    .references(() => exams.id, { onDelete: "cascade" }),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  // Set at session creation: startedAt + durationMinutes
+  deadlineAt: timestamp("deadline_at").notNull(),
+  submittedAt: timestamp("submitted_at"),
+  status: examSessionStatusEnum("status").notNull().default("in_progress"),
+  violationCount: integer("violation_count").notNull().default(0),
+  // Auto-calculated on submit from MCQ answers only
+  mcqScore: integer("mcq_score"),
+  // Final score — null until all short/essay answers are marked
+  score: integer("score"),
+  isFullyMarked: boolean("is_fully_marked").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ─── Exam Answers ─────────────────────────────────────────────────────────────
+export const examAnswers = pgTable("exam_answers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: uuid("session_id")
+    .notNull()
+    .references(() => examSessions.id, { onDelete: "cascade" }),
+  questionId: uuid("question_id")
+    .notNull()
+    .references(() => examQuestions.id, { onDelete: "cascade" }),
+  // For MCQ: the selected option index as a string e.g. "2"
+  // For short/essay: the typed answer text
+  answerText: text("answer_text"),
+  // MCQ only — set on submit, null for short/essay until marked
+  isCorrect: boolean("is_correct"),
+  // Set immediately for MCQ on submit, null for short/essay until admin marks
+  marksAwarded: integer("marks_awarded"),
+  markedBy: uuid("marked_by"),
+  markedAt: timestamp("marked_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ─── Exam Violations ──────────────────────────────────────────────────────────
+export const examViolations = pgTable("exam_violations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: uuid("session_id")
+    .notNull()
+    .references(() => examSessions.id, { onDelete: "cascade" }),
+  type: violationTypeEnum("type").notNull(),
+  occurredAt: timestamp("occurred_at").notNull().defaultNow(),
 });

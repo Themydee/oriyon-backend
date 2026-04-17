@@ -12,6 +12,7 @@ import {
   progressRouter,
   sessionsRouter,
   quizzesRouter,
+  examsRouter,
   week12Router,
 } from "./routes/lms";
 import statsRouter from "./routes/stats";
@@ -39,14 +40,16 @@ app.use("/lms/progress", progressRouter);
 app.use("/lms/sessions", sessionsRouter);
 app.use("/lms/stats", statsRouter);
 app.use("/lms/quizzes", quizzesRouter);
+app.use("/lms/exams", examsRouter);
 app.use("/lms/week12", week12Router);
 app.use("/api/lms/quizzes", quizzesRouter);
+app.use("/api/lms/exams", examsRouter);
 app.use("/api/lms/week12", week12Router);
-app.use("/api/lms/weeks", weeksRouter);    // add this
-app.use("/api/lms/lessons", lessonsRouter); // add this
-app.use("/api/lms/progress", progressRouter); // add this
-app.use("/api/lms/sessions", sessionsRouter); // add this
-app.use("/api/lms/stats", statsRouter);    // add this
+app.use("/api/lms/weeks", weeksRouter);    
+app.use("/api/lms/lessons", lessonsRouter); 
+app.use("/api/lms/progress", progressRouter); 
+app.use("/api/lms/sessions", sessionsRouter); 
+app.use("/api/lms/stats", statsRouter);    
 
 async function setupConsumers() {
   // When a user is enrolled → seed empty progress records for all published lessons in that cohort

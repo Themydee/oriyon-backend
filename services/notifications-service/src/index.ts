@@ -134,6 +134,27 @@ async function setupConsumers() {
       await sendEmail({ to: email, ...tpl });
     }
   );
+
+  // Exam submitted → exam score and status email
+  await consumeEvent(
+    "exam.submitted",
+    "notifications.exam.submitted",
+    async (payload) => {
+      const { email, firstName, mcqScore, hasPending, timedOut, sessionId } = payload as any;
+      if (!email || !firstName) {
+        console.warn("[notifications] exam.submitted missing email/firstName — skipping");
+        return;
+      }
+      const tpl = templates.examSubmitted(
+        firstName,
+        Number(mcqScore ?? 0),
+        Boolean(hasPending),
+        Boolean(timedOut),
+        sessionId ?? ""
+      );
+      await sendEmail({ to: email, ...tpl });
+    }
+  );
 }
 
 async function bootstrap() {

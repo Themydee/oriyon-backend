@@ -291,6 +291,36 @@ export const templates = {
     `, `You've completed all lessons in "${weekTitle}" — excellent progress.`),
   }),
 
+  examSubmitted: (
+    firstName: string,
+    mcqScore: number,
+    hasPending: boolean,
+    timedOut: boolean,
+    sessionId: string
+  ) => ({
+    subject: timedOut
+      ? "Exam auto-submitted — review your result"
+      : "Exam submitted — your score is ready",
+    html: base(`
+      ${heading(`Hi ${firstName},`)}
+      ${para(timedOut
+        ? "Your exam was submitted automatically because the allotted time expired."
+        : "Your exam has been successfully submitted.")}
+      ${infoBox([
+        { label: "MCQ score", value: `${mcqScore}%` },
+        { label: "Status", value: timedOut ? "Timed out" : "Submitted" },
+        { label: "Review status", value: hasPending ? "Pending short/essay marking" : "Fully marked" },
+      ])}
+      ${hasPending
+        ? para("Your multiple choice score is now available. Short answer and essay questions are still being marked by our team, and your final result will be updated once marking is complete.")
+        : para("Your exam has been fully marked. The score shown above is your completed result.")}
+      ${ctaButton("View exam result", `${BASE_URL}/learn/lms/exam/session/${sessionId}/result`)}
+      ${signature()}
+    `, timedOut
+      ? "Your exam was auto-submitted because time expired. Your MCQ score is available and the remainder is pending review."
+      : "Your exam has been submitted. Your MCQ score is available and final marking is in progress."),
+  }),
+
   // ── Contact ───────────────────────────────────────────────────
 
   contactReceived: (firstName: string) => ({

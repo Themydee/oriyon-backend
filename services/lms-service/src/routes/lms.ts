@@ -1,8 +1,8 @@
 import { Router, Request, Response } from "express";
-import { eq, and, type InferModel } from "drizzle-orm";
+import { eq, and, isNull, sql,  type InferModel } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../index";
-import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins } from "../db/schema";
+import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, exams, examQuestions, examSessions, examAnswers, examViolations } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 
 type WeekRow = InferModel<typeof weeks>;
@@ -13,7 +13,7 @@ export const lessonsRouter = Router();
 export const progressRouter = Router();
 export const sessionsRouter = Router();
 export const quizzesRouter = Router();
-
+export const examsRouter = Router();
 // ─────────────────────────────────────────────
 // HELPER — fetch user from user-service
 // Gets email + firstName for notification events
@@ -743,3 +743,940 @@ week12Router.get("/checkins/:cohortId/:userId", async (req: Request, res: Respon
     return res.status(500).json({ error: "Failed to fetch checkins" });
   }
 });
+
+// ─────────────────────────────────────────────
+// HELPER — recalculate and sync exam totalMarks
+// Called after any question create/update/delete
+// ─────────────────────────────────────────────
+async function syncExamTotalMarks(examId: string) {
+  const result = await db
+    .select({ total: sql<number>`COALESCE(SUM(${examQuestions.marks}), 0)` })
+    .from(examQuestions)
+    .where(eq(examQuestions.examId, examId));
+ 
+  await db
+    .update(exams)
+    .set({ totalMarks: result[0].total, updatedAt: new Date() })
+    .where(eq(exams.id, examId));
+}
+ 
+// ─────────────────────────────────────────────
+// HELPER — auto-score MCQ answers and write
+// marksAwarded + isCorrect to exam_answers rows.
+// Returns the total MCQ score for the session.
+// ─────────────────────────────────────────────
+async function scoreMcqAnswers(sessionId: string): Promise<number> {
+  // Fetch all answers for this session that belong to MCQ questions
+  const rows = await db
+    .select({
+      answerId: examAnswers.id,
+      answerText: examAnswers.answerText,
+      correctOptionIndex: examQuestions.correctOptionIndex,
+      marks: examQuestions.marks,
+      type: examQuestions.type,
+    })
+    .from(examAnswers)
+    .innerJoin(examQuestions, eq(examAnswers.questionId, examQuestions.id))
+    .where(eq(examAnswers.sessionId, sessionId));
+ 
+  let mcqScore = 0;
+ 
+  for (const row of rows) {
+    if (row.type !== "mcq") continue;
+ 
+    const selectedIndex =
+      row.answerText !== null ? parseInt(row.answerText, 10) : null;
+    const isCorrect =
+      selectedIndex !== null && selectedIndex === row.correctOptionIndex;
+    const marksAwarded = isCorrect ? row.marks : 0;
+ 
+    await db
+      .update(examAnswers)
+      .set({ isCorrect, marksAwarded, updatedAt: new Date() })
+      .where(eq(examAnswers.id, row.answerId));
+ 
+    mcqScore += marksAwarded;
+  }
+ 
+  return mcqScore;
+}
+ 
+// ─────────────────────────────────────────────
+// HELPER — check if all short/essay answers are
+// marked, and if so, finalize the session score
+// ─────────────────────────────────────────────
+async function tryFinalizeScore(sessionId: string) {
+  const pending = await db
+    .select({ id: examAnswers.id })
+    .from(examAnswers)
+    .innerJoin(examQuestions, eq(examAnswers.questionId, examQuestions.id))
+    .where(
+      and(
+        eq(examAnswers.sessionId, sessionId),
+        // short_answer or essay with no marks yet
+        isNull(examAnswers.marksAwarded),
+        sql`${examQuestions.type} IN ('short_answer', 'essay')`
+      )
+    )
+    .limit(1);
+ 
+  if (pending.length > 0) return; // still unmarked answers — do nothing
+ 
+  // All marked — sum everything
+  const result = await db
+    .select({
+      total: sql<number>`COALESCE(SUM(${examAnswers.marksAwarded}), 0)`,
+    })
+    .from(examAnswers)
+    .where(eq(examAnswers.sessionId, sessionId));
+ 
+  await db
+    .update(examSessions)
+    .set({
+      score: result[0].total,
+      isFullyMarked: true,
+      updatedAt: new Date(),
+    })
+    .where(eq(examSessions.id, sessionId));
+}
+ 
+// ═════════════════════════════════════════════
+// ADMIN — EXAM MANAGEMENT
+// ═════════════════════════════════════════════
+ 
+// GET /lms/exams?cohortId=&showAll=true
+// showAll=true → include unpublished (admin use)
+examsRouter.get("/", async (req: Request, res: Response) => {
+  try {
+    const { cohortId, weekId, showAll } = req.query;
+    const includeAll = showAll === "true";
+    const filters: any[] = [];
+ 
+    if (cohortId) filters.push(eq(exams.cohortId, cohortId as string));
+    if (weekId) filters.push(eq(exams.weekId, weekId as string));
+    if (!includeAll) {
+      filters.push(eq(exams.isPublished, true));
+      filters.push(eq(exams.isActive, true));
+    }
+ 
+    let query = db.select().from(exams);
+    if (filters.length > 0) {
+      query = query.where(and(...filters)) as typeof query;
+    }
+ 
+    const all = await query.orderBy(exams.createdAt);
+    return res.json(all);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to fetch exams" });
+  }
+});
+ 
+// GET /lms/exams/:id
+examsRouter.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const [exam] = await db
+      .select()
+      .from(exams)
+      .where(eq(exams.id, req.params.id))
+      .limit(1);
+    if (!exam) return res.status(404).json({ error: "Exam not found" });
+    return res.json(exam);
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch exam" });
+  }
+});
+ 
+// POST /lms/exams — admin creates exam
+examsRouter.post("/", async (req: Request, res: Response) => {
+  const schema = z.object({
+    cohortId: z.string().uuid(),
+    weekId: z.string().uuid().optional(),
+    title: z.string().min(1),
+    description: z.string().optional(),
+    durationMinutes: z.number().int().positive().default(60),
+    createdBy: z.string().uuid(),
+    isPublished: z.boolean().optional().default(false),
+  });
+ 
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success)
+    return res.status(400).json({ error: parsed.error.flatten() });
+ 
+  try {
+    const [exam] = await db
+      .insert(exams)
+      .values({ ...parsed.data, totalMarks: 0 })
+      .returning();
+    return res.status(201).json(exam);
+  } catch {
+    return res.status(500).json({ error: "Failed to create exam" });
+  }
+});
+ 
+// PATCH /lms/exams/:id — admin updates/publishes exam
+examsRouter.patch("/:id", async (req: Request, res: Response) => {
+  const schema = z.object({
+    weekId: z.string().uuid().optional().nullable(),
+    title: z.string().min(1).optional(),
+    description: z.string().optional(),
+    durationMinutes: z.number().int().positive().optional(),
+    isPublished: z.boolean().optional(),
+    isActive: z.boolean().optional(),
+  });
+ 
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success)
+    return res.status(400).json({ error: parsed.error.flatten() });
+ 
+  try {
+    const [updated] = await db
+      .update(exams)
+      .set({ ...parsed.data, updatedAt: new Date() })
+      .where(eq(exams.id, req.params.id))
+      .returning();
+    if (!updated) return res.status(404).json({ error: "Exam not found" });
+    return res.json(updated);
+  } catch {
+    return res.status(500).json({ error: "Failed to update exam" });
+  }
+});
+ 
+// ═════════════════════════════════════════════
+// ADMIN — QUESTION BUILDER
+// ═════════════════════════════════════════════
+ 
+// GET /lms/exams/:id/questions
+// Returns questions. For trainees (taking exam), correctOptionIndex is stripped.
+// Pass ?admin=true to get full data.
+examsRouter.get("/:id/questions", async (req: Request, res: Response) => {
+  try {
+    const isAdmin = req.query.admin === "true";
+ 
+    const questions = await db
+      .select()
+      .from(examQuestions)
+      .where(eq(examQuestions.examId, req.params.id))
+      .orderBy(examQuestions.orderIndex);
+ 
+    // Strip correct answer from trainee-facing responses
+    const sanitized = isAdmin
+      ? questions
+      : questions.map(({ correctOptionIndex: _stripped, ...q }) => q);
+ 
+    return res.json(sanitized);
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch questions" });
+  }
+});
+ 
+// POST /lms/exams/:id/questions — add a question
+examsRouter.post("/:id/questions", async (req: Request, res: Response) => {
+  const schema = z
+    .object({
+      type: z.enum(["mcq", "short_answer", "essay"]),
+      questionText: z.string().min(1),
+      options: z.array(z.string()).optional(),
+      correctOptionIndex: z.number().int().min(0).optional(),
+      marks: z.number().int().positive().default(1),
+      orderIndex: z.number().int().min(0).default(0),
+    })
+    .refine(
+      (data) => {
+        // MCQ must have options and a correct answer
+        if (data.type === "mcq") {
+          return (
+            Array.isArray(data.options) &&
+            data.options.length >= 2 &&
+            data.correctOptionIndex !== undefined
+          );
+        }
+        return true;
+      },
+      {
+        message:
+          "MCQ questions require options (min 2) and correctOptionIndex",
+      }
+    );
+ 
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success)
+    return res.status(400).json({ error: parsed.error.flatten() });
+ 
+  // Confirm exam exists
+  const [exam] = await db
+    .select()
+    .from(exams)
+    .where(eq(exams.id, req.params.id))
+    .limit(1);
+  if (!exam) return res.status(404).json({ error: "Exam not found" });
+ 
+  try {
+    const [question] = await db
+      .insert(examQuestions)
+      .values({ ...parsed.data, examId: req.params.id })
+      .returning();
+ 
+    // Keep totalMarks in sync
+    await syncExamTotalMarks(req.params.id);
+ 
+    return res.status(201).json(question);
+  } catch {
+    return res.status(500).json({ error: "Failed to create question" });
+  }
+});
+ 
+// PATCH /lms/exams/questions/:questionId — edit a question
+examsRouter.patch(
+  "/questions/:questionId",
+  async (req: Request, res: Response) => {
+    const schema = z.object({
+      questionText: z.string().min(1).optional(),
+      options: z.array(z.string()).optional(),
+      correctOptionIndex: z.number().int().min(0).optional(),
+      marks: z.number().int().positive().optional(),
+      orderIndex: z.number().int().min(0).optional(),
+    });
+ 
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success)
+      return res.status(400).json({ error: parsed.error.flatten() });
+ 
+    try {
+      const [updated] = await db
+        .update(examQuestions)
+        .set({ ...parsed.data, updatedAt: new Date() })
+        .where(eq(examQuestions.id, req.params.questionId))
+        .returning();
+ 
+      if (!updated)
+        return res.status(404).json({ error: "Question not found" });
+ 
+      await syncExamTotalMarks(updated.examId);
+ 
+      return res.json(updated);
+    } catch {
+      return res.status(500).json({ error: "Failed to update question" });
+    }
+  }
+);
+ 
+// DELETE /lms/exams/questions/:questionId
+examsRouter.delete(
+  "/questions/:questionId",
+  async (req: Request, res: Response) => {
+    try {
+      const [deleted] = await db
+        .delete(examQuestions)
+        .where(eq(examQuestions.id, req.params.questionId))
+        .returning();
+ 
+      if (!deleted)
+        return res.status(404).json({ error: "Question not found" });
+ 
+      await syncExamTotalMarks(deleted.examId);
+ 
+      return res.json({ message: "Question deleted" });
+    } catch {
+      return res.status(500).json({ error: "Failed to delete question" });
+    }
+  }
+);
+ 
+// ═════════════════════════════════════════════
+// TRAINEE — EXAM SESSION
+// ═════════════════════════════════════════════
+ 
+// POST /lms/exams/:id/sessions/start
+// Creates a new session. Blocks if a completed session already exists.
+examsRouter.post(
+  "/:id/sessions/start",
+  async (req: Request, res: Response) => {
+    const schema = z.object({
+      userId: z.string().uuid(),
+    });
+ 
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success)
+      return res.status(400).json({ error: parsed.error.flatten() });
+ 
+    const { userId } = parsed.data;
+    const examId = req.params.id;
+ 
+    try {
+      const [exam] = await db
+        .select()
+        .from(exams)
+        .where(and(eq(exams.id, examId), eq(exams.isPublished, true)))
+        .limit(1);
+ 
+      if (!exam)
+        return res.status(404).json({ error: "Exam not found or not published" });
+ 
+      // Session lock — check for any existing session for this user+exam
+      const [existing] = await db
+        .select()
+        .from(examSessions)
+        .where(
+          and(
+            eq(examSessions.userId, userId),
+            eq(examSessions.examId, examId)
+          )
+        )
+        .limit(1);
+ 
+      if (existing) {
+        // Allow re-entry only if still in_progress and not past deadline
+        if (existing.status === "in_progress") {
+          const now = new Date();
+          if (now > existing.deadlineAt) {
+            // Deadline passed server-side — auto-submit and block
+            await db
+              .update(examSessions)
+              .set({
+                status: "timed_out",
+                submittedAt: now,
+                updatedAt: now,
+              })
+              .where(eq(examSessions.id, existing.id));
+ 
+            return res
+              .status(403)
+              .json({ error: "Your exam time has expired." });
+          }
+ 
+          // Resume in-progress session
+          const questions = await db
+            .select()
+            .from(examQuestions)
+            .where(eq(examQuestions.examId, examId))
+            .orderBy(examQuestions.orderIndex);
+ 
+          const answers = await db
+            .select()
+            .from(examAnswers)
+            .where(eq(examAnswers.sessionId, existing.id));
+ 
+          const sanitizedQuestions = questions.map(
+            ({ correctOptionIndex: _stripped, ...q }) => q
+          );
+ 
+          return res.json({
+            session: existing,
+            questions: sanitizedQuestions,
+            savedAnswers: answers,
+            resumed: true,
+          });
+        }
+ 
+        // Already submitted/auto-submitted/timed-out
+        return res.status(409).json({
+          error: "You have already taken this exam.",
+          status: existing.status,
+          sessionId: existing.id,
+        });
+      }
+ 
+      // Create new session
+      const startedAt = new Date();
+      const deadlineAt = new Date(
+        startedAt.getTime() + exam.durationMinutes * 60 * 1000
+      );
+ 
+      const [session] = await db
+        .insert(examSessions)
+        .values({
+          userId,
+          examId,
+          startedAt,
+          deadlineAt,
+          status: "in_progress",
+        })
+        .returning();
+ 
+      // Pre-create empty answer rows for every question
+      // so autosave is always an UPDATE, never an INSERT race condition
+      const questions = await db
+        .select()
+        .from(examQuestions)
+        .where(eq(examQuestions.examId, examId))
+        .orderBy(examQuestions.orderIndex);
+ 
+      if (questions.length > 0) {
+        await db.insert(examAnswers).values(
+          questions.map((q) => ({
+            sessionId: session.id,
+            questionId: q.id,
+            answerText: null,
+          }))
+        );
+      }
+ 
+      const sanitizedQuestions = questions.map(
+        ({ correctOptionIndex: _stripped, ...q }) => q
+      );
+ 
+      return res.status(201).json({
+        session,
+        questions: sanitizedQuestions,
+        savedAnswers: [],
+        resumed: false,
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: "Failed to start exam" });
+    }
+  }
+);
+ 
+// PATCH /lms/exams/sessions/:sessionId/autosave
+// Saves current answers every 30s. Also enforces server-side deadline.
+examsRouter.patch(
+  "/sessions/:sessionId/autosave",
+  async (req: Request, res: Response) => {
+    const schema = z.object({
+      // { [questionId]: answerText }
+      answers: z.record(z.string().uuid(), z.string()),
+    });
+ 
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success)
+      return res.status(400).json({ error: parsed.error.flatten() });
+ 
+    try {
+      const [session] = await db
+        .select()
+        .from(examSessions)
+        .where(eq(examSessions.id, req.params.sessionId))
+        .limit(1);
+ 
+      if (!session) return res.status(404).json({ error: "Session not found" });
+ 
+      if (session.status !== "in_progress") {
+        return res
+          .status(409)
+          .json({ error: "Exam already submitted", status: session.status });
+      }
+ 
+      // Server-side deadline check
+      if (new Date() > session.deadlineAt) {
+        await db
+          .update(examSessions)
+          .set({ status: "timed_out", submittedAt: new Date(), updatedAt: new Date() })
+          .where(eq(examSessions.id, session.id));
+        return res
+          .status(403)
+          .json({ error: "Time expired. Exam auto-submitted." });
+      }
+ 
+      // Upsert each answer
+      for (const [questionId, answerText] of Object.entries(
+        parsed.data.answers
+      )) {
+        await db
+          .update(examAnswers)
+          .set({ answerText, updatedAt: new Date() })
+          .where(
+            and(
+              eq(examAnswers.sessionId, session.id),
+              eq(examAnswers.questionId, questionId)
+            )
+          );
+      }
+ 
+      await db
+        .update(examSessions)
+        .set({ updatedAt: new Date() })
+        .where(eq(examSessions.id, session.id));
+ 
+      return res.json({ message: "Saved" });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: "Failed to autosave" });
+    }
+  }
+);
+ 
+// POST /lms/exams/sessions/:sessionId/submit
+// Final submit. Scores MCQ, sets mcqScore, leaves short/essay pending.
+examsRouter.post(
+  "/sessions/:sessionId/submit",
+  async (req: Request, res: Response) => {
+    const schema = z.object({
+      // Final answers batch — same shape as autosave
+      answers: z.record(z.string().uuid(), z.string()).optional(),
+    });
+ 
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success)
+      return res.status(400).json({ error: parsed.error.flatten() });
+ 
+    try {
+      const [session] = await db
+        .select()
+        .from(examSessions)
+        .where(eq(examSessions.id, req.params.sessionId))
+        .limit(1);
+ 
+      if (!session) return res.status(404).json({ error: "Session not found" });
+ 
+      if (session.status !== "in_progress") {
+        return res
+          .status(409)
+          .json({ error: "Exam already submitted", status: session.status });
+      }
+ 
+      const now = new Date();
+      const timedOut = now > session.deadlineAt;
+ 
+      // Flush any final answers first
+      if (parsed.data.answers) {
+        for (const [questionId, answerText] of Object.entries(
+          parsed.data.answers
+        )) {
+          await db
+            .update(examAnswers)
+            .set({ answerText, updatedAt: now })
+            .where(
+              and(
+                eq(examAnswers.sessionId, session.id),
+                eq(examAnswers.questionId, questionId)
+              )
+            );
+        }
+      }
+ 
+      // Auto-score MCQ
+      const mcqScore = await scoreMcqAnswers(session.id);
+ 
+      // Determine if there are any short/essay questions
+      const pendingCount = await db
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(examAnswers)
+        .innerJoin(examQuestions, eq(examAnswers.questionId, examQuestions.id))
+        .where(
+          and(
+            eq(examAnswers.sessionId, session.id),
+            sql`${examQuestions.type} IN ('short_answer', 'essay')`
+          )
+        );
+ 
+      const hasPending = Number(pendingCount[0].count) > 0;
+ 
+      const [updated] = await db
+        .update(examSessions)
+        .set({
+          status: timedOut ? "timed_out" : "submitted",
+          submittedAt: now,
+          mcqScore,
+          // If no short/essay questions, fully marked immediately
+          score: hasPending ? null : mcqScore,
+          isFullyMarked: !hasPending,
+          updatedAt: now,
+        })
+        .where(eq(examSessions.id, session.id))
+        .returning();
+ 
+      // Publish event
+      const user = await fetchUser(session.userId);
+      await publishEvent("exam.submitted", {
+        userId: session.userId,
+        examId: session.examId,
+        sessionId: session.id,
+        mcqScore,
+        hasPending,
+        timedOut,
+        email: user?.email ?? null,
+        firstName: user?.firstName ?? null,
+      });
+ 
+      return res.json({
+        session: updated,
+        mcqScore,
+        pendingMarks: hasPending,
+        message: hasPending
+          ? `Exam submitted. MCQ score: ${mcqScore}. Short answer / essay marks pending admin review.`
+          : `Exam submitted. Your score: ${mcqScore}.`,
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: "Failed to submit exam" });
+    }
+  }
+);
+ 
+// POST /lms/exams/sessions/:sessionId/violations
+// Records a violation. Auto-submits if violationCount reaches 3.
+examsRouter.post(
+  "/sessions/:sessionId/violations",
+  async (req: Request, res: Response) => {
+    const schema = z.object({
+      type: z.enum(["tab_switch", "fullscreen_exit", "devtools", "copy_paste"]),
+    });
+ 
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success)
+      return res.status(400).json({ error: parsed.error.flatten() });
+ 
+    try {
+      const [session] = await db
+        .select()
+        .from(examSessions)
+        .where(eq(examSessions.id, req.params.sessionId))
+        .limit(1);
+ 
+      if (!session) return res.status(404).json({ error: "Session not found" });
+      if (session.status !== "in_progress") {
+        return res.json({ message: "Session already closed" });
+      }
+ 
+      // Log the violation
+      await db
+        .insert(examViolations)
+        .values({ sessionId: session.id, type: parsed.data.type });
+ 
+      const newCount = session.violationCount + 1;
+ 
+      await db
+        .update(examSessions)
+        .set({ violationCount: newCount, updatedAt: new Date() })
+        .where(eq(examSessions.id, session.id));
+ 
+      // Auto-submit at 3 violations
+      if (newCount >= 3) {
+        const mcqScore = await scoreMcqAnswers(session.id);
+ 
+        const pendingCount = await db
+          .select({ count: sql<number>`COUNT(*)` })
+          .from(examAnswers)
+          .innerJoin(
+            examQuestions,
+            eq(examAnswers.questionId, examQuestions.id)
+          )
+          .where(
+            and(
+              eq(examAnswers.sessionId, session.id),
+              sql`${examQuestions.type} IN ('short_answer', 'essay')`
+            )
+          );
+ 
+        const hasPending = Number(pendingCount[0].count) > 0;
+        const now = new Date();
+ 
+        await db
+          .update(examSessions)
+          .set({
+            status: "auto_submitted",
+            submittedAt: now,
+            mcqScore,
+            score: hasPending ? null : mcqScore,
+            isFullyMarked: !hasPending,
+            updatedAt: now,
+          })
+          .where(eq(examSessions.id, session.id));
+ 
+        const user = await fetchUser(session.userId);
+        await publishEvent("exam.auto_submitted", {
+          userId: session.userId,
+          examId: session.examId,
+          sessionId: session.id,
+          reason: "violation_limit",
+          violationCount: newCount,
+          email: user?.email ?? null,
+          firstName: user?.firstName ?? null,
+        });
+ 
+        return res.json({
+          autoSubmitted: true,
+          violationCount: newCount,
+          message: "Exam auto-submitted due to repeated violations.",
+        });
+      }
+ 
+      return res.json({
+        autoSubmitted: false,
+        violationCount: newCount,
+        remaining: 3 - newCount,
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: "Failed to log violation" });
+    }
+  }
+);
+ 
+// ═════════════════════════════════════════════
+// TRAINEE — RESULT
+// ═════════════════════════════════════════════
+ 
+// GET /lms/exams/sessions/:sessionId/result
+// Returns score breakdown visible to trainee post-submit
+examsRouter.get(
+  "/sessions/:sessionId/result",
+  async (req: Request, res: Response) => {
+    try {
+      const [session] = await db
+        .select()
+        .from(examSessions)
+        .where(eq(examSessions.id, req.params.sessionId))
+        .limit(1);
+ 
+      if (!session) return res.status(404).json({ error: "Session not found" });
+ 
+      if (session.status === "in_progress") {
+        return res.status(403).json({ error: "Exam not yet submitted" });
+      }
+ 
+      // Count pending (unmarked) short/essay answers
+      const pendingRows = await db
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(examAnswers)
+        .innerJoin(examQuestions, eq(examAnswers.questionId, examQuestions.id))
+        .where(
+          and(
+            eq(examAnswers.sessionId, session.id),
+            isNull(examAnswers.marksAwarded),
+            sql`${examQuestions.type} IN ('short_answer', 'essay')`
+          )
+        );
+ 
+      const pendingCount = Number(pendingRows[0].count);
+ 
+      return res.json({
+        sessionId: session.id,
+        status: session.status,
+        mcqScore: session.mcqScore,
+        finalScore: session.isFullyMarked ? session.score : null,
+        isFullyMarked: session.isFullyMarked,
+        pendingMarksCount: pendingCount,
+        violationCount: session.violationCount,
+        submittedAt: session.submittedAt,
+      });
+    } catch {
+      return res.status(500).json({ error: "Failed to fetch result" });
+    }
+  }
+);
+ 
+// ═════════════════════════════════════════════
+// ADMIN — SUBMISSIONS & MARKING
+// ═════════════════════════════════════════════
+ 
+// GET /lms/exams/:id/sessions — admin lists all sessions for an exam
+// Optional ?status=submitted|auto_submitted|timed_out|in_progress
+examsRouter.get("/:id/sessions", async (req: Request, res: Response) => {
+  try {
+    const { status } = req.query;
+ 
+    const sessions = await db
+      .select()
+      .from(examSessions)
+      .where(
+        status
+          ? and(
+              eq(examSessions.examId, req.params.id),
+              eq(
+                examSessions.status,
+                status as "submitted" | "auto_submitted" | "timed_out" | "in_progress"
+              )
+            )
+          : eq(examSessions.examId, req.params.id)
+      )
+      .orderBy(examSessions.submittedAt);
+    return res.json(sessions);
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch sessions" });
+  }
+});
+ 
+// GET /lms/exams/sessions/:sessionId/answers — admin marking view
+// Returns all answers with question text + current marks
+examsRouter.get(
+  "/sessions/:sessionId/answers",
+  async (req: Request, res: Response) => {
+    try {
+      const rows = await db
+        .select({
+          answerId: examAnswers.id,
+          questionId: examQuestions.id,
+          type: examQuestions.type,
+          questionText: examQuestions.questionText,
+          options: examQuestions.options,
+          correctOptionIndex: examQuestions.correctOptionIndex,
+          maxMarks: examQuestions.marks,
+          orderIndex: examQuestions.orderIndex,
+          answerText: examAnswers.answerText,
+          isCorrect: examAnswers.isCorrect,
+          marksAwarded: examAnswers.marksAwarded,
+          markedBy: examAnswers.markedBy,
+          markedAt: examAnswers.markedAt,
+        })
+        .from(examAnswers)
+        .innerJoin(examQuestions, eq(examAnswers.questionId, examQuestions.id))
+        .where(eq(examAnswers.sessionId, req.params.sessionId))
+        .orderBy(examQuestions.orderIndex);
+ 
+      return res.json(rows);
+    } catch {
+      return res.status(500).json({ error: "Failed to fetch answers" });
+    }
+  }
+);
+ 
+// PATCH /lms/exams/answers/:answerId/mark — admin marks one short/essay answer
+examsRouter.patch(
+  "/answers/:answerId/mark",
+  async (req: Request, res: Response) => {
+    const schema = z.object({
+      marksAwarded: z.number().int().min(0),
+      markedBy: z.string().uuid(),
+    });
+ 
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success)
+      return res.status(400).json({ error: parsed.error.flatten() });
+ 
+    try {
+      const [answer] = await db
+        .select()
+        .from(examAnswers)
+        .where(eq(examAnswers.id, req.params.answerId))
+        .limit(1);
+ 
+      if (!answer) return res.status(404).json({ error: "Answer not found" });
+ 
+      // Validate marksAwarded doesn't exceed question max
+      const [question] = await db
+        .select()
+        .from(examQuestions)
+        .where(eq(examQuestions.id, answer.questionId))
+        .limit(1);
+ 
+      if (parsed.data.marksAwarded > question.marks) {
+        return res.status(400).json({
+          error: `marksAwarded cannot exceed question max marks (${question.marks})`,
+        });
+      }
+ 
+      const [updated] = await db
+        .update(examAnswers)
+        .set({
+          marksAwarded: parsed.data.marksAwarded,
+          markedBy: parsed.data.markedBy,
+          markedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(examAnswers.id, req.params.answerId))
+        .returning();
+ 
+      // Check if this was the last unmarked answer — finalize score if so
+      await tryFinalizeScore(answer.sessionId);
+ 
+      return res.json(updated);
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: "Failed to mark answer" });
+    }
+  }
+);
+ 

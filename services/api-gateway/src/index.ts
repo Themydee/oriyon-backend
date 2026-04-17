@@ -149,6 +149,26 @@ app.post("/api/lms/quizzes/:id/attempt",         authenticate, keepPath, createP
 app.get("/api/lms/quizzes/:id/attempts/:userId", authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
 
 // ─────────────────────────────────────────────
+// LMS — exams
+// ─────────────────────────────────────────────
+app.get("/api/lms/exams",                                      authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/exams/:id",                                  authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/exams",                                     authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.patch("/api/lms/exams/:id",                                authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/exams/:id/questions",                        authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/exams/:id/questions",                       authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.patch("/api/lms/exams/questions/:questionId",              authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.delete("/api/lms/exams/questions/:questionId",             authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/exams/:id/sessions/start",                   authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.patch("/api/lms/exams/sessions/:sessionId/autosave",       authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/exams/sessions/:sessionId/submit",          authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/exams/sessions/:sessionId/violations",      authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/exams/sessions/:sessionId/result",           authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/exams/:id/sessions",                         authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/exams/sessions/:sessionId/answers",          authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.patch("/api/lms/exams/answers/:answerId/mark",             authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+
+// ─────────────────────────────────────────────
 // LMS — week 12 attendance
 // ─────────────────────────────────────────────
 app.post("/api/lms/week12/codes",                     authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
