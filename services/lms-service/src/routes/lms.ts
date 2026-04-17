@@ -34,16 +34,19 @@ async function fetchUser(userId: string): Promise<{ email: string; firstName: st
 // WEEKS
 // ─────────────────────────────────────────────
 
-// GET /lms/weeks?cohortId=
+// GET /lms/weeks?cohortId=&showAll=true
 weeksRouter.get("/", async (req: Request, res: Response) => {
   try {
-    const { cohortId } = req.query;
+    const { cohortId, showAll } = req.query;
+    const includeAll = showAll === "true";
 
     const condition = cohortId
-      ? and(
-          eq(weeks.cohortId, cohortId as string),
-          eq(weeks.isPublished, true)
-        )
+      ? includeAll
+        ? eq(weeks.cohortId, cohortId as string)
+        : and(
+            eq(weeks.cohortId, cohortId as string),
+            eq(weeks.isPublished, true)
+          )
       : eq(weeks.isPublished, true);
 
     const allWeeks = await db

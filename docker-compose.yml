@@ -223,6 +223,7 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-lms:5432/oriyon_lms
       JWT_SECRET: ${JWT_SECRET}
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@rabbitmq:5672
+      USER_SERVICE_URL: http://user-service:3002  
     depends_on:
       postgres-lms:
         condition: service_healthy
