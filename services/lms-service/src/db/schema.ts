@@ -174,7 +174,6 @@ export const sessionGroups = pgTable("session_groups", {
 export const exams = pgTable("exams", {
   id: uuid("id").primaryKey().defaultRandom(),
   cohortId: uuid("cohort_id").notNull(),
-  weekId: uuid("week_id").references(() => weeks.id, { onDelete: "set null" }),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
   durationMinutes: integer("duration_minutes").notNull().default(60),

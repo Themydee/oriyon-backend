@@ -30,6 +30,21 @@ async function fetchUser(userId: string): Promise<{ email: string; firstName: st
   }
 }
 
+async function isWeek12AttendanceComplete(userId: string, cohortId: string) {
+  const checkins = await db
+    .select({ day: week12Checkins.day })
+    .from(week12Checkins)
+    .where(
+      and(
+        eq(week12Checkins.userId, userId),
+        eq(week12Checkins.cohortId, cohortId)
+      )
+    );
+
+  const attendedDays = new Set(checkins.map((checkin) => checkin.day));
+  return [1, 2, 3, 4, 5].every((day) => attendedDays.has(day));
+}
+
 // ─────────────────────────────────────────────
 // WEEKS
 // ─────────────────────────────────────────────
@@ -848,17 +863,16 @@ async function tryFinalizeScore(sessionId: string) {
 // showAll=true → include unpublished (admin use)
 examsRouter.get("/", async (req: Request, res: Response) => {
   try {
-    const { cohortId, weekId, showAll } = req.query;
+    const { cohortId, showAll } = req.query;
     const includeAll = showAll === "true";
     const filters: any[] = [];
- 
+
     if (cohortId) filters.push(eq(exams.cohortId, cohortId as string));
-    if (weekId) filters.push(eq(exams.weekId, weekId as string));
     if (!includeAll) {
       filters.push(eq(exams.isPublished, true));
       filters.push(eq(exams.isActive, true));
     }
- 
+
     let query = db.select().from(exams);
     if (filters.length > 0) {
       query = query.where(and(...filters)) as typeof query;
@@ -891,7 +905,6 @@ examsRouter.get("/:id", async (req: Request, res: Response) => {
 examsRouter.post("/", async (req: Request, res: Response) => {
   const schema = z.object({
     cohortId: z.string().uuid(),
-    weekId: z.string().uuid().optional(),
     title: z.string().min(1),
     description: z.string().optional(),
     durationMinutes: z.number().int().positive().default(60),
@@ -917,7 +930,6 @@ examsRouter.post("/", async (req: Request, res: Response) => {
 // PATCH /lms/exams/:id — admin updates/publishes exam
 examsRouter.patch("/:id", async (req: Request, res: Response) => {
   const schema = z.object({
-    weekId: z.string().uuid().optional().nullable(),
     title: z.string().min(1).optional(),
     description: z.string().optional(),
     durationMinutes: z.number().int().positive().optional(),
@@ -1112,6 +1124,13 @@ examsRouter.post(
  
       if (!exam)
         return res.status(404).json({ error: "Exam not found or not published" });
+ 
+      const complete = await isWeek12AttendanceComplete(userId, exam.cohortId);
+      if (!complete) {
+        return res.status(403).json({
+          error: "Week 12 attendance must be complete before taking this exam.",
+        });
+      }
  
       // Session lock — check for any existing session for this user+exam
       const [existing] = await db
