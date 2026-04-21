@@ -169,20 +169,26 @@ cohortRouter.post("/", async (req: Request, res: Response) => {
     name: z.string().min(1),
     description: z.string().optional(),
     state: z.string().optional(),
-    startDate: z.string().datetime().optional(),
-    endDate: z.string().datetime().optional(),
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
   });
 
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  // Validate dates if provided
+  const startDate = parsed.data.startDate ? new Date(parsed.data.startDate) : undefined;
+  const endDate = parsed.data.endDate ? new Date(parsed.data.endDate) : undefined;
+  if (startDate && isNaN(startDate.getTime())) return res.status(400).json({ error: "Invalid startDate" });
+  if (endDate && isNaN(endDate.getTime())) return res.status(400).json({ error: "Invalid endDate" });
 
   try {
     const [cohort] = await db
       .insert(cohorts)
       .values({
         ...parsed.data,
-        startDate: parsed.data.startDate ? new Date(parsed.data.startDate) : undefined,
-        endDate: parsed.data.endDate ? new Date(parsed.data.endDate) : undefined,
+        startDate,
+        endDate,
       })
       .returning();
     return res.status(201).json(cohort);
