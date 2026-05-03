@@ -1,0 +1,128 @@
+networks:
+  oriyon-network:
+    driver: bridge
+
+# No postgres volumes needed in production — using Neon
+
+services:
+  # ─────────────────────────────────────────────
+  # MICROSERVICES
+  # In production we don't run local postgres or
+  # rabbitmq — those are handled by Neon + CloudAMQP
+  # ─────────────────────────────────────────────
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: oriyon-api-gateway
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL}
+      AUTH_SERVICE_URL: http://auth-service:3001
+      USER_SERVICE_URL: http://user-service:3002
+      LMS_SERVICE_URL: http://lms-service:3003
+      APPLICATIONS_SERVICE_URL: http://applications-service:3004
+      NOTIFICATIONS_SERVICE_URL: http://notifications-service:3005
+    depends_on:
+      - auth-service
+      - user-service
+      - lms-service
+      - applications-service
+      - notifications-service
+    networks:
+      - oriyon-network
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    container_name: oriyon-auth-service
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      DATABASE_URL: ${AUTH_DATABASE_URL}
+      USER_DATABASE_URL: ${USER_DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN}
+      FRONTEND_URL: ${FRONTEND_URL}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+    networks:
+      - oriyon-network
+
+  user-service:
+    build:
+      context: .
+      dockerfile: services/user-service/Dockerfile
+    container_name: oriyon-user-service
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      PORT: 3002
+      DATABASE_URL: ${USER_DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      LMS_SERVICE_URL: http://lms-service:3003
+    networks:
+      - oriyon-network
+
+  lms-service:
+    build:
+      context: .
+      dockerfile: services/lms-service/Dockerfile
+    container_name: oriyon-lms-service
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      PORT: 3003
+      DATABASE_URL: ${LMS_DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      USER_SERVICE_URL: http://user-service:3002
+    networks:
+      - oriyon-network
+
+  applications-service:
+    build:
+      context: .
+      dockerfile: services/applications-service/Dockerfile
+    container_name: oriyon-applications-service
+    restart: unless-stopped
+    ports:
+      - "3004:3004"
+    environment:
+      PORT: 3004
+      DATABASE_URL: ${APPLICATIONS_DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+    networks:
+      - oriyon-network
+
+  notifications-service:
+    build:
+      context: .
+      dockerfile: services/notifications-service/Dockerfile
+    container_name: oriyon-notifications-service
+    restart: unless-stopped
+    ports:
+      - "3005:3005"
+    environment:
+      PORT: 3005
+      DATABASE_URL: ${NOTIFICATIONS_DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      EMAIL_FROM: ${EMAIL_FROM}
+      FRONTEND_URL: ${FRONTEND_URL}
+    networks:
+      - oriyon-network
