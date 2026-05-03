@@ -2,19 +2,18 @@ networks:
   oriyon-network:
     driver: bridge
 
-# No postgres volumes needed in production — using Neon
-
 services:
   # ─────────────────────────────────────────────
   # MICROSERVICES
-  # In production we don't run local postgres or
-  # rabbitmq — those are handled by Neon + CloudAMQP
+  # Uses Neon (PostgreSQL) + CloudAMQP (RabbitMQ)
+  # Build context set per service so one Dockerfile
+  # works both locally and on Render
   # ─────────────────────────────────────────────
 
   api-gateway:
     build:
-      context: .
-      dockerfile: services/api-gateway/Dockerfile
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
     container_name: oriyon-api-gateway
     restart: unless-stopped
     ports:
@@ -39,8 +38,8 @@ services:
 
   auth-service:
     build:
-      context: .
-      dockerfile: services/auth-service/Dockerfile
+      context: ./services/auth-service
+      dockerfile: Dockerfile
     container_name: oriyon-auth-service
     restart: unless-stopped
     ports:
@@ -60,8 +59,8 @@ services:
 
   user-service:
     build:
-      context: .
-      dockerfile: services/user-service/Dockerfile
+      context: ./services/user-service
+      dockerfile: Dockerfile
     container_name: oriyon-user-service
     restart: unless-stopped
     ports:
@@ -77,8 +76,8 @@ services:
 
   lms-service:
     build:
-      context: .
-      dockerfile: services/lms-service/Dockerfile
+      context: ./services/lms-service
+      dockerfile: Dockerfile
     container_name: oriyon-lms-service
     restart: unless-stopped
     ports:
@@ -94,8 +93,8 @@ services:
 
   applications-service:
     build:
-      context: .
-      dockerfile: services/applications-service/Dockerfile
+      context: ./services/applications-service
+      dockerfile: Dockerfile
     container_name: oriyon-applications-service
     restart: unless-stopped
     ports:
@@ -110,8 +109,8 @@ services:
 
   notifications-service:
     build:
-      context: .
-      dockerfile: services/notifications-service/Dockerfile
+      context: ./services/notifications-service
+      dockerfile: Dockerfile
     container_name: oriyon-notifications-service
     restart: unless-stopped
     ports:
