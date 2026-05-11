@@ -26,14 +26,13 @@ app.get("/health", (_req, res) => {
 
 app.use("/contact", contactRouter);
 app.use("/newsletter", newsletterRouter);
-app.use("/api/contact", contactRouter);    // add this
+app.use("/api/contact", contactRouter); // add this
 app.use("/api/newsletter", newsletterRouter); // add this
 
 // ─────────────────────────────────────────────
 // RABBITMQ CONSUMERS
 // ─────────────────────────────────────────────
 async function setupConsumers() {
-
   // ── Applications ──────────────────────────────
 
   // Application submitted → confirmation email to applicant
@@ -44,7 +43,31 @@ async function setupConsumers() {
       const { email, firstName } = payload as any;
       const tpl = templates.applicationConfirmation(firstName);
       await sendEmail({ to: email, ...tpl });
-    }
+    },
+  );
+
+  // Application shortlisted → notify applicant
+  await consumeEvent(
+    "application.shortlisted",
+    "notifications.application.shortlisted",
+    async (payload) => {
+      const { email, firstName, rescued } = payload as any;
+      const tpl = rescued
+        ? templates.applicationRescued(firstName)
+        : templates.applicationShortlisted(firstName);
+      await sendEmail({ to: email, ...tpl });
+    },
+  );
+
+  // Application in rejection review → notify applicant
+  await consumeEvent(
+    "application.rejection_review",
+    "notifications.application.rejection_review",
+    async (payload) => {
+      const { email, firstName } = payload as any;
+      const tpl = templates.applicationRejectionReview(firstName);
+      await sendEmail({ to: email, ...tpl });
+    },
   );
 
   // Application approved → send approval confirmation email
@@ -55,7 +78,7 @@ async function setupConsumers() {
       const { email, firstName } = payload as any;
       const tpl = templates.applicationApproved(firstName);
       await sendEmail({ to: email, ...tpl });
-    }
+    },
   );
 
   // Application rejected → rejection email
@@ -66,7 +89,7 @@ async function setupConsumers() {
       const { email, firstName } = payload as any;
       const tpl = templates.applicationRejected(firstName);
       await sendEmail({ to: email, ...tpl });
-    }
+    },
   );
 
   // ── Account Setup ─────────────────────────────
@@ -81,11 +104,13 @@ async function setupConsumers() {
       const { email, firstName, setupLink, token } = payload as any;
 
       // If token is provided instead of setupLink, build the link
-      const effectiveLink = setupLink || `${process.env.FRONTEND_URL}/setup-password?token=${token}`;
+      const effectiveLink =
+        setupLink ||
+        `${process.env.FRONTEND_URL}/setup-password?token=${token}`;
 
       const tpl = templates.accountSetup(firstName || "there", effectiveLink);
       await sendEmail({ to: email, ...tpl });
-    }
+    },
   );
 
   // ── Password Reset ────────────────────────────
@@ -99,7 +124,7 @@ async function setupConsumers() {
       const resetLink = `${process.env.FRONTEND_URL}/auth/reset-password?token=${token}`;
       const tpl = templates.passwordReset(firstName || "there", resetLink);
       await sendEmail({ to: email, ...tpl });
-    }
+    },
   );
 
   // ── LMS ───────────────────────────────────────
@@ -112,12 +137,14 @@ async function setupConsumers() {
     async (payload) => {
       const { email, firstName, lessonTitle } = payload as any;
       if (!email || !firstName) {
-        console.warn("[notifications] lesson.completed missing email/firstName — skipping");
+        console.warn(
+          "[notifications] lesson.completed missing email/firstName — skipping",
+        );
         return;
       }
       const tpl = templates.lessonCompleted(firstName, lessonTitle);
       await sendEmail({ to: email, ...tpl });
-    }
+    },
   );
 
   // Week completed → congratulations email
@@ -127,12 +154,14 @@ async function setupConsumers() {
     async (payload) => {
       const { email, firstName, weekTitle } = payload as any;
       if (!email || !firstName) {
-        console.warn("[notifications] week.completed missing email/firstName — skipping");
+        console.warn(
+          "[notifications] week.completed missing email/firstName — skipping",
+        );
         return;
       }
       const tpl = templates.weekCompleted(firstName, weekTitle);
       await sendEmail({ to: email, ...tpl });
-    }
+    },
   );
 
   // Exam submitted → exam score and status email
@@ -140,9 +169,12 @@ async function setupConsumers() {
     "exam.submitted",
     "notifications.exam.submitted",
     async (payload) => {
-      const { email, firstName, mcqScore, hasPending, timedOut, sessionId } = payload as any;
+      const { email, firstName, mcqScore, hasPending, timedOut, sessionId } =
+        payload as any;
       if (!email || !firstName) {
-        console.warn("[notifications] exam.submitted missing email/firstName — skipping");
+        console.warn(
+          "[notifications] exam.submitted missing email/firstName — skipping",
+        );
         return;
       }
       const tpl = templates.examSubmitted(
@@ -150,10 +182,10 @@ async function setupConsumers() {
         Number(mcqScore ?? 0),
         Boolean(hasPending),
         Boolean(timedOut),
-        sessionId ?? ""
+        sessionId ?? "",
       );
       await sendEmail({ to: email, ...tpl });
-    }
+    },
   );
 }
 

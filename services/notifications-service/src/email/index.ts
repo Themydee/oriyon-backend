@@ -236,6 +236,40 @@ export const templates = {
     `, "An update on your EEWYLA Training Programme application."),
   }),
 
+  applicationShortlisted: (firstName: string) => ({
+  subject: "Great news — you've been shortlisted for EEWYLA",
+  html: base(`
+    ${heading(`Hi ${firstName}, you've been shortlisted.`)}
+    ${para("We are pleased to inform you that your application to the <strong>EEWYLA Training Programme</strong> has been reviewed and you have been <strong>shortlisted</strong> for the next stage.")}
+    ${para("Our team will be in touch shortly with the next steps. Please ensure your contact details are up to date and watch your inbox carefully.")}
+    ${notice(`Questions? Contact us at <a href="mailto:training@oriyon.ng" style="color:#5a7a5e;">training@oriyon.ng</a>.`)}
+    ${signature()}
+  `, "You've been shortlisted for the EEWYLA Training Programme — next steps coming soon."),
+}),
+
+applicationRejectionReview: (firstName: string) => ({
+  subject: "Update on your EEWYLA application",
+  html: base(`
+    ${heading(`Hi ${firstName},`)}
+    ${para("Thank you for your patience while we review applications for the EEWYLA Training Programme.")}
+    ${para("Your application has been flagged for <strong>further review</strong> by our team. This is a normal part of our assessment process and does not mean your application has been rejected.")}
+    ${para("We will contact you with a final decision within <strong>3–5 working days</strong>. No action is required from you at this time.")}
+    ${notice(`If you have any questions or updates to share about your application, reach us at <a href="mailto:training@oriyon.ng" style="color:#5a7a5e;">training@oriyon.ng</a>.`)}
+    ${signature()}
+  `, "Your EEWYLA application is under further review — we'll be in touch within 3–5 working days."),
+}),
+
+applicationRescued: (firstName: string) => ({
+  subject: "Great news — your EEWYLA application has been reconsidered",
+  html: base(`
+    ${heading(`Hi ${firstName}, we have good news.`)}
+    ${para("After further review, we are pleased to let you know that your application to the <strong>EEWYLA Training Programme</strong> has been reconsidered and you have been <strong>shortlisted</strong>.")}
+    ${para("Our team will be in touch shortly with details on the next steps. Thank you for your patience during the review process.")}
+    ${notice(`Questions? Contact us at <a href="mailto:training@oriyon.ng" style="color:#5a7a5e;">training@oriyon.ng</a>.`)}
+    ${signature()}
+  `, "Your EEWYLA application has been reconsidered — you've been shortlisted."),
+}),
+
   // ── Account Setup ──────────────────────────────────────────────
 
   accountSetup: (firstName: string, setupLink: string) => ({

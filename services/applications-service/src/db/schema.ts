@@ -1,10 +1,20 @@
-import { pgTable, uuid, varchar, text, timestamp, boolean, pgEnum } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  uuid,
+  varchar,
+  text,
+  timestamp,
+  boolean,
+  pgEnum,
+} from "drizzle-orm/pg-core";
 
 export const applicationStatusEnum = pgEnum("application_status", [
   "pending",
   "shortlisted",
   "approved",
+  "rejection_review",
   "rejected",
+  "archived",
 ]);
 
 export const applications = pgTable("applications", {
@@ -41,7 +51,7 @@ export const applications = pgTable("applications", {
   isDigitallyLiterate: varchar("is_digitally_literate", { length: 10 }),
   digitalLiteracyRating: varchar("digital_literacy_rating", { length: 5 }),
   internetUsage: text("internet_usage"),
-  devices: text("devices"),               // stored as JSON string array
+ devices: text("devices"), // stors JSON string array
   onlineTraining: varchar("online_training", { length: 10 }),
   platformExperience: text("platform_experience"),
   toolConfidence: text("tool_confidence"),
@@ -57,11 +67,11 @@ export const applications = pgTable("applications", {
   // ── MOTIVATION & COMMITMENT ──
   benefitedBefore: varchar("benefited_before", { length: 10 }),
   benefitedDetail: text("benefited_detail"),
-  biggestChallenge: text("biggest_challenge"),  // stored as JSON string array
+  biggestChallenge: text("biggest_challenge"), // stored as JSON string array
   whyJoin: text("why_join"),
   hopesToAchieve: text("hopes_to_achieve"),
   willingTraceability: varchar("willing_traceability", { length: 10 }),
-  hasAccess: text("has_access"),               // stored as JSON string array
+  hasAccess: text("has_access"), // stored as JSON string array
   willingChampion: varchar("willing_champion", { length: 10 }),
   willingDonate: varchar("willing_donate", { length: 10 }),
   committedFullTraining: varchar("committed_full_training", { length: 10 }),
@@ -74,9 +84,24 @@ export const applications = pgTable("applications", {
 
   // ── ADMIN ──
   status: applicationStatusEnum("status").notNull().default("pending"),
+
   cohortId: uuid("cohort_id"),
+
   reviewedBy: uuid("reviewed_by"),
+
   reviewNotes: text("review_notes"),
+
+  rejectionReason: text("rejection_reason"),
+
+  rejectedAt: timestamp("rejected_at"),
+
+  archivedAt: timestamp("archived_at"),
+
+  isDeleted: boolean("is_deleted").notNull().default(false),
+
+  deletedAt: timestamp("deleted_at"),
+
   submittedAt: timestamp("submitted_at").notNull().defaultNow(),
+
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
