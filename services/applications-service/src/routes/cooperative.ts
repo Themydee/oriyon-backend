@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { eq } from "drizzle-orm";
+import { eq, count } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../index";
 import { cooperativeMembers, applications } from "../db/schema";
@@ -9,66 +9,65 @@ const router = Router();
 
 // ─────────────────────────────────────────────
 // POST /cooperative/join
-// Public — called immediately after EEWYLA submission
+// Called automatically after EEWYLA application is submitted.
+// Public — no auth required.
+// Body: { applicationId }
 // ─────────────────────────────────────────────
-const joinSchema = z.object({
-  applicationId: z.string().uuid(),
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  email: z.string().email(),
-  phone: z.string().min(7),
-  address: z.string().optional(),
-  livestockType: z.string().optional(),
-  agreesToConstitution: z.literal(true, {
-    errorMap: () => ({
-      message:
-        "You must agree to the EEWYLA Livestock Producers Cooperative Society Constitution",
-    }),
-  }),
-  willingToContribute: z.literal(true, {
-    errorMap: () => ({
-      message:
-        "You must agree to pay registration fees and regular contributions as required by Section 5",
-    }),
-  }),
-});
-
 router.post("/join", async (req: Request, res: Response) => {
-  const parsed = joinSchema.safeParse(req.body);
-  if (!parsed.success)
-    return res.status(400).json({ error: parsed.error.flatten() });
+  const schema = z.object({
+    applicationId: z.string().uuid(),
+  });
 
-  const { applicationId, ...data } = parsed.data;
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { applicationId } = parsed.data;
 
   try {
-    // Verify application exists
+    // Fetch the linked application
     const [application] = await db
       .select()
       .from(applications)
       .where(eq(applications.id, applicationId))
       .limit(1);
 
-    if (!application)
+    if (!application) {
       return res.status(404).json({ error: "Application not found" });
+    }
 
-    // Prevent duplicate membership per application
+    // Check if already a member (idempotent)
     const [existing] = await db
       .select()
       .from(cooperativeMembers)
-      .where(eq(cooperativeMembers.applicationId, applicationId))
+      .where(eq(cooperativeMembers.email, application.email))
       .limit(1);
 
-    if (existing)
-      return res.status(409).json({
-        message: "Already registered as a cooperative member",
+    if (existing) {
+      return res.json({
+        message: "Already a cooperative member",
         member: existing,
       });
+    }
 
+    // Create the cooperative member record
     const [member] = await db
       .insert(cooperativeMembers)
-      .values({ ...data, applicationId })
+      .values({
+        applicationId,
+        firstName: application.firstName,
+        lastName: application.lastName,
+        email: application.email,
+        phone: application.phone,
+        address: application.address ?? undefined,
+        agreesToConstitution: true,
+        willingToContribute: true,
+        status: "active",
+      })
       .returning();
 
+    // Publish event so notifications-service sends the welcome email
     await publishEvent("cooperative.member_joined", {
       memberId: member.id,
       applicationId,
@@ -79,60 +78,35 @@ router.post("/join", async (req: Request, res: Response) => {
     });
 
     return res.status(201).json({
-      message: "Successfully registered as a cooperative member",
+      message: "Successfully joined the EEWYLA Cooperative",
       member,
     });
   } catch (err) {
-    console.error("[POST /cooperative/join]", err);
-    return res.status(500).json({ error: "Failed to register cooperative member" });
+    console.error("[cooperative] join error:", err);
+    return res.status(500).json({ error: "Failed to join cooperative" });
   }
 });
 
 // ─────────────────────────────────────────────
-// GET /cooperative/members — admin
-// All cooperative members, ordered by join date
+// GET /cooperative/members
+// Admin only — list all cooperative members
 // ─────────────────────────────────────────────
 router.get("/members", async (_req: Request, res: Response) => {
   try {
-    const all = await db
+    const members = await db
       .select()
       .from(cooperativeMembers)
       .orderBy(cooperativeMembers.joinedAt);
-    return res.json(all);
-  } catch (err) {
-    console.error("[GET /cooperative/members]", err);
+
+    return res.json(members);
+  } catch {
     return res.status(500).json({ error: "Failed to fetch cooperative members" });
   }
 });
 
 // ─────────────────────────────────────────────
-// GET /cooperative/members/status/:status — admin
-// Filter by active / inactive
-// ⚠️ MUST be before GET /members/:id
-// ─────────────────────────────────────────────
-router.get("/members/status/:status", async (req: Request, res: Response) => {
-  const validStatuses = ["active", "inactive"];
-  if (!validStatuses.includes(req.params.status)) {
-    return res.status(400).json({ error: "Invalid status. Must be 'active' or 'inactive'" });
-  }
-
-  try {
-    const all = await db
-      .select()
-      .from(cooperativeMembers)
-      .where(eq(cooperativeMembers.status, req.params.status as "active" | "inactive"))
-      .orderBy(cooperativeMembers.joinedAt);
-    return res.json(all);
-  } catch (err) {
-    console.error("[GET /cooperative/members/status/:status]", err);
-    return res.status(500).json({ error: "Failed to fetch members by status" });
-  }
-});
-
-// ─────────────────────────────────────────────
-// GET /cooperative/members/:id — admin
-// Single member by ID
-// ⚠️ Wildcard — must be AFTER /members/status/:status
+// GET /cooperative/members/:id
+// Admin only — get a single cooperative member
 // ─────────────────────────────────────────────
 router.get("/members/:id", async (req: Request, res: Response) => {
   try {
@@ -142,65 +116,110 @@ router.get("/members/:id", async (req: Request, res: Response) => {
       .where(eq(cooperativeMembers.id, req.params.id))
       .limit(1);
 
-    if (!member)
+    if (!member) {
       return res.status(404).json({ error: "Member not found" });
+    }
 
     return res.json(member);
-  } catch (err) {
-    console.error("[GET /cooperative/members/:id]", err);
+  } catch {
     return res.status(500).json({ error: "Failed to fetch member" });
   }
 });
 
 // ─────────────────────────────────────────────
-// GET /cooperative/by-application/:applicationId
-// Look up cooperative membership by application ID
+// GET /cooperative/members/by-application/:applicationId
+// Get cooperative member record by application ID
+// NOTE: must be defined before /members/:id so Express
+// doesn't match "by-application" as an :id param
 // ─────────────────────────────────────────────
-router.get("/by-application/:applicationId", async (req: Request, res: Response) => {
-  try {
-    const [member] = await db
-      .select()
-      .from(cooperativeMembers)
-      .where(eq(cooperativeMembers.applicationId, req.params.applicationId))
-      .limit(1);
+router.get(
+  "/members/by-application/:applicationId",
+  async (req: Request, res: Response) => {
+    try {
+      const [member] = await db
+        .select()
+        .from(cooperativeMembers)
+        .where(eq(cooperativeMembers.applicationId, req.params.applicationId))
+        .limit(1);
 
-    if (!member)
-      return res.status(404).json({ error: "No cooperative membership found for this application" });
+      if (!member) {
+        return res
+          .status(404)
+          .json({ error: "No cooperative record found for this application" });
+      }
 
-    return res.json(member);
-  } catch (err) {
-    console.error("[GET /cooperative/by-application/:applicationId]", err);
-    return res.status(500).json({ error: "Failed to fetch membership" });
+      return res.json(member);
+    } catch {
+      return res.status(500).json({ error: "Failed to fetch member" });
+    }
   }
-});
+);
 
 // ─────────────────────────────────────────────
 // PATCH /cooperative/members/:id
-// Admin toggles active / inactive
+// Admin only — activate or deactivate a member
 // ─────────────────────────────────────────────
 router.patch("/members/:id", async (req: Request, res: Response) => {
   const schema = z.object({
-    status: z.enum(["active", "inactive"]),
+    status: z.enum(["active", "inactive"]).optional(),
+    livestockType: z.string().optional(),
+    willingToContribute: z.boolean().optional(),
+    agreesToConstitution: z.boolean().optional(),
   });
 
   const parsed = schema.safeParse(req.body);
-  if (!parsed.success)
+  if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
+  }
 
   try {
     const [updated] = await db
       .update(cooperativeMembers)
-      .set({ status: parsed.data.status, updatedAt: new Date() })
+      .set({
+        ...parsed.data,
+        updatedAt: new Date(),
+      })
       .where(eq(cooperativeMembers.id, req.params.id))
       .returning();
 
-    if (!updated)
+    if (!updated) {
       return res.status(404).json({ error: "Member not found" });
+    }
 
     return res.json(updated);
   } catch (err) {
-    console.error("[PATCH /cooperative/members/:id]", err);
-    return res.status(500).json({ error: "Failed to update member status" });
+    console.error("[cooperative] patch error:", err);
+    return res.status(500).json({ error: "Failed to update member" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /cooperative/stats
+// Admin only — quick stats for the dashboard
+// ─────────────────────────────────────────────
+router.get("/stats", async (_req: Request, res: Response) => {
+  try {
+    const [total] = await db
+      .select({ count: count() })
+      .from(cooperativeMembers);
+
+    const [active] = await db
+      .select({ count: count() })
+      .from(cooperativeMembers)
+      .where(eq(cooperativeMembers.status, "active"));
+
+    const [inactive] = await db
+      .select({ count: count() })
+      .from(cooperativeMembers)
+      .where(eq(cooperativeMembers.status, "inactive"));
+
+    return res.json({
+      total: Number(total.count),
+      active: Number(active.count),
+      inactive: Number(inactive.count),
+    });
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch cooperative stats" });
   }
 });
 
