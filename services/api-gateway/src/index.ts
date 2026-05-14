@@ -77,6 +77,15 @@ app.get("/api/applications/:id",   authenticate, requireRole("admin"), keepPath,
 app.patch("/api/applications/:id", authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
 
 // ─────────────────────────────────────────────
+// COOPERATIVE — public join, admin management
+// ─────────────────────────────────────────────
+app.post("/api/cooperative/join",              keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/cooperative/members",            authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/cooperative/members/status/:status", authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/cooperative/members/:id",        authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/cooperative/by-application/:applicationId", authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.patch("/api/cooperative/members/:id",      authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+// ─────────────────────────────────────────────
 // CONTACT & NEWSLETTER
 // ─────────────────────────────────────────────
 app.post("/api/contact",                  strictLimiter, keepPath, createProxyMiddleware({ target: NOTIFICATIONS_SERVICE_URL, changeOrigin: true }));

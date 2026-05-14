@@ -15,6 +15,20 @@
       "when": 1775915385098,
       "tag": "0001_icy_electro",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778699802731,
+      "tag": "0002_parched_amphibian",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778708459956,
+      "tag": "0003_futuristic_shatterstar",
+      "breakpoints": true
     }
   ]
 }

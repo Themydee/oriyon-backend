@@ -1,12 +1,12 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-COPY package*.json ./
+COPY services/applications-service/package*.json ./
 RUN npm ci
 
 COPY tsconfig.base.json ./
-COPY tsconfig.json ./
-COPY src ./src
+COPY services/applications-service/tsconfig.json ./
+COPY services/applications-service/src ./src
 
 RUN npm run build
 
@@ -14,11 +14,10 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
-COPY package*.json ./
+COPY services/applications-service/package*.json ./
 RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
-COPY src/db/migrations ./dist/db/migrations
 
 EXPOSE 3004
-CMD ["sh", "-c", "node dist/db/migrate.js && node dist/index.js"]
+CMD ["node", "dist/index.js"]

@@ -105,3 +105,32 @@ export const applications = pgTable("applications", {
 
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+
+export const cooperativeStatusEnum = pgEnum("cooperative_status", [
+  "active",
+  "inactive",
+]);
+
+export const cooperativeMembers = pgTable("cooperative_members", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  applicationId: uuid("application_id").references(() => applications.id),
+
+  // Pre-filled from application — no re-entry needed
+  firstName: varchar("first_name", { length: 100 }).notNull(),
+  lastName: varchar("last_name", { length: 100 }).notNull(),
+  email: varchar("email", { length: 255 }).notNull(),
+  phone: varchar("phone", { length: 20 }).notNull(),
+  address: text("address"),
+
+  // Cooperative-specific
+  livestockType: text("livestock_type"), // goats, cattle, poultry etc.
+
+  // Constitution agreement (Section 3 & 5)
+  agreesToConstitution: boolean("agrees_to_constitution").notNull().default(false),
+  willingToContribute: boolean("willing_to_contribute").notNull().default(false),
+
+  status: cooperativeStatusEnum("status").notNull().default("active"),
+  joinedAt: timestamp("joined_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});

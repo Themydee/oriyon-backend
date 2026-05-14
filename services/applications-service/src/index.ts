@@ -7,6 +7,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { connectRabbitMQ } from "./rabbitmq";
 import applicationsRouter from "./routes/applications";
+import cooperativeRouter from "./routes/cooperative";
 
 const app = express();
 const PORT = process.env.PORT || 3004;
@@ -24,7 +25,8 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/applications", applicationsRouter);
-app.use("/api/applications", applicationsRouter); // add this
+app.use("/api/applications", applicationsRouter); 
+app.use("/api/cooperative", cooperativeRouter);
 
 async function bootstrap() {
   await connectRabbitMQ(process.env.RABBITMQ_URL!);
