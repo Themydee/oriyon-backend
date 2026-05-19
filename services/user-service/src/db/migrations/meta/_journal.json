@@ -8,6 +8,13 @@
       "when": 1774994753305,
       "tag": "0000_exotic_zeigeist",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779185296400,
+      "tag": "0001_daffy_deadpool",
+      "breakpoints": true
     }
   ]
 }
