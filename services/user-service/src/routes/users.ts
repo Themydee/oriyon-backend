@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../index";
 import { users, cohorts, cohortMembers, groups, groupMembers } from "../db/schema";
@@ -42,7 +42,6 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
 
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    // Look up cohort membership
     const [membership] = await db
       .select()
       .from(cohortMembers)
@@ -57,7 +56,8 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
     return res.status(500).json({ error: "Failed to fetch user" });
   }
 });
-// POST /users  — admin manually creates a user
+
+// POST /users
 userRouter.post("/", async (req: Request, res: Response) => {
   const parsed = createUserSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -72,8 +72,6 @@ userRouter.post("/", async (req: Request, res: Response) => {
 
     const [newUser] = await db.insert(users).values(parsed.data).returning();
 
-    // Publish user.created so auth-service creates
-    // the auth record and generates the setup token
     await publishEvent("user.created", {
       userId: newUser.id,
       email: newUser.email,
@@ -115,7 +113,7 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
   }
 });
 
-// DELETE /users/:id  — soft delete
+// DELETE /users/:id
 userRouter.delete("/:id", async (req: Request, res: Response) => {
   try {
     await db
@@ -139,6 +137,40 @@ cohortRouter.get("/", async (_req: Request, res: Response) => {
     return res.json(all);
   } catch {
     return res.status(500).json({ error: "Failed to fetch cohorts" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /cohorts/groups/:id — single group with members
+// ⚠️ MUST be before /:id to avoid "groups" being
+// treated as a cohort ID
+// ─────────────────────────────────────────────
+cohortRouter.get("/groups/:id", async (req: Request, res: Response) => {
+  try {
+    const [group] = await db
+      .select()
+      .from(groups)
+      .where(eq(groups.id, req.params.id))
+      .limit(1);
+
+    if (!group) return res.status(404).json({ error: "Group not found" });
+
+    const members = await db
+      .select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        phone: users.phone,
+        joinedAt: groupMembers.joinedAt,
+      })
+      .from(groupMembers)
+      .innerJoin(users, eq(users.id, groupMembers.userId))
+      .where(eq(groupMembers.groupId, group.id));
+
+    return res.json({ ...group, members });
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch group" });
   }
 });
 
@@ -176,7 +208,6 @@ cohortRouter.post("/", async (req: Request, res: Response) => {
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  // Validate dates if provided
   const startDate = parsed.data.startDate ? new Date(parsed.data.startDate) : undefined;
   const endDate = parsed.data.endDate ? new Date(parsed.data.endDate) : undefined;
   if (startDate && isNaN(startDate.getTime())) return res.status(400).json({ error: "Invalid startDate" });
@@ -185,11 +216,7 @@ cohortRouter.post("/", async (req: Request, res: Response) => {
   try {
     const [cohort] = await db
       .insert(cohorts)
-      .values({
-        ...parsed.data,
-        startDate,
-        endDate,
-      })
+      .values({ ...parsed.data, startDate, endDate })
       .returning();
     return res.status(201).json(cohort);
   } catch {
@@ -233,8 +260,13 @@ cohortRouter.post("/:id/enrol", async (req: Request, res: Response) => {
   } catch (err) {
     return res.status(500).json({ error: "Failed to enrol user" });
   }
-}); 
+});
 
+// ─────────────────────────────────────────────
+// GROUPS
+// ─────────────────────────────────────────────
+
+// POST /cohorts/:id/groups — create a group
 cohortRouter.post("/:id/groups", async (req: Request, res: Response) => {
   const schema = z.object({
     name: z.string().min(1),
@@ -242,18 +274,12 @@ cohortRouter.post("/:id/groups", async (req: Request, res: Response) => {
   });
 
   const parsed = schema.safeParse(req.body);
-
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
-  }
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
     const [group] = await db
       .insert(groups)
-      .values({
-        cohortId: req.params.id,
-        ...parsed.data,
-      })
+      .values({ cohortId: req.params.id, ...parsed.data })
       .returning();
 
     return res.status(201).json(group);
@@ -263,70 +289,107 @@ cohortRouter.post("/:id/groups", async (req: Request, res: Response) => {
   }
 });
 
+// GET /cohorts/:id/groups — list groups with member details
 cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
   try {
     const allGroups = await db
       .select()
       .from(groups)
-      .where(eq(groups.cohortId, req.params.id));
+      .where(eq(groups.cohortId, req.params.id))
+      .orderBy(groups.createdAt);
 
-    return res.json(allGroups);
+    // For each group fetch its members
+    const groupsWithMembers = await Promise.all(
+      allGroups.map(async (group) => {
+        const members = await db
+          .select({
+            id: users.id,
+            firstName: users.firstName,
+            lastName: users.lastName,
+            email: users.email,
+            phone: users.phone,
+            joinedAt: groupMembers.joinedAt,
+          })
+          .from(groupMembers)
+          .innerJoin(users, eq(users.id, groupMembers.userId))
+          .where(eq(groupMembers.groupId, group.id));
+
+        return {
+          ...group,
+          memberCount: members.length,
+          members,
+        };
+      })
+    );
+
+    return res.json(groupsWithMembers);
   } catch {
     return res.status(500).json({ error: "Failed to fetch groups" });
   }
 });
 
+// POST /cohorts/:cohortId/groups/:groupId/members — add member to group
 cohortRouter.post("/:cohortId/groups/:groupId/members", async (req: Request, res: Response) => {
   const schema = z.object({
     userId: z.string().uuid(),
   });
 
   const parsed = schema.safeParse(req.body);
-
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
-  }
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const { cohortId, groupId } = req.params;
   const { userId } = parsed.data;
 
   try {
-    // 1. Check user is in cohort
-    const cohortMember = await db
+    // 1. Check user is enrolled in cohort
+    const [cohortMember] = await db
       .select()
       .from(cohortMembers)
       .where(
-        eq(cohortMembers.userId, userId) &&
-        eq(cohortMembers.cohortId, cohortId)
+        and(
+          eq(cohortMembers.userId, userId),
+          eq(cohortMembers.cohortId, cohortId)
+        )
       )
       .limit(1);
 
-    if (!cohortMember.length) {
+    if (!cohortMember) {
       return res.status(400).json({
-        error: "User must be enrolled in cohort before joining group",
+        error: "User must be enrolled in this cohort before joining a group",
       });
     }
 
     // 2. Check group belongs to cohort
-    const group = await db
+    const [group] = await db
       .select()
       .from(groups)
       .where(eq(groups.id, groupId))
       .limit(1);
 
-    if (!group.length || group[0].cohortId !== cohortId) {
-      return res.status(400).json({
-        error: "Group does not belong to this cohort",
-      });
+    if (!group || group.cohortId !== cohortId) {
+      return res.status(400).json({ error: "Group does not belong to this cohort" });
     }
 
-    // 3. Add user to group
+    // 3. Check not already in this group
+    const [alreadyMember] = await db
+      .select()
+      .from(groupMembers)
+      .where(
+        and(
+          eq(groupMembers.groupId, groupId),
+          eq(groupMembers.userId, userId)
+        )
+      )
+      .limit(1);
+
+    if (alreadyMember) {
+      return res.status(409).json({ error: "User is already a member of this group" });
+    }
+
+    // 4. Add to group
     const [member] = await db
       .insert(groupMembers)
-      .values({
-        groupId,
-        userId,
-      })
+      .values({ groupId, userId })
       .returning();
 
     return res.status(201).json(member);
@@ -336,34 +399,20 @@ cohortRouter.post("/:cohortId/groups/:groupId/members", async (req: Request, res
   }
 });
 
-cohortRouter.get("/groups/:id", async (req: Request, res: Response) => {
+// DELETE /cohorts/:cohortId/groups/:groupId/members/:userId
+cohortRouter.delete("/:cohortId/groups/:groupId/members/:userId", async (req: Request, res: Response) => {
+  const { groupId, userId } = req.params;
   try {
-    const [group] = await db
-      .select()
-      .from(groups)
-      .where(eq(groups.id, req.params.id))
-      .limit(1);
-
-    if (!group) {
-      return res.status(404).json({ error: "Group not found" });
-    }
-
-    const members = await db
-      .select({
-        id: users.id,
-        firstName: users.firstName,
-        lastName: users.lastName,
-        email: users.email,
-      })
-      .from(groupMembers)
-      .innerJoin(users, eq(users.id, groupMembers.userId))
-      .where(eq(groupMembers.groupId, group.id));
-
-    return res.json({
-      ...group,
-      members,
-    });
+    await db
+      .delete(groupMembers)
+      .where(
+        and(
+          eq(groupMembers.groupId, groupId),
+          eq(groupMembers.userId, userId)
+        )
+      );
+    return res.json({ message: "Member removed from group" });
   } catch {
-    return res.status(500).json({ error: "Failed to fetch group" });
+    return res.status(500).json({ error: "Failed to remove member from group" });
   }
 });
