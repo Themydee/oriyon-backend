@@ -71,24 +71,25 @@ app.patch("/api/auth/change-password", strictLimiter, authenticate, keepPath, cr
 // ─────────────────────────────────────────────
 // APPLICATIONS
 // ─────────────────────────────────────────────
-app.post("/api/applications",                    keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/applications",                     authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/applications/status/:status",      authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/applications/:id",                 authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
-app.patch("/api/applications/:id/rescue",        authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
-app.patch("/api/applications/:id",               authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
-app.delete("/api/applications/:id",              authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/applications",               keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/applications",                authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/applications/status/:status", authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/applications/:id",            authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.patch("/api/applications/:id/rescue",   authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.patch("/api/applications/:id",          authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.delete("/api/applications/:id",         authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
 
 // ─────────────────────────────────────────────
-// COOPERATIVE — public join, admin management
+// COOPERATIVE
 // ─────────────────────────────────────────────
-app.post("/api/cooperative/join",              keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/cooperative/members",            authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/cooperative/members/status/:status", authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/cooperative/members/:id",        authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/cooperative/join",                         keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/cooperative/members",                       authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/cooperative/members/status/:status",        authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/cooperative/members/:id",                   authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
 app.get("/api/cooperative/by-application/:applicationId", authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
-app.patch("/api/cooperative/members/:id",      authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/cooperative/stats", authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.patch("/api/cooperative/members/:id",                 authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/cooperative/stats",                         authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }));
+
 // ─────────────────────────────────────────────
 // CONTACT & NEWSLETTER
 // ─────────────────────────────────────────────
@@ -98,9 +99,19 @@ app.delete("/api/newsletter/unsubscribe", strictLimiter, keepPath, createProxyMi
 
 // ─────────────────────────────────────────────
 // USERS
+// IMPORTANT: sub-path routes (/id-document/meta,
+// /id-document) must come BEFORE /:id so Express
+// does not swallow "id-document" as a user ID.
 // ─────────────────────────────────────────────
-app.get("/api/users",        authenticate, keepPath, createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }));
-app.post("/api/users",       authenticate, keepPath, createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }));
+app.get("/api/users",  authenticate, keepPath, createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }));
+app.post("/api/users", authenticate, keepPath, createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }));
+
+// ID document — trainee uploads, admin downloads
+app.patch("/api/users/:id/id-document",    authenticate,                    keepPath, createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }));
+app.get("/api/users/:id/id-document/meta", authenticate,                    keepPath, createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }));
+app.get("/api/users/:id/id-document",      authenticate, requireRole("admin"), keepPath, createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }));
+
+// Generic user CRUD — after sub-paths
 app.get("/api/users/:id",    authenticate, keepPath, createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }));
 app.patch("/api/users/:id",  authenticate, keepPath, createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }));
 app.delete("/api/users/:id", authenticate, keepPath, createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }));
@@ -117,10 +128,10 @@ app.post("/api/cohorts/:id/enrol", authenticate, keepPath, createProxyMiddleware
 // ─────────────────────────────────────────────
 // LMS — weeks
 // ─────────────────────────────────────────────
+app.get("/api/lms/weeks",       authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
 app.post("/api/lms/weeks",      authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/weeks/:id",   authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
 app.patch("/api/lms/weeks/:id", authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/lms/weeks",        authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/lms/weeks/:id",    authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
 
 // ─────────────────────────────────────────────
 // LMS — lessons
@@ -132,11 +143,10 @@ app.patch("/api/lms/lessons/:id", authenticate, keepPath, createProxyMiddleware(
 // ─────────────────────────────────────────────
 // LMS — progress
 // NOTE: /cohort/:cohortId must come BEFORE /:userId
-// otherwise Express matches "cohort" as a userId
 // ─────────────────────────────────────────────
-app.post("/api/lms/progress",                  authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/lms/progress/cohort/:cohortId",  authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/lms/progress/:userId",           authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/progress",                 authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/progress/cohort/:cohortId", authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/progress/:userId",          authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
 
 // ─────────────────────────────────────────────
 // LMS — sessions
@@ -163,32 +173,34 @@ app.get("/api/lms/quizzes/:id/attempts/:userId", authenticate, keepPath, createP
 
 // ─────────────────────────────────────────────
 // LMS — exams
+// IMPORTANT: specific sub-paths (sessions, questions,
+// answers) must come BEFORE /:id routes
 // ─────────────────────────────────────────────
-app.get("/api/lms/exams",                                      authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/lms/exams/:id",                                  authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.post("/api/lms/exams",                                     authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.patch("/api/lms/exams/:id",                                authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/lms/exams/:id/questions",                        authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.post("/api/lms/exams/:id/questions",                       authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.patch("/api/lms/exams/questions/:questionId",              authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.delete("/api/lms/exams/questions/:questionId",             authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.post("/api/lms/exams/:id/sessions/start",                   authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.patch("/api/lms/exams/sessions/:sessionId/autosave",       authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.post("/api/lms/exams/sessions/:sessionId/submit",          authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.post("/api/lms/exams/sessions/:sessionId/violations",      authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/lms/exams/sessions/:sessionId/result",           authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/lms/exams/:id/sessions",                         authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/lms/exams/sessions/:sessionId/answers",          authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.patch("/api/lms/exams/answers/:answerId/mark",             authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/exams",                                 authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/exams",                                authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/exams/sessions/:sessionId/result",      authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/exams/sessions/:sessionId/answers",     authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.patch("/api/lms/exams/sessions/:sessionId/autosave",  authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/exams/sessions/:sessionId/submit",     authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/exams/sessions/:sessionId/violations", authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.patch("/api/lms/exams/questions/:questionId",         authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.delete("/api/lms/exams/questions/:questionId",        authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.patch("/api/lms/exams/answers/:answerId/mark",        authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/exams/:id",                             authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.patch("/api/lms/exams/:id",                           authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/exams/:id/questions",                   authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/exams/:id/questions",                  authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/exams/:id/sessions/start",             authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/exams/:id/sessions",                    authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
 
 // ─────────────────────────────────────────────
 // LMS — week 12 attendance
 // ─────────────────────────────────────────────
-app.post("/api/lms/week12/codes",                     authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/lms/week12/codes/:cohortId",             authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.post("/api/lms/week12/checkin",                    authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/lms/week12/checkins/:cohortId",          authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
-app.get("/api/lms/week12/checkins/:cohortId/:userId",  authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/week12/codes",                    authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/week12/codes/:cohortId",            authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.post("/api/lms/week12/checkin",                   authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/week12/checkins/:cohortId",         authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
+app.get("/api/lms/week12/checkins/:cohortId/:userId", authenticate, keepPath, createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }));
 
 // ─────────────────────────────────────────────
 // 404
