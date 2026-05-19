@@ -50,3 +50,33 @@ export const cohortMembers = pgTable("cohort_members", {
   cohortId:   uuid("cohort_id").notNull().references(() => cohorts.id, { onDelete: "cascade" }),
   enrolledAt: timestamp("enrolled_at").notNull().defaultNow(),
 });
+
+export const groups = pgTable("groups", {
+  id: uuid("id").primaryKey().defaultRandom(),
+
+  cohortId: uuid("cohort_id")
+    .notNull()
+    .references(() => cohorts.id, { onDelete: "cascade" }),
+
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+
+  isActive: boolean("is_active").notNull().default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const groupMembers = pgTable("group_members", {
+  id: uuid("id").primaryKey().defaultRandom(),
+
+  groupId: uuid("group_id")
+    .notNull()
+    .references(() => groups.id, { onDelete: "cascade" }),
+
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+
+  joinedAt: timestamp("joined_at").notNull().defaultNow(),
+});

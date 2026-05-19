@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../index";
-import { users, cohorts, cohortMembers } from "../db/schema";
+import { users, cohorts, cohortMembers, groups, groupMembers } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 
 export const userRouter = Router();
@@ -234,3 +234,136 @@ cohortRouter.post("/:id/enrol", async (req: Request, res: Response) => {
     return res.status(500).json({ error: "Failed to enrol user" });
   }
 }); 
+
+cohortRouter.post("/:id/groups", async (req: Request, res: Response) => {
+  const schema = z.object({
+    name: z.string().min(1),
+    description: z.string().optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const [group] = await db
+      .insert(groups)
+      .values({
+        cohortId: req.params.id,
+        ...parsed.data,
+      })
+      .returning();
+
+    return res.status(201).json(group);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to create group" });
+  }
+});
+
+cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
+  try {
+    const allGroups = await db
+      .select()
+      .from(groups)
+      .where(eq(groups.cohortId, req.params.id));
+
+    return res.json(allGroups);
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch groups" });
+  }
+});
+
+cohortRouter.post("/:cohortId/groups/:groupId/members", async (req: Request, res: Response) => {
+  const schema = z.object({
+    userId: z.string().uuid(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { cohortId, groupId } = req.params;
+  const { userId } = parsed.data;
+
+  try {
+    // 1. Check user is in cohort
+    const cohortMember = await db
+      .select()
+      .from(cohortMembers)
+      .where(
+        eq(cohortMembers.userId, userId) &&
+        eq(cohortMembers.cohortId, cohortId)
+      )
+      .limit(1);
+
+    if (!cohortMember.length) {
+      return res.status(400).json({
+        error: "User must be enrolled in cohort before joining group",
+      });
+    }
+
+    // 2. Check group belongs to cohort
+    const group = await db
+      .select()
+      .from(groups)
+      .where(eq(groups.id, groupId))
+      .limit(1);
+
+    if (!group.length || group[0].cohortId !== cohortId) {
+      return res.status(400).json({
+        error: "Group does not belong to this cohort",
+      });
+    }
+
+    // 3. Add user to group
+    const [member] = await db
+      .insert(groupMembers)
+      .values({
+        groupId,
+        userId,
+      })
+      .returning();
+
+    return res.status(201).json(member);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to add user to group" });
+  }
+});
+
+cohortRouter.get("/groups/:id", async (req: Request, res: Response) => {
+  try {
+    const [group] = await db
+      .select()
+      .from(groups)
+      .where(eq(groups.id, req.params.id))
+      .limit(1);
+
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+
+    const members = await db
+      .select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+      })
+      .from(groupMembers)
+      .innerJoin(users, eq(users.id, groupMembers.userId))
+      .where(eq(groupMembers.groupId, group.id));
+
+    return res.json({
+      ...group,
+      members,
+    });
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch group" });
+  }
+});
