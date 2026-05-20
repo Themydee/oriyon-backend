@@ -19,6 +19,8 @@ const {
   NOTIFICATIONS_SERVICE_URL,
 } = process.env;
 
+const fetchFn: any = (globalThis as any).fetch;
+
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:3006",
@@ -162,6 +164,16 @@ app.get(
     target: APPLICATIONS_SERVICE_URL,
     changeOrigin: true,
   }),
+);
+
+// ADMIN — applications analytics
+app.get(
+  "/api/applications/admin/analytics",
+  strictLimiter,
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }),
 );
 app.patch(
   "/api/applications/:id/rescue",
@@ -314,6 +326,67 @@ app.post(
   authenticate,
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+
+// ADMIN — aggregated results for quizzes and exams
+app.get(
+  "/api/admin/results",
+  authenticate,
+  requireRole("admin"),
+  async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization ?? "";
+
+      const [quizResp, examResp, usersResp] = await Promise.all([
+        fetchFn(`${LMS_SERVICE_URL}/api/lms/quizzes/admin/attempts`, { headers: { Authorization: authHeader } }),
+        fetchFn(`${LMS_SERVICE_URL}/api/lms/exams/admin/sessions`, { headers: { Authorization: authHeader } }),
+        fetchFn(`${USER_SERVICE_URL}/api/users`, { headers: { Authorization: authHeader } }),
+      ]);
+
+      const quizAttempts = quizResp && quizResp.ok ? await quizResp.json() : [];
+      const examSessions = examResp && examResp.ok ? await examResp.json() : [];
+      const users = usersResp && usersResp.ok ? await usersResp.json() : [];
+
+      const userMap = new Map((users || []).map((u: any) => [u.id, u]));
+
+      const combined: any[] = [];
+
+      for (const a of quizAttempts || []) {
+        const u: any = userMap.get(a.userId) || {};
+        combined.push({
+          kind: "quiz",
+          title: a.quizTitle,
+          userId: a.userId,
+          fullName: u.firstName ? `${u.firstName} ${u.lastName}` : null,
+          email: u.email ?? null,
+          score: a.score,
+          passed: a.passed,
+          date: a.attemptedAt,
+        });
+      }
+
+      for (const s of examSessions || []) {
+        const u: any = userMap.get(s.userId) || {};
+        combined.push({
+          kind: "exam",
+          title: s.examTitle,
+          userId: s.userId,
+          fullName: u.firstName ? `${u.firstName} ${u.lastName}` : null,
+          email: u.email ?? null,
+          score: s.score ?? null,
+          mcqScore: s.mcqScore ?? null,
+          status: s.status,
+          date: s.submittedAt ?? s.startedAt,
+          isFullyMarked: s.isFullyMarked,
+        });
+      }
+
+      return res.json({ results: combined });
+    } catch (err) {
+      console.error("[api-gateway] admin results error:", err);
+      return res.status(500).json({ error: "Failed to fetch admin results" });
+    }
+  },
 );
 
 // ID document — trainee uploads, admin downloads

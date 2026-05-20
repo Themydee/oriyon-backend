@@ -607,6 +607,33 @@ quizzesRouter.get("/:id/attempts/:userId", async (req: Request, res: Response) =
   }
 });
 
+// ADMIN — list all quiz attempts with quiz title
+// GET /lms/quizzes/admin/attempts
+quizzesRouter.get("/admin/attempts", async (req: Request, res: Response) => {
+  try {
+    const all = await db
+      .select({
+        attemptId: quizAttempts.id,
+        userId: quizAttempts.userId,
+        quizId: quizAttempts.quizId,
+        weekId: quizAttempts.weekId,
+        cohortId: quizAttempts.cohortId,
+        score: quizAttempts.score,
+        passed: quizAttempts.passed,
+        attemptedAt: quizAttempts.attemptedAt,
+        quizTitle: quizzes.title,
+      })
+      .from(quizAttempts)
+      .innerJoin(quizzes, eq(quizAttempts.quizId, quizzes.id))
+      .orderBy(quizAttempts.attemptedAt);
+
+    return res.json(all);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to fetch admin quiz attempts" });
+  }
+});
+
 // ─────────────────────────────────────────────
 // WEEK 12 CODES
 // ─────────────────────────────────────────────
@@ -898,6 +925,34 @@ examsRouter.get("/:id", async (req: Request, res: Response) => {
     return res.json(exam);
   } catch {
     return res.status(500).json({ error: "Failed to fetch exam" });
+  }
+});
+
+// ADMIN — list all exam sessions with exam title
+// GET /lms/exams/admin/sessions
+examsRouter.get("/admin/sessions", async (req: Request, res: Response) => {
+  try {
+    const all = await db
+      .select({
+        sessionId: examSessions.id,
+        userId: examSessions.userId,
+        examId: examSessions.examId,
+        status: examSessions.status,
+        mcqScore: examSessions.mcqScore,
+        score: examSessions.score,
+        submittedAt: examSessions.submittedAt,
+        startedAt: examSessions.startedAt,
+        isFullyMarked: examSessions.isFullyMarked,
+        examTitle: exams.title,
+      })
+      .from(examSessions)
+      .innerJoin(exams, eq(examSessions.examId, exams.id))
+      .orderBy(examSessions.createdAt);
+
+    return res.json(all);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to fetch admin exam sessions" });
   }
 });
  

@@ -116,7 +116,7 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
 // DELETE /users/:id
 userRouter.delete("/:id", async (req: Request, res: Response) => {
   try {
-    await db
+    await db  
       .update(users)
       .set({ isActive: false })
       .where(eq(users.id, req.params.id));

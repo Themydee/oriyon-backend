@@ -293,6 +293,43 @@ router.get("/", async (_req: Request, res: Response) => {
 });
 
 // ─────────────────────────────────────────────
+// ADMIN — Analytics
+// GET /applications/admin/analytics
+// Returns counts by status, counts by cohort, and recent daily submission trends
+// ─────────────────────────────────────────────
+router.get("/admin/analytics", async (req: Request, res: Response) => {
+  try {
+    // Counts by status
+    const byStatus = await db
+      .select({ status: applications.status, count: sql<number>`COUNT(*)` })
+      .from(applications)
+      .where(eq(applications.isDeleted, false))
+      .groupBy(applications.status);
+
+    // Counts by cohort (cohortId may be null)
+    const byCohort = await db
+      .select({ cohortId: applications.cohortId, count: sql<number>`COUNT(*)` })
+      .from(applications)
+      .where(eq(applications.isDeleted, false))
+      .groupBy(applications.cohortId);
+
+    // Daily submissions for the last 30 days
+    const days = 30;
+    const daily = await db
+      .select({ date: sql<string>`TO_CHAR(${applications.submittedAt}::date, 'YYYY-MM-DD')`, count: sql<number>`COUNT(*)` })
+      .from(applications)
+      .where(and(eq(applications.isDeleted, false), sql`${applications.submittedAt} >= (CURRENT_DATE - INTERVAL '${days} days')`))
+      .groupBy(sql`1`)
+      .orderBy(sql`1`);
+
+    return res.json({ byStatus, byCohort, daily });
+  } catch (err) {
+    console.error("[GET /applications/admin/analytics] error:", err);
+    return res.status(500).json({ error: "Failed to fetch analytics" });
+  }
+});
+
+// ─────────────────────────────────────────────
 // GET /applications/status/:status
 // ─────────────────────────────────────────────
 router.get("/status/:status", async (req: Request, res: Response) => {

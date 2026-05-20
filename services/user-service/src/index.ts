@@ -8,6 +8,7 @@ import postgres from "postgres";
 import { connectRabbitMQ, consumeEvent, publishEvent } from "./rabbitmq";
 import { userRouter, cohortRouter } from "./routes/users";
 import adminRouter from "./routes/admin";
+import idDocumentRouter from "./routes/id-document";
 import { users } from "./db/schema";
 import { eq } from "drizzle-orm";
 
@@ -26,7 +27,7 @@ export const db = drizzle(queryClient);
 app.use(helmet());
 app.use(cors());
 app.use(morgan("dev"));
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
 // ─────────────────────────────────────────────
 // ROUTES
@@ -35,11 +36,13 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "user-service" });
 });
 
+app.use("/users", idDocumentRouter);
 app.use("/users", userRouter);
 app.use("/cohorts", cohortRouter);
 app.use("/admin", adminRouter);
-app.use("/api/users", userRouter);   // add this
-app.use("/api/cohorts", cohortRouter); // add this
+app.use("/api/users", idDocumentRouter);
+app.use("/api/users", userRouter);
+app.use("/api/cohorts", cohortRouter);
 
 // ─────────────────────────────────────────────
 // RABBITMQ CONSUMERS
