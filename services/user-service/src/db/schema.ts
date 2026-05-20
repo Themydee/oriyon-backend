@@ -11,7 +11,7 @@ import {
 export const roleEnum = pgEnum("role", ["trainee", "trainer", "admin"]);
 
 export const users = pgTable("users", {
-  id:        uuid("id").primaryKey(), // same ID as auth_users (synced via event)
+  id:        uuid("id").primaryKey(), 
   email:     varchar("email", { length: 255 }).notNull().unique(),
   firstName: varchar("first_name", { length: 100 }).notNull(),
   lastName:  varchar("last_name", { length: 100 }).notNull(),
@@ -19,13 +19,11 @@ export const users = pgTable("users", {
   role:      roleEnum("role").notNull().default("trainee"),
   isActive:  boolean("is_active").notNull().default(true),
 
-  // ── ID Document ──────────────────────────────────────────
-  // Stored as base64 data URI: "data:image/jpeg;base64,..."
-  // Admin can download via GET /users/:id/id-document
-  idType:       varchar("id_type", { length: 60 }),        // e.g. "National ID (NIN)"
-  idDocument:   text("id_document"),                        // full base64 data URI
-  idFilename:   varchar("id_filename", { length: 255 }),    // original file name
-  idMimeType:   varchar("id_mime_type", { length: 60 }),    // image/jpeg | image/png | application/pdf
+  
+  idType:       varchar("id_type", { length: 60 }),       
+  idDocument:   text("id_document"),                        
+  idFilename:   varchar("id_filename", { length: 255 }),    
+  idMimeType:   varchar("id_mime_type", { length: 60 }),    
   idUploadedAt: timestamp("id_uploaded_at"),
 
   createdAt: timestamp("created_at").notNull().defaultNow(),

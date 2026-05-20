@@ -620,6 +620,13 @@ app.get(
 // LMS — quizzes
 // ─────────────────────────────────────────────
 app.get(
+  "/api/lms/quizzes/admin/attempts",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
   "/api/lms/quizzes/week/:weekId",
   authenticate,
   keepPath,

@@ -301,24 +301,23 @@ router.get("/admin/analytics", async (req: Request, res: Response) => {
   try {
     // Counts by status
     const byStatus = await db
-      .select({ status: applications.status, count: sql<number>`COUNT(*)` })
+      .select({ status: applications.status, count: count() })
       .from(applications)
       .where(eq(applications.isDeleted, false))
       .groupBy(applications.status);
 
     // Counts by cohort (cohortId may be null)
     const byCohort = await db
-      .select({ cohortId: applications.cohortId, count: sql<number>`COUNT(*)` })
+      .select({ cohortId: applications.cohortId, count: count() })
       .from(applications)
       .where(eq(applications.isDeleted, false))
       .groupBy(applications.cohortId);
 
     // Daily submissions for the last 30 days
-    const days = 30;
     const daily = await db
-      .select({ date: sql<string>`TO_CHAR(${applications.submittedAt}::date, 'YYYY-MM-DD')`, count: sql<number>`COUNT(*)` })
+      .select({ date: sql<string>`TO_CHAR(${applications.submittedAt}::date, 'YYYY-MM-DD')`, count: count() })
       .from(applications)
-      .where(and(eq(applications.isDeleted, false), sql`${applications.submittedAt} >= (CURRENT_DATE - INTERVAL '${days} days')`))
+      .where(and(eq(applications.isDeleted, false), sql`${applications.submittedAt} >= (CURRENT_DATE - INTERVAL '30 days')`))
       .groupBy(sql`1`)
       .orderBy(sql`1`);
 
