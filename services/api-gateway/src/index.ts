@@ -193,6 +193,16 @@ app.delete(
     changeOrigin: true,
   }),
 );
+app.get(
+  "/api/applications/analytics",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
 
 // ─────────────────────────────────────────────
 // COOPERATIVE
