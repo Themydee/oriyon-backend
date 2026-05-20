@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql, count } from "drizzle-orm";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../index";
@@ -155,6 +155,138 @@ function evaluateAutoShortlist(app: z.infer<typeof submitSchema>): boolean {
 
   return totalScore >= 25;
 }
+
+
+router.get("/", async (_req: Request, res: Response) => {
+  try {
+    // ── Status counts ────────────────────────
+    const statusCounts = await db
+      .select({
+        status: applications.status,
+        count: count(),
+      })
+      .from(applications)
+      .where(eq(applications.isDeleted, false))
+      .groupBy(applications.status);
+ 
+    // ── Gender breakdown ─────────────────────
+    const genderCounts = await db
+      .select({
+        gender: applications.gender,
+        count: count(),
+      })
+      .from(applications)
+      .where(eq(applications.isDeleted, false))
+      .groupBy(applications.gender);
+ 
+    // ── Age bracket breakdown ────────────────
+    // age is stored as varchar e.g. "25", "38"
+    const ageBrackets = await db.execute(sql`
+      SELECT
+        CASE
+          WHEN CAST(age AS INTEGER) < 20              THEN 'Under 20'
+          WHEN CAST(age AS INTEGER) BETWEEN 20 AND 29 THEN '20–29'
+          WHEN CAST(age AS INTEGER) BETWEEN 30 AND 39 THEN '30–39'
+          WHEN CAST(age AS INTEGER) BETWEEN 40 AND 49 THEN '40–49'
+          WHEN CAST(age AS INTEGER) >= 50             THEN '50+'
+          ELSE 'Unknown'
+        END AS bracket,
+        COUNT(*) AS count
+      FROM applications
+      WHERE is_deleted = false
+        AND age IS NOT NULL
+        AND age ~ '^[0-9]+$'
+      GROUP BY bracket
+      ORDER BY bracket
+    `);
+ 
+    // ── Location / address breakdown ─────────
+    // Extract state-like keywords from address field
+    // since there's no dedicated state column.
+    // We use a simple keyword match for Nigerian states.
+    const locationCounts = await db.execute(sql`
+      SELECT
+        CASE
+          WHEN LOWER(address) LIKE '%lagos%'     THEN 'Lagos'
+          WHEN LOWER(address) LIKE '%oyo%'       THEN 'Oyo'
+          WHEN LOWER(address) LIKE '%ogun%'      THEN 'Ogun'
+          WHEN LOWER(address) LIKE '%osun%'      THEN 'Osun'
+          WHEN LOWER(address) LIKE '%ondo%'      THEN 'Ondo'
+          WHEN LOWER(address) LIKE '%ekiti%'     THEN 'Ekiti'
+          WHEN LOWER(address) LIKE '%kwara%'     THEN 'Kwara'
+          WHEN LOWER(address) LIKE '%abuja%'
+            OR LOWER(address) LIKE '%fct%'       THEN 'FCT'
+          WHEN LOWER(address) LIKE '%kano%'      THEN 'Kano'
+          WHEN LOWER(address) LIKE '%kaduna%'    THEN 'Kaduna'
+          WHEN LOWER(address) LIKE '%ibadan%'    THEN 'Oyo'
+          WHEN LOWER(address) LIKE '%ikorodu%'   THEN 'Lagos'
+          ELSE 'Other'
+        END AS state,
+        COUNT(*) AS count
+      FROM applications
+      WHERE is_deleted = false
+        AND address IS NOT NULL
+      GROUP BY state
+      ORDER BY count DESC
+      LIMIT 12
+    `);
+ 
+    // ── Education breakdown ──────────────────
+    const educationCounts = await db
+      .select({
+        level: applications.educationLevel,
+        count: count(),
+      })
+      .from(applications)
+      .where(eq(applications.isDeleted, false))
+      .groupBy(applications.educationLevel);
+ 
+    // ── Total ────────────────────────────────
+    const [totalRow] = await db
+      .select({ total: count() })
+      .from(applications)
+      .where(eq(applications.isDeleted, false));
+ 
+    // ── Submissions over time (last 30 days) ─
+    const submissionsOverTime = await db.execute(sql`
+      SELECT
+        DATE_TRUNC('day', submitted_at) AS day,
+        COUNT(*) AS count
+      FROM applications
+      WHERE is_deleted = false
+        AND submitted_at >= NOW() - INTERVAL '30 days'
+      GROUP BY day
+      ORDER BY day ASC
+    `);
+ 
+    // ── Goat experience ──────────────────────
+    const goatExperience = await db
+      .select({
+        hasExperience: applications.hasGoatExperience,
+        count: count(),
+      })
+      .from(applications)
+      .where(eq(applications.isDeleted, false))
+      .groupBy(applications.hasGoatExperience);
+ 
+    return res.json({
+      total: Number(totalRow.total),
+      byStatus:      statusCounts.map((r) => ({ status: r.status, count: Number(r.count) })),
+      byGender:      genderCounts.map((r) => ({ gender: r.gender ?? "Unknown", count: Number(r.count) })),
+      byAge:         (ageBrackets as any[]).map((r) => ({ bracket: r.bracket, count: Number(r.count) })),
+      byLocation:    (locationCounts as any[]).map((r) => ({ state: r.state, count: Number(r.count) })),
+      byEducation:   educationCounts.map((r) => ({ level: r.level ?? "Unknown", count: Number(r.count) })),
+      byGoatExp:     goatExperience.map((r) => ({ hasExperience: r.hasExperience, count: Number(r.count) })),
+      submissionsOverTime: (submissionsOverTime as any[]).map((r) => ({
+        day:   r.day,
+        count: Number(r.count),
+      })),
+    });
+  } catch (err) {
+    console.error("[analytics] error:", err);
+    return res.status(500).json({ error: "Failed to compute analytics" });
+  }
+});
 
 // ─────────────────────────────────────────────
 // POST /applications — Public Submission Engine
