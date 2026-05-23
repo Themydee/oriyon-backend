@@ -15,7 +15,15 @@ const router = Router();
 // ─────────────────────────────────────────────
 router.post("/join", async (req: Request, res: Response) => {
   const schema = z.object({
-    applicationId: z.string().uuid(),
+    applicationId: z.string().uuid().optional().nullable(),
+    firstName: z.string().optional(),
+    lastName: z.string().optional(),
+    email: z.string().email().optional(),
+    phone: z.string().optional(),
+    address: z.string().optional(),
+    livestockType: z.string().optional().nullable(),
+    agreesToConstitution: z.boolean(),
+    willingToContribute: z.boolean(),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -23,25 +31,66 @@ router.post("/join", async (req: Request, res: Response) => {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
 
-  const { applicationId } = parsed.data;
+  const {
+    applicationId,
+    firstName,
+    lastName,
+    email,
+    phone,
+    address,
+    livestockType,
+    agreesToConstitution,
+    willingToContribute,
+  } = parsed.data;
 
   try {
-    // Fetch the linked application
-    const [application] = await db
-      .select()
-      .from(applications)
-      .where(eq(applications.id, applicationId))
-      .limit(1);
+    let memberData: any = {
+      agreesToConstitution,
+      willingToContribute,
+      status: "active",
+      livestockType: livestockType ?? undefined,
+    };
 
-    if (!application) {
-      return res.status(404).json({ error: "Application not found" });
+    if (applicationId) {
+      // Fetch the linked application
+      const [application] = await db
+        .select()
+        .from(applications)
+        .where(eq(applications.id, applicationId))
+        .limit(1);
+
+      if (!application) {
+        return res.status(404).json({ error: "Application not found" });
+      }
+
+      memberData = {
+        ...memberData,
+        applicationId,
+        firstName: application.firstName,
+        lastName: application.lastName,
+        email: application.email,
+        phone: application.phone,
+        address: application.address ?? undefined,
+      };
+    } else {
+      if (!firstName || !lastName || !email || !phone) {
+        return res.status(400).json({ error: "Missing required contact fields for direct registration" });
+      }
+      memberData = {
+        ...memberData,
+        firstName,
+        lastName,
+        email,
+        phone,
+        address: address ?? undefined,
+      };
     }
 
     // Check if already a member (idempotent)
     const [existing] = await db
       .select()
       .from(cooperativeMembers)
-      .where(eq(cooperativeMembers.email, application.email))
+      .where(eq(cooperativeMembers.email, memberData.email))
       .limit(1);
 
     if (existing) {
@@ -54,17 +103,7 @@ router.post("/join", async (req: Request, res: Response) => {
     // Create the cooperative member record
     const [member] = await db
       .insert(cooperativeMembers)
-      .values({
-        applicationId,
-        firstName: application.firstName,
-        lastName: application.lastName,
-        email: application.email,
-        phone: application.phone,
-        address: application.address ?? undefined,
-        agreesToConstitution: true,
-        willingToContribute: true,
-        status: "active",
-      })
+      .values(memberData)
       .returning();
 
     // Publish event so notifications-service sends the welcome email

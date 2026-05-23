@@ -389,7 +389,7 @@ app.get(
   },
 );
 
-// ID document — trainee uploads, admin downloads
+
 app.patch(
   "/api/users/:id/id-document",
   authenticate,
