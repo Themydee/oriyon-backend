@@ -214,27 +214,36 @@ When an exam is submitted, lms-service publishes `exam.submitted` and notificati
 
 ## Local Development
 
-### Environment
+### Native Setup & Run (Automated Script)
 
-Copy the example env file and configure values for:
-- database URLs
-- RabbitMQ connection
-- email provider / resend API key
-- JWT secrets
-- service ports
+If you have PostgreSQL and RabbitMQ installed locally (e.g. via Homebrew), you can use the automated script to automatically create databases, configure environment variables, install dependencies, run migrations, seed the admin account, and start the services:
 
 ```bash
+# Run one-time setup and start the microservices
+./setup-and-run-local.sh
+
+# Or start services directly once setup is complete
+./start-local.sh
+```
+
+---
+
+### Docker Compose Flow (Alternative)
+
+If you prefer to run inside Docker:
+
+#### 1. Setup Environment
+```bash
+# Copy and configure default variables
 cp .env.example .env
 ```
 
-### Start services
-
+#### 2. Start services
 ```bash
 docker compose up --build
 ```
 
-### Run migrations
-
+#### 3. Run migrations
 ```bash
 docker exec oriyon-auth-service npm run db:migrate
 docker exec oriyon-user-service npm run db:migrate
@@ -243,18 +252,20 @@ docker exec oriyon-applications-service npm run db:migrate
 docker exec oriyon-notifications-service npm run db:migrate
 ```
 
-### Seed initial admin
-
+#### 4. Seed initial admin
 ```bash
 docker exec -it oriyon-auth-service sh
-# then run seed script inside the container
+# then run: npx ts-node --transpile-only src/seed-admin.ts
 ```
 
-### Useful commands
+---
+
+### Useful Commands
 
 ```bash
 # Build all services from repo root if needed
 npm run build
+
 # Start only one service for isolation
 cd services/lms-service && npm run dev
 ```
@@ -368,21 +379,33 @@ PATCH  /api/applications/:id          (admin only)
 
 ## Quick Start
 
-### 1. Clone and configure
-
+### Native Local Setup (Recommended)
+If you have Postgres and RabbitMQ running on your host machine, you can set up and run everything in one step:
 ```bash
-cp .env.example .env
-# Edit .env with your real values
+./setup-and-run-local.sh
+```
+This script handles configuration generation, database initialization, package installation, database migrations, admin seeding, and startup automatically.
+
+Once setup is complete, you can start the stack in the future using:
+```bash
+./start-local.sh
 ```
 
-### 2. Start everything
+---
 
+### Docker Quick Start (Alternative)
+
+#### 1. Configure variables
+```bash
+cp .env.example .env
+```
+
+#### 2. Start the services container stack
 ```bash
 docker compose up --build
 ```
 
-### 3. Run migrations (first time)
-
+#### 3. Run database migrations
 ```bash
 docker exec oriyon-auth-service npm run db:migrate
 docker exec oriyon-user-service npm run db:migrate
@@ -391,14 +414,13 @@ docker exec oriyon-applications-service npm run db:migrate
 docker exec oriyon-notifications-service npm run db:migrate
 ```
 
-### 4. Seed the first admin account
-
+#### 4. Seed the first admin account
 ```bash
 docker exec -it oriyon-auth-service sh
 npx ts-node --transpile-only src/seed-admin.ts
 ```
 
-Default credentials (override via env vars):
+Default Admin Credentials:
 ```
 Email:    admin@oriyon.ng
 Password: Admin@Oriyon2025
@@ -407,9 +429,7 @@ Password: Admin@Oriyon2025
 ### 5. RabbitMQ Management UI
 
 Visit http://localhost:15672  
-Login with `RABBITMQ_USER` / `RABBITMQ_PASS` from your `.env`
-
----
+Login with `RABBITMQ_USER` / `RABBITMQ_PASS` from your `.env` (default is `guest`/`guest` for local).
 
 ## Environment Variables
 

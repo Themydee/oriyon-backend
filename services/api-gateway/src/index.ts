@@ -5,6 +5,8 @@ import helmet from "helmet";
 import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 import { createProxyMiddleware } from "http-proxy-middleware";
+import swaggerUi from "swagger-ui-express";
+import { swaggerSpec } from "./swagger";
 import { authenticate, requireRole } from "./middleware/auth";
 
 const app = express();
@@ -28,7 +30,12 @@ const allowedOrigins = [
   "https://oriyoninternational.com",
 ];
 
-app.use(helmet());
+// Configure helmet with CSP disabled to allow Swagger UI's inline scripts/styles to render successfully
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+  }),
+);
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -61,6 +68,14 @@ app.get("/health", (_req, res) => {
     service: "api-gateway",
     timestamp: new Date().toISOString(),
   });
+});
+
+// ─────────────────────────────────────────────
+// SWAGGER API DOCUMENTATION (QA testing endpoints)
+// ─────────────────────────────────────────────
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.get("/api-docs.json", (_req, res) => {
+  res.json(swaggerSpec);
 });
 
 // ─────────────────────────────────────────────
