@@ -1,0 +1,46 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/oriyon-backend
+
+            # Pull latest code
+            git pull origin main
+
+            # Install dependencies for all services
+            for dir in services/*/; do
+              echo "Installing $dir..."
+              (cd "$dir" && npm install)
+            done
+
+            # Build all services
+            for service in api-gateway auth-service user-service lms-service applications-service notifications-service; do
+              echo "Building $service..."
+              (cd "services/$service" && npm run build)
+            done
+
+            # Restart all services
+            pm2 restart all
+
+            # Save PM2 state
+            pm2 save
+
+            echo "Deployment complete!"
