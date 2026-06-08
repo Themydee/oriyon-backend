@@ -23,7 +23,7 @@ jobs:
             cd ~/oriyon-backend
 
             # Pull latest code
-            git pull origin main
+            git pull origin master
 
             # Install dependencies for all services
             for dir in services/*/; do
