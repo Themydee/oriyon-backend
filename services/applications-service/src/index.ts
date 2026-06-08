@@ -8,6 +8,7 @@ import postgres from "postgres";
 import { connectRabbitMQ } from "./rabbitmq";
 import applicationsRouter from "./routes/applications";
 import cooperativeRouter from "./routes/cooperative";
+import { seedCooperatives } from "./db/seed-coops";
 
 const app = express();
 const PORT = process.env.PORT || 3004;
@@ -30,6 +31,7 @@ app.use("/api/cooperative", cooperativeRouter);
 
 async function bootstrap() {
   await connectRabbitMQ(process.env.RABBITMQ_URL!);
+  await seedCooperatives();
   app.listen(PORT, () => {
     console.log(`[applications-service] Running on port ${PORT}`);
   });

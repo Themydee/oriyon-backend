@@ -107,30 +107,41 @@
   });
 
 
-  export const cooperativeStatusEnum = pgEnum("cooperative_status", [
-    "active",
-    "inactive",
-  ]);
+  export const cooperatives = pgTable("cooperatives", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: varchar("name", { length: 255 }).notNull().unique(),
+  state: varchar("state", { length: 100 }).notNull(),
+  description: text("description"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
 
-  export const cooperativeMembers = pgTable("cooperative_members", {
-    id: uuid("id").primaryKey().defaultRandom(),
-    applicationId: uuid("application_id").references(() => applications.id),
+export const cooperativeStatusEnum = pgEnum("cooperative_status", [
+  "active",
+  "inactive",
+]);
 
-    // Pre-filled from application — no re-entry needed
-    firstName: varchar("first_name", { length: 100 }).notNull(),
-    lastName: varchar("last_name", { length: 100 }).notNull(),
-    email: varchar("email", { length: 255 }).notNull(),
-    phone: varchar("phone", { length: 20 }).notNull(),
-    address: text("address"),
+export const cooperativeMembers = pgTable("cooperative_members", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  applicationId: uuid("application_id").references(() => applications.id),
+  cooperativeId: uuid("cooperative_id").references(() => cooperatives.id),
 
-    // Cooperative-specific
-    livestockType: text("livestock_type"), // goats, cattle, poultry etc.
+  // Pre-filled from application — no re-entry needed
+  firstName: varchar("first_name", { length: 100 }).notNull(),
+  lastName: varchar("last_name", { length: 100 }).notNull(),
+  email: varchar("email", { length: 255 }).notNull(),
+  phone: varchar("phone", { length: 20 }).notNull(),
+  address: text("address"),
 
-    // Constitution agreement (Section 3 & 5)
-    agreesToConstitution: boolean("agrees_to_constitution").notNull().default(false),
-    willingToContribute: boolean("willing_to_contribute").notNull().default(false),
+  // Cooperative-specific
+  livestockType: text("livestock_type"), // goats, cattle, poultry etc.
 
-    status: cooperativeStatusEnum("status").notNull().default("active"),
-    joinedAt: timestamp("joined_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  });
+  // Constitution agreement (Section 3 & 5)
+  agreesToConstitution: boolean("agrees_to_constitution").notNull().default(false),
+  willingToContribute: boolean("willing_to_contribute").notNull().default(false),
+
+  status: cooperativeStatusEnum("status").notNull().default("active"),
+  joinedAt: timestamp("joined_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});

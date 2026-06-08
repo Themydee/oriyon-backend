@@ -29,6 +29,13 @@
       "when": 1778708459956,
       "tag": "0003_futuristic_shatterstar",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780951552620,
+      "tag": "0004_unique_sprite",
+      "breakpoints": true
     }
   ]
 }

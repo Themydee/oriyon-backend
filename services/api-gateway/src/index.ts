@@ -224,6 +224,34 @@ app.delete(
 // ─────────────────────────────────────────────
 // COOPERATIVE
 // ─────────────────────────────────────────────
+app.get(
+  "/api/cooperative",
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.post(
+  "/api/cooperative",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.delete(
+  "/api/cooperative/:id",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
 app.post(
   "/api/cooperative/join",
   keepPath,
