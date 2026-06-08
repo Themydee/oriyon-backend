@@ -31,6 +31,12 @@ jobs:
               (cd "$dir" && npm install)
             done
 
+            # Run migrations
+            for service in auth-service user-service lms-service applications-service notifications-service; do
+              echo "Migrating $service..."
+              (cd "services/$service" && npm run migrate)
+            done
+
             # Build all services
             for service in api-gateway auth-service user-service lms-service applications-service notifications-service; do
               echo "Building $service..."
