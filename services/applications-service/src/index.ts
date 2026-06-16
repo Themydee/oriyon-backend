@@ -6,7 +6,7 @@ import morgan from "morgan";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { connectRabbitMQ } from "./rabbitmq";
-import applicationsRouter from "./routes/applications";
+import applicationsRouter, { runAutoShortlistCheck } from "./routes/applications";
 import cooperativeRouter from "./routes/cooperative";
 import { seedCooperatives } from "./db/seed-coops";
 
@@ -32,6 +32,19 @@ app.use("/api/cooperative", cooperativeRouter);
 async function bootstrap() {
   await connectRabbitMQ(process.env.RABBITMQ_URL!);
   await seedCooperatives();
+
+  // Run auto-shortlist check once on startup, then every 10 minutes
+  runAutoShortlistCheck().catch(err => {
+    console.error("[Auto-Shortlist Startup Error]:", err);
+  });
+
+  const TEN_MINUTES = 10 * 60 * 1000;
+  setInterval(() => {
+    runAutoShortlistCheck().catch(err => {
+      console.error("[Auto-Shortlist Scheduler Error]:", err);
+    });
+  }, TEN_MINUTES);
+
   app.listen(PORT, () => {
     console.log(`[applications-service] Running on port ${PORT}`);
   });

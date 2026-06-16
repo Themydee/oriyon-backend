@@ -216,9 +216,9 @@ router.post("/", async (req: Request, res: Response) => {
 });
 
 // ─────────────────────────────────────────────
-// POST /applications/auto-shortlist-existing (Batch Migration Endpoint)
+// AUTO-SHORTLIST BATCH RUNNER
 // ─────────────────────────────────────────────
-router.post("/auto-shortlist-existing", async (_req: Request, res: Response) => {
+export async function runAutoShortlistCheck() {
   try {
     const activePendingApplications = await db
       .select()
@@ -263,13 +263,27 @@ router.post("/auto-shortlist-existing", async (_req: Request, res: Response) => 
       }
     }
 
-    return res.json({
-      message: "Batch process completed successfully",
+    return {
       totalPendingScanned: activePendingApplications.length,
       automaticallyShortlistedCount: processedCount,
+    };
+  } catch (err) {
+    console.error("[Auto Shortlist Check Error]:", err);
+    throw err;
+  }
+}
+
+// ─────────────────────────────────────────────
+// POST /applications/auto-shortlist-existing (Batch Migration Endpoint)
+// ─────────────────────────────────────────────
+router.post("/auto-shortlist-existing", async (_req: Request, res: Response) => {
+  try {
+    const result = await runAutoShortlistCheck();
+    return res.json({
+      message: "Batch process completed successfully",
+      ...result,
     });
   } catch (err) {
-    console.error("[Batch Shortlist Error]:", err);
     return res.status(500).json({ error: "Failed to process retroactive application updates" });
   }
 });
