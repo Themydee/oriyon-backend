@@ -101,14 +101,36 @@ router.post("/join", async (req: Request, res: Response) => {
   const schema = z.object({
     applicationId: z.string().uuid().optional().nullable(),
     cooperativeId: z.string().uuid().optional().nullable(),
-    firstName: z.string().optional(),
-    lastName: z.string().optional(),
-    email: z.string().email().optional(),
-    phone: z.string().optional(),
-    address: z.string().optional(),
+    firstName: z.string().optional().nullable(),
+    lastName: z.string().optional().nullable(),
+    email: z.string().email().optional().nullable().or(z.literal("")),
+    phone: z.string().min(1, "Phone number is required"),
+    address: z.string().optional().nullable(),
+    
+    // New spreadsheet fields
+    memberId: z.string().optional().nullable(),
+    fullName: z.string().min(1, "Full Legal Name is required"),
+    gender: z.string().optional().nullable(),
+    dateOfBirth: z.string().optional().nullable(),
+    lga: z.string().optional().nullable(),
+    zoneCluster: z.string().optional().nullable(),
+    occupation: z.string().optional().nullable(),
     livestockType: z.string().optional().nullable(),
-    agreesToConstitution: z.boolean(),
-    willingToContribute: z.boolean(),
+    yearsOfExperience: z.string().optional().nullable(),
+    idType: z.string().optional().nullable(),
+    idNumber: z.string().optional().nullable(),
+    nextOfKinName: z.string().optional().nullable(),
+    nextOfKinPhone: z.string().optional().nullable(),
+    registrationFeePaid: z.string().optional().nullable(),
+    monthlyContributionAmount: z.string().optional().nullable(),
+    attendanceCommitment: z.string().optional().nullable(),
+    qualifiedForTraining: z.string().optional().nullable(),
+    whatsappNumber: z.string().optional().nullable(),
+    signature: z.string().optional().nullable(),
+    remarks: z.string().optional().nullable(),
+    
+    agreesToConstitution: z.boolean().optional().default(false),
+    willingToContribute: z.boolean().optional().default(false),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -124,31 +146,79 @@ router.post("/join", async (req: Request, res: Response) => {
     email,
     phone,
     address,
+    memberId,
+    fullName,
+    gender,
+    dateOfBirth,
+    lga,
+    zoneCluster,
+    occupation,
     livestockType,
+    yearsOfExperience,
+    idType,
+    idNumber,
+    nextOfKinName,
+    nextOfKinPhone,
+    registrationFeePaid,
+    monthlyContributionAmount,
+    attendanceCommitment,
+    qualifiedForTraining,
+    whatsappNumber,
+    signature,
+    remarks,
     agreesToConstitution,
     willingToContribute,
   } = parsed.data;
 
   try {
-    // Resolve cooperative ID, default to EEWYLA Oyo if none specified (safeguard)
+    // Resolve cooperative ID, default to Ibadan North if none specified (safeguard)
     let finalCooperativeId = cooperativeId;
     if (!finalCooperativeId) {
       const [defaultCoop] = await db
         .select()
         .from(cooperatives)
-        .where(eq(cooperatives.name, "EEWYLA Livestock Producers Cooperative Society Ltd"))
+        .where(eq(cooperatives.name, "Ibadan North"))
         .limit(1);
       if (defaultCoop) {
         finalCooperativeId = defaultCoop.id;
       }
     }
 
+    let finalFirstName = firstName;
+    let finalLastName = lastName;
+    
+    if (!finalFirstName && !finalLastName && fullName) {
+      const parts = fullName.trim().split(/\s+/);
+      finalFirstName = parts[0] || "";
+      finalLastName = parts.slice(1).join(" ") || "";
+    }
+
     let memberData: any = {
       cooperativeId: finalCooperativeId ?? undefined,
-      agreesToConstitution,
-      willingToContribute,
+      agreesToConstitution: agreesToConstitution ?? false,
+      willingToContribute: willingToContribute ?? false,
       status: "active",
+      
+      memberId: memberId ?? undefined,
+      fullName: fullName ?? undefined,
+      gender: gender ?? undefined,
+      dateOfBirth: dateOfBirth ?? undefined,
+      lga: lga ?? undefined,
+      zoneCluster: zoneCluster ?? undefined,
+      occupation: occupation ?? undefined,
       livestockType: livestockType ?? undefined,
+      yearsOfExperience: yearsOfExperience ?? undefined,
+      idType: idType ?? undefined,
+      idNumber: idNumber ?? undefined,
+      nextOfKinName: nextOfKinName ?? undefined,
+      nextOfKinPhone: nextOfKinPhone ?? undefined,
+      registrationFeePaid: registrationFeePaid ?? undefined,
+      monthlyContributionAmount: monthlyContributionAmount ?? undefined,
+      attendanceCommitment: attendanceCommitment ?? undefined,
+      qualifiedForTraining: qualifiedForTraining ?? undefined,
+      whatsappNumber: whatsappNumber ?? undefined,
+      signature: signature ?? undefined,
+      remarks: remarks ?? undefined,
     };
 
     if (applicationId) {
@@ -171,16 +241,17 @@ router.post("/join", async (req: Request, res: Response) => {
         email: application.email,
         phone: application.phone,
         address: application.address ?? undefined,
+        fullName: memberData.fullName || `${application.firstName} ${application.lastName}`,
       };
     } else {
-      if (!firstName || !lastName || !email || !phone) {
-        return res.status(400).json({ error: "Missing required contact fields for direct registration" });
+      if (!phone) {
+        return res.status(400).json({ error: "Phone number is required for direct registration" });
       }
       memberData = {
         ...memberData,
-        firstName,
-        lastName,
-        email,
+        firstName: finalFirstName ?? undefined,
+        lastName: finalLastName ?? undefined,
+        email: email || undefined,
         phone,
         address: address ?? undefined,
       };
@@ -192,7 +263,9 @@ router.post("/join", async (req: Request, res: Response) => {
       .from(cooperativeMembers)
       .where(
         and(
-          eq(cooperativeMembers.email, memberData.email),
+          memberData.email
+            ? eq(cooperativeMembers.email, memberData.email)
+            : eq(cooperativeMembers.phone, memberData.phone),
           finalCooperativeId 
             ? eq(cooperativeMembers.cooperativeId, finalCooperativeId)
             : eq(cooperativeMembers.agreesToConstitution, true) // fallback
@@ -264,7 +337,28 @@ router.get("/members", async (_req: Request, res: Response) => {
         email: cooperativeMembers.email,
         phone: cooperativeMembers.phone,
         address: cooperativeMembers.address,
+        
+        memberId: cooperativeMembers.memberId,
+        fullName: cooperativeMembers.fullName,
+        gender: cooperativeMembers.gender,
+        dateOfBirth: cooperativeMembers.dateOfBirth,
+        lga: cooperativeMembers.lga,
+        zoneCluster: cooperativeMembers.zoneCluster,
+        occupation: cooperativeMembers.occupation,
         livestockType: cooperativeMembers.livestockType,
+        yearsOfExperience: cooperativeMembers.yearsOfExperience,
+        idType: cooperativeMembers.idType,
+        idNumber: cooperativeMembers.idNumber,
+        nextOfKinName: cooperativeMembers.nextOfKinName,
+        nextOfKinPhone: cooperativeMembers.nextOfKinPhone,
+        registrationFeePaid: cooperativeMembers.registrationFeePaid,
+        monthlyContributionAmount: cooperativeMembers.monthlyContributionAmount,
+        attendanceCommitment: cooperativeMembers.attendanceCommitment,
+        qualifiedForTraining: cooperativeMembers.qualifiedForTraining,
+        whatsappNumber: cooperativeMembers.whatsappNumber,
+        signature: cooperativeMembers.signature,
+        remarks: cooperativeMembers.remarks,
+        
         agreesToConstitution: cooperativeMembers.agreesToConstitution,
         willingToContribute: cooperativeMembers.willingToContribute,
         status: cooperativeMembers.status,

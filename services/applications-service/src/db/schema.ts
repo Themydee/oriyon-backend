@@ -127,15 +127,34 @@ export const cooperativeMembers = pgTable("cooperative_members", {
   applicationId: uuid("application_id").references(() => applications.id),
   cooperativeId: uuid("cooperative_id").references(() => cooperatives.id),
 
-  // Pre-filled from application — no re-entry needed
-  firstName: varchar("first_name", { length: 100 }).notNull(),
-  lastName: varchar("last_name", { length: 100 }).notNull(),
-  email: varchar("email", { length: 255 }).notNull(),
+  // Pre-filled from application — no re-entry needed (optional to support direct entries)
+  firstName: varchar("first_name", { length: 100 }),
+  lastName: varchar("last_name", { length: 100 }),
+  email: varchar("email", { length: 255 }),
   phone: varchar("phone", { length: 20 }).notNull(),
   address: text("address"),
 
-  // Cooperative-specific
+  // Cooperative-specific and spreadsheet fields
+  memberId: varchar("member_id", { length: 50 }),
+  fullName: varchar("full_name", { length: 255 }),
+  gender: varchar("gender", { length: 20 }),
+  dateOfBirth: varchar("date_of_birth", { length: 50 }),
+  lga: varchar("lga", { length: 100 }),
+  zoneCluster: varchar("zone_cluster", { length: 150 }),
+  occupation: varchar("occupation", { length: 150 }),
   livestockType: text("livestock_type"), // goats, cattle, poultry etc.
+  yearsOfExperience: varchar("years_of_experience", { length: 50 }),
+  idType: varchar("id_type", { length: 100 }),
+  idNumber: varchar("id_number", { length: 100 }),
+  nextOfKinName: varchar("next_of_kin_name", { length: 150 }),
+  nextOfKinPhone: varchar("next_of_kin_phone", { length: 50 }),
+  registrationFeePaid: varchar("registration_fee_paid", { length: 10 }), // "YES" / "NO"
+  monthlyContributionAmount: varchar("monthly_contribution_amount", { length: 50 }),
+  attendanceCommitment: varchar("attendance_commitment", { length: 10 }), // "YES" / "NO"
+  qualifiedForTraining: varchar("qualified_for_training", { length: 10 }), // "YES" / "NO"
+  whatsappNumber: varchar("whatsapp_number", { length: 50 }),
+  signature: text("signature"),
+  remarks: text("remarks"),
 
   // Constitution agreement (Section 3 & 5)
   agreesToConstitution: boolean("agrees_to_constitution").notNull().default(false),
