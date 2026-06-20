@@ -20,33 +20,50 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -e
             cd ~/oriyon-backend
 
-            # Pull latest code
+            echo "================================================="
+            echo "Pulling latest code..."
+            echo "================================================="
             git pull origin master
 
-            # Install dependencies for all services
+            echo "================================================="
+            echo "Installing dependencies..."
+            echo "================================================="
             for dir in services/*/; do
               echo "Installing $dir..."
-              (cd "$dir" && npm install)
+              (cd "$dir" && npm install) || { echo "❌ Install failed in $dir"; exit 1; }
             done
 
-            # Run migrations
+            echo "================================================="
+            echo "Running migrations..."
+            echo "================================================="
             for service in auth-service user-service lms-service applications-service notifications-service; do
               echo "Migrating $service..."
-              (cd "services/$service" && npm run migrate)
+              (cd "services/$service" && npm run migrate) || { echo "❌ Migration failed in $service"; exit 1; }
             done
 
-            # Build all services
+            echo "================================================="
+            echo "Building services..."
+            echo "================================================="
             for service in api-gateway auth-service user-service lms-service applications-service notifications-service; do
               echo "Building $service..."
-              (cd "services/$service" && npm run build)
+              (cd "services/$service" && npm run build) || { echo "❌ Build failed in $service"; exit 1; }
             done
 
-            # Restart all services
+            echo "================================================="
+            echo "Restarting PM2..."
+            echo "================================================="
             pm2 restart all
-
-            # Save PM2 state
             pm2 save
 
-            echo "Deployment complete!"
+            echo "================================================="
+            echo "Verifying services..."
+            echo "================================================="
+            sleep 5
+            pm2 status
+
+            echo "================================================="
+            echo "✅ Deployment complete!"
+            echo "================================================="
