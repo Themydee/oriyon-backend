@@ -24,9 +24,38 @@ const createUserSchema = z.object({
 // GET /users
 userRouter.get("/", async (_req: Request, res: Response) => {
   try {
-    const all = await db.select().from(users).orderBy(users.createdAt);
-    return res.json(all);
+    const allUsers = await db.select().from(users).orderBy(users.createdAt);
+    const allCohortMembers = await db.select().from(cohortMembers);
+    const allGroupMembers = await db.select().from(groupMembers);
+    const allCohorts = await db.select().from(cohorts);
+    const allGroups = await db.select().from(groups);
+
+    const cohortMap = new Map(allCohorts.map((c) => [c.id, c.name]));
+    const groupMap = new Map(allGroups.map((g) => [g.id, g.name]));
+
+    const userCohortMap = new Map<string, { id: string; name: string }[]>();
+    for (const cm of allCohortMembers) {
+      const cohortName = cohortMap.get(cm.cohortId) || "";
+      if (!userCohortMap.has(cm.userId)) userCohortMap.set(cm.userId, []);
+      userCohortMap.get(cm.userId)!.push({ id: cm.cohortId, name: cohortName });
+    }
+
+    const userGroupMap = new Map<string, { id: string; name: string }[]>();
+    for (const gm of allGroupMembers) {
+      const groupName = groupMap.get(gm.groupId) || "";
+      if (!userGroupMap.has(gm.userId)) userGroupMap.set(gm.userId, []);
+      userGroupMap.get(gm.userId)!.push({ id: gm.groupId, name: groupName });
+    }
+
+    const usersWithMemberships = allUsers.map((u) => ({
+      ...u,
+      cohorts: userCohortMap.get(u.id) || [],
+      groups: userGroupMap.get(u.id) || [],
+    }));
+
+    return res.json(usersWithMemberships);
   } catch (err) {
+    console.error(err);
     return res.status(500).json({ error: "Failed to fetch users" });
   }
 });
