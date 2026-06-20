@@ -21,6 +21,11 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
+            
+            # Load NVM and Node/NPM/PM2 paths for non-interactive shell
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
             cd ~/oriyon-backend
 
             echo "================================================="

@@ -385,7 +385,7 @@ app.post(
 app.get(
   "/api/admin/results",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "trainer"),
   async (req: Request, res: Response) => {
     try {
       const authHeader = req.headers.authorization ?? "";
@@ -675,7 +675,7 @@ app.get(
 app.get(
   "/api/lms/quizzes/admin/attempts",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "trainer"),
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
