@@ -35,6 +35,17 @@ app.use("/api/newsletter", newsletterRouter); // add this
 async function setupConsumers() {
   // ── Applications ──────────────────────────────
 
+  // Application custom email requested → send branded custom email
+  await consumeEvent(
+    "application.custom_email_requested",
+    "notifications.application.custom_email",
+    async (payload) => {
+      const { email, firstName, subject, body } = payload as any;
+      const tpl = templates.customDirectEmail(firstName, subject, body);
+      await sendEmail({ to: email, ...tpl });
+    },
+  );
+
   // Application submitted → confirmation email to applicant
   await consumeEvent(
     "application.submitted",

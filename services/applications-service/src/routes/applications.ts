@@ -403,6 +403,52 @@ router.get("/:id", async (req: Request, res: Response) => {
 });
 
 // ─────────────────────────────────────────────
+// POST /applications/:id/email — Send Direct Custom Email
+// ─────────────────────────────────────────────
+router.post("/:id/email", async (req: Request, res: Response) => {
+  const emailSchema = z.object({
+    subject: z.string().min(1, "Subject is required"),
+    body: z.string().min(1, "Message body is required"),
+  });
+
+  const parsed = emailSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const [application] = await db
+      .select()
+      .from(applications)
+      .where(
+        and(
+          eq(applications.id, req.params.id),
+          eq(applications.isDeleted, false)
+        )
+      )
+      .limit(1);
+
+    if (!application) {
+      return res.status(404).json({ error: "Application not found" });
+    }
+
+    await publishEvent("application.custom_email_requested", {
+      applicationId: application.id,
+      email: application.email,
+      firstName: application.firstName,
+      lastName: application.lastName,
+      subject: parsed.data.subject,
+      body: parsed.data.body,
+    });
+
+    return res.json({ message: "Custom email request dispatched successfully" });
+  } catch (err) {
+    console.error("[POST /applications/:id/email] error:", err);
+    return res.status(500).json({ error: "Failed to dispatch email request" });
+  }
+});
+
+// ─────────────────────────────────────────────
 // PATCH /applications/:id/rescue
 // ─────────────────────────────────────────────
 router.patch("/:id/rescue", async (req: Request, res: Response) => {

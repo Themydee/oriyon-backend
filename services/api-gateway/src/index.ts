@@ -200,6 +200,16 @@ app.patch(
     changeOrigin: true,
   }),
 );
+app.post(
+  "/api/applications/:id/email",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
 app.patch(
   "/api/applications/:id",
   authenticate,

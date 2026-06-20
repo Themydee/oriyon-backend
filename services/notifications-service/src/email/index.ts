@@ -201,6 +201,15 @@ export const templates = {
 
   // ── Applications ──────────────────────────────────────────────
 
+  customDirectEmail: (firstName: string, subject: string, bodyText: string) => ({
+    subject,
+    html: base(`
+      ${heading(`Hi ${firstName},`)}
+      ${bodyText.split('\n').filter(line => line.trim() !== '').map(p => para(p)).join('')}
+      ${signature()}
+    `, subject),
+  }),
+
   applicationConfirmation: (firstName: string) => ({
     subject: "We received your EEWYLA application",
     html: base(`
