@@ -114,6 +114,7 @@ weeksRouter.post("/", async (req: Request, res: Response) => {
     description: z.string().optional(),
     weekNumber: z.number().int().positive(),
     isPublished: z.boolean().optional(),
+    objectives: z.array(z.string()).optional(),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });

@@ -1,0 +1,1 @@
+ALTER TABLE "weeks" ADD COLUMN "objectives" jsonb DEFAULT '[]'::jsonb NOT NULL;
