@@ -27,7 +27,14 @@
       "idx": 3,
       "version": "7",
       "when": 1781946285867,
-      "tag": "0003_greedy_stryfe",
+      "tag": "0003_add_exam_week_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1781946285868,
+      "tag": "0004_greedy_stryfe",
       "breakpoints": true
     }
   ]
