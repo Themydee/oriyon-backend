@@ -112,6 +112,8 @@
   name: varchar("name", { length: 255 }).notNull().unique(),
   state: varchar("state", { length: 100 }).notNull(),
   description: text("description"),
+  locationId: varchar("location_id", { length: 100 }),
+  regionId: varchar("region_id", { length: 100 }),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -141,6 +143,8 @@ export const cooperativeMembers = pgTable("cooperative_members", {
   dateOfBirth: varchar("date_of_birth", { length: 50 }),
   lga: varchar("lga", { length: 100 }),
   zoneCluster: varchar("zone_cluster", { length: 150 }),
+  locationId: varchar("location_id", { length: 100 }),
+  regionId: varchar("region_id", { length: 100 }),
   occupation: varchar("occupation", { length: 150 }),
   livestockType: text("livestock_type"), // goats, cattle, poultry etc.
   yearsOfExperience: varchar("years_of_experience", { length: 50 }),

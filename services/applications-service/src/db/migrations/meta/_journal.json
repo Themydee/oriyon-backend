@@ -43,6 +43,13 @@
       "when": 1781632440295,
       "tag": "0005_nosy_sister_grimm",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782043262915,
+      "tag": "0006_crazy_giant_man",
+      "breakpoints": true
     }
   ]
 }
