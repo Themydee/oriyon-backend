@@ -1,0 +1,1 @@
+ALTER TABLE "cooperatives" ADD COLUMN "lga" varchar(100);
