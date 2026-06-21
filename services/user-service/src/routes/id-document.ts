@@ -13,7 +13,7 @@ const ID_TYPES = [
   "International Passport",
 ] as const;
 
-const MAX_BASE64_LENGTH = 7_000_000; // ~5 MB raw
+const MAX_BASE64_LENGTH = 15_000_000; // ~10 MB raw
 
 // ─────────────────────────────────────────────
 // PATCH /users/:id/id-document
@@ -27,10 +27,11 @@ router.patch("/:id/id-document", async (req: Request, res: Response) => {
     idDocument: z
       .string()
       .startsWith("data:", { message: "Must be a base64 data URI" })
-      .max(MAX_BASE64_LENGTH, { message: "File too large (max 5 MB)" }),
+      .max(MAX_BASE64_LENGTH, { message: "File too large (max 10 MB)" }),
     idFilename: z.string().max(255),
     idMimeType: z.enum([
       "image/jpeg",
+      "image/jpg",
       "image/png",
       "image/webp",
       "application/pdf",
