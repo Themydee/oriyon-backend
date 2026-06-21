@@ -1,0 +1,1 @@
+ALTER TABLE "cooperatives" ADD COLUMN "zone" varchar(150);

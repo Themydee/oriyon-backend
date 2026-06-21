@@ -114,6 +114,7 @@
   description: text("description"),
   locationId: varchar("location_id", { length: 100 }),
   regionId: varchar("region_id", { length: 100 }),
+  zone: varchar("zone", { length: 150 }),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

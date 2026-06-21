@@ -35,6 +35,7 @@ router.post("/", async (req: Request, res: Response) => {
     description: z.string().optional().nullable(),
     locationId: z.string().optional().nullable(),
     regionId: z.string().optional().nullable(),
+    zone: z.string().optional().nullable(),
     isActive: z.boolean().optional().default(true),
   });
 

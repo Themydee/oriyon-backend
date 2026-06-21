@@ -50,6 +50,13 @@
       "when": 1782043262915,
       "tag": "0006_crazy_giant_man",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782056666641,
+      "tag": "0007_lean_the_initiative",
+      "breakpoints": true
     }
   ]
 }
