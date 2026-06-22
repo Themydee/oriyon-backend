@@ -251,9 +251,9 @@ router.post("/payment/verify", async (req: Request, res: Response) => {
       });
     }
 
-    const secretKey = process.env.PAYSTACK_SECRET_KEY || "sk_test_mockkey123";
+    const secretKey = process.env.PAYSTACK_SECRET_KEY || "sk_test_f9e5be53d3b65af77fc8a7ab5d829e11dbd2e831";
 
-    if (!process.env.PAYSTACK_SECRET_KEY || secretKey === "sk_test_mockkey123") {
+    if (!process.env.PAYSTACK_SECRET_KEY || secretKey === "sk_test_f9e5be53d3b65af77fc8a7ab5d829e11dbd2e831") {
       console.log("[Mock Paystack] Bypassing verify API call, auto-approving transaction...");
       
       await db
