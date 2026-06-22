@@ -1,8 +1,9 @@
 import { Router, Request, Response } from "express";
 import { eq, count, and } from "drizzle-orm";
 import { z } from "zod";
+import axios from "axios";
 import { db } from "../index";
-import { cooperativeMembers, applications, cooperatives } from "../db/schema";
+import { cooperativeMembers, applications, cooperatives, cooperativePayments } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 
 const router = Router();
@@ -38,6 +39,8 @@ router.post("/", async (req: Request, res: Response) => {
     zone: z.string().optional().nullable(),
     lga: z.string().optional().nullable(),
     isActive: z.boolean().optional().default(true),
+    whatsappLink: z.string().optional().nullable(),
+    registrationFee: z.number().optional().nullable(),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -92,6 +95,284 @@ router.delete("/:id", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("[cooperative] delete error:", err);
     return res.status(500).json({ error: "Failed to delete cooperative" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// POST /cooperative/payment/initialize
+// Initialize transaction with Paystack
+// ─────────────────────────────────────────────
+router.post("/payment/initialize", async (req: Request, res: Response) => {
+  const schema = z.object({
+    memberId: z.string().uuid("Invalid Member ID"),
+    paymentType: z.enum(["registration", "contribution"]).optional().default("registration"),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { memberId, paymentType } = parsed.data;
+
+  try {
+    const [member] = await db
+      .select()
+      .from(cooperativeMembers)
+      .where(eq(cooperativeMembers.id, memberId))
+      .limit(1);
+
+    if (!member) {
+      return res.status(404).json({ error: "Member not found" });
+    }
+
+    if (!member.cooperativeId) {
+      return res.status(400).json({ error: "Member is not linked to any cooperative" });
+    }
+
+    let feeAmount = 2000;
+    let reference = "";
+
+    if (paymentType === "contribution") {
+      let contribAmount = 2000; // Default lock to 2000 as requested
+      if (member.monthlyContributionAmount) {
+        const parsedAmount = parseInt(member.monthlyContributionAmount.replace(/[^0-9]/g, ""), 10);
+        if (!isNaN(parsedAmount) && parsedAmount > 0) {
+          contribAmount = parsedAmount;
+        }
+      }
+      feeAmount = contribAmount;
+      reference = `COOP-CONTRIB-${memberId}-${Date.now()}`;
+    } else {
+      const [coop] = await db
+        .select()
+        .from(cooperatives)
+        .where(eq(cooperatives.id, member.cooperativeId))
+        .limit(1);
+      feeAmount = coop?.registrationFee || 2000;
+      reference = `COOP-PAY-${memberId}-${Date.now()}`;
+    }
+
+    const paystackAmount = feeAmount * 100; // in kobo
+
+    // Log the transaction in the database
+    await db.insert(cooperativePayments).values({
+      memberId: member.id,
+      amount: paystackAmount,
+      reference,
+      status: "pending",
+    });
+
+    const secretKey = process.env.PAYSTACK_SECRET_KEY || "sk_test_mockkey123";
+
+    if (!process.env.PAYSTACK_SECRET_KEY || secretKey === "sk_test_mockkey123") {
+      console.log("[Mock Paystack] Bypassing initialization call...");
+      return res.json({
+        authorization_url: `${process.env.FRONTEND_URL || "http://localhost:3000"}/cooperative/payment-callback?reference=${reference}`,
+        reference,
+        amount: feeAmount,
+      });
+    }
+
+    const paystackResponse = await axios.post(
+      "https://api.paystack.co/transaction/initialize",
+      {
+        email: member.email || "support@oriyoninternational.com",
+        amount: paystackAmount,
+        reference,
+        callback_url: `${process.env.FRONTEND_URL || "http://localhost:3000"}/cooperative/payment-callback`,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${secretKey}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    return res.json({
+      authorization_url: paystackResponse.data.data.authorization_url,
+      reference,
+      amount: feeAmount,
+    });
+  } catch (error: any) {
+    console.error("Payment initialization error:", error.response?.data || error.message);
+    return res.status(500).json({ error: "Failed to initialize payment with transaction provider" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// POST /cooperative/payment/verify
+// Verify payment and fetch WhatsApp link
+// ─────────────────────────────────────────────
+router.post("/payment/verify", async (req: Request, res: Response) => {
+  const schema = z.object({
+    reference: z.string().min(1, "Reference is required"),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { reference } = parsed.data;
+
+  try {
+    const [payment] = await db
+      .select()
+      .from(cooperativePayments)
+      .where(eq(cooperativePayments.reference, reference))
+      .limit(1);
+
+    if (!payment) {
+      return res.status(404).json({ error: "Payment record not found" });
+    }
+
+    const [member] = await db
+      .select()
+      .from(cooperativeMembers)
+      .where(eq(cooperativeMembers.id, payment.memberId))
+      .limit(1);
+
+    if (!member || !member.cooperativeId) {
+      return res.status(400).json({ error: "Member details invalid or missing cooperative ID" });
+    }
+
+    if (payment.status === "success") {
+      const [coop] = await db
+        .select()
+        .from(cooperatives)
+        .where(eq(cooperatives.id, member.cooperativeId))
+        .limit(1);
+
+      return res.json({
+        status: "success",
+        whatsappLink: coop?.whatsappLink || "https://chat.whatsapp.com/default-placeholder-link",
+      });
+    }
+
+    const secretKey = process.env.PAYSTACK_SECRET_KEY || "sk_test_mockkey123";
+
+    if (!process.env.PAYSTACK_SECRET_KEY || secretKey === "sk_test_mockkey123") {
+      console.log("[Mock Paystack] Bypassing verify API call, auto-approving transaction...");
+      
+      await db
+        .update(cooperativePayments)
+        .set({
+          status: "success",
+          metadata: { mock: true, verifiedAt: new Date() },
+          updatedAt: new Date(),
+        })
+        .where(eq(cooperativePayments.id, payment.id));
+
+      if (reference.startsWith("COOP-PAY-")) {
+        await db
+          .update(cooperativeMembers)
+          .set({
+            registrationFeePaid: "YES",
+            updatedAt: new Date(),
+          })
+          .where(eq(cooperativeMembers.id, payment.memberId));
+
+        // Publish event so user-service can auto-provision account if cooperative-only
+        await publishEvent("cooperative.payment_verified", {
+          memberId: member.id,
+          email: member.email,
+          firstName: member.firstName,
+          lastName: member.lastName,
+          phone: member.phone,
+          lga: member.lga,
+        });
+      }
+
+      const [coop] = await db
+        .select()
+        .from(cooperatives)
+        .where(eq(cooperatives.id, member.cooperativeId))
+        .limit(1);
+
+      return res.json({
+        status: "success",
+        whatsappLink: coop?.whatsappLink || "https://chat.whatsapp.com/default-placeholder-link",
+      });
+    }
+
+    // Call Paystack verification endpoint
+    const paystackResponse = await axios.get(
+      `https://api.paystack.co/transaction/verify/${reference}`,
+      {
+        headers: {
+          Authorization: `Bearer ${secretKey}`,
+        },
+      }
+    );
+
+    const data = paystackResponse.data.data;
+
+    if (data.status === "success") {
+      // 1. Update payment status in db
+      await db
+        .update(cooperativePayments)
+        .set({
+          status: "success",
+          metadata: data,
+          updatedAt: new Date(),
+        })
+        .where(eq(cooperativePayments.id, payment.id));
+
+      if (reference.startsWith("COOP-PAY-")) {
+        // 2. Update registration status in cooperativeMembers table
+        await db
+          .update(cooperativeMembers)
+          .set({
+            registrationFeePaid: "YES", // Match the varchar representation ("YES") in DB
+            updatedAt: new Date(),
+          })
+          .where(eq(cooperativeMembers.id, payment.memberId));
+
+        // Publish event so user-service can auto-provision account if cooperative-only
+        await publishEvent("cooperative.payment_verified", {
+          memberId: member.id,
+          email: member.email,
+          firstName: member.firstName,
+          lastName: member.lastName,
+          phone: member.phone,
+          lga: member.lga,
+        });
+      }
+
+      // 3. Fetch linked WhatsApp group link
+      const [coop] = await db
+        .select()
+        .from(cooperatives)
+        .where(eq(cooperatives.id, member.cooperativeId))
+        .limit(1);
+
+      return res.json({
+        status: "success",
+        whatsappLink: coop?.whatsappLink || "https://chat.whatsapp.com/default-placeholder-link",
+      });
+    } else {
+      // Update as failed if paystack reports it failed
+      if (data.status === "failed") {
+        await db
+          .update(cooperativePayments)
+          .set({
+            status: "failed",
+            metadata: data,
+            updatedAt: new Date(),
+          })
+          .where(eq(cooperativePayments.id, payment.id));
+      }
+
+      return res.json({
+        status: data.status,
+        message: "Payment verification failed or pending",
+      });
+    }
+  } catch (error: any) {
+    console.error("Payment verification error:", error.response?.data || error.message);
+    return res.status(500).json({ error: "Failed to verify transaction status" });
   }
 });
 
@@ -334,8 +615,85 @@ router.post("/join", async (req: Request, res: Response) => {
 // GET /cooperative/members
 // Admin only — list all cooperative members
 // ─────────────────────────────────────────────
-router.get("/members", async (_req: Request, res: Response) => {
+router.get("/members", async (req: Request, res: Response) => {
+  const role = req.headers["x-user-role"] as string;
+  const assignedLga = req.headers["x-user-assigned-lga"] as string;
+
   try {
+    const query = db
+      .select({
+        id: cooperativeMembers.id,
+        applicationId: cooperativeMembers.applicationId,
+        cooperativeId: cooperativeMembers.cooperativeId,
+        cooperativeName: cooperatives.name,
+        firstName: cooperativeMembers.firstName,
+        lastName: cooperativeMembers.lastName,
+        email: cooperativeMembers.email,
+        phone: cooperativeMembers.phone,
+        address: cooperativeMembers.address,
+        
+        memberId: cooperativeMembers.memberId,
+        fullName: cooperativeMembers.fullName,
+        gender: cooperativeMembers.gender,
+        dateOfBirth: cooperativeMembers.dateOfBirth,
+        lga: cooperativeMembers.lga,
+        zoneCluster: cooperativeMembers.zoneCluster,
+        locationId: cooperativeMembers.locationId,
+        regionId: cooperativeMembers.regionId,
+        occupation: cooperativeMembers.occupation,
+        livestockType: cooperativeMembers.livestockType,
+        yearsOfExperience: cooperativeMembers.yearsOfExperience,
+        idType: cooperativeMembers.idType,
+        idNumber: cooperativeMembers.idNumber,
+        nextOfKinName: cooperativeMembers.nextOfKinName,
+        nextOfKinPhone: cooperativeMembers.nextOfKinPhone,
+        registrationFeePaid: cooperativeMembers.registrationFeePaid,
+        monthlyContributionAmount: cooperativeMembers.monthlyContributionAmount,
+        attendanceCommitment: cooperativeMembers.attendanceCommitment,
+        qualifiedForTraining: cooperativeMembers.qualifiedForTraining,
+        whatsappNumber: cooperativeMembers.whatsappNumber,
+        signature: cooperativeMembers.signature,
+        remarks: cooperativeMembers.remarks,
+        
+        agreesToConstitution: cooperativeMembers.agreesToConstitution,
+        willingToContribute: cooperativeMembers.willingToContribute,
+        status: cooperativeMembers.status,
+        joinedAt: cooperativeMembers.joinedAt,
+        updatedAt: cooperativeMembers.updatedAt,
+      })
+      .from(cooperativeMembers)
+      .leftJoin(cooperatives, eq(cooperativeMembers.cooperativeId, cooperatives.id));
+
+    const members = (role === "coordinator" && assignedLga)
+      ? await query.where(eq(cooperativeMembers.lga, assignedLga)).orderBy(cooperativeMembers.joinedAt)
+      : await query.orderBy(cooperativeMembers.joinedAt);
+
+    return res.json(members);
+  } catch (err) {
+    console.error("[cooperative] fetch members error:", err);
+    return res.status(500).json({ error: "Failed to fetch cooperative members" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /cooperative/members/status/:status
+// Admin/Coordinator — list cooperative members by status
+// ─────────────────────────────────────────────
+router.get("/members/status/:status", async (req: Request, res: Response) => {
+  const { status } = req.params;
+  const role = req.headers["x-user-role"] as string;
+  const assignedLga = req.headers["x-user-assigned-lga"] as string;
+
+  if (status !== "active" && status !== "inactive") {
+    return res.status(400).json({ error: "Invalid status value" });
+  }
+
+  try {
+    let conditions = [eq(cooperativeMembers.status, status)];
+    if (role === "coordinator" && assignedLga) {
+      conditions.push(eq(cooperativeMembers.lga, assignedLga));
+    }
+
     const members = await db
       .select({
         id: cooperativeMembers.id,
@@ -379,19 +737,110 @@ router.get("/members", async (_req: Request, res: Response) => {
       })
       .from(cooperativeMembers)
       .leftJoin(cooperatives, eq(cooperativeMembers.cooperativeId, cooperatives.id))
+      .where(and(...conditions))
       .orderBy(cooperativeMembers.joinedAt);
 
     return res.json(members);
-  } catch {
-    return res.status(500).json({ error: "Failed to fetch cooperative members" });
+  } catch (err) {
+    console.error("[cooperative] fetch members by status error:", err);
+    return res.status(500).json({ error: "Failed to fetch cooperative members by status" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /cooperative/members/me
+// Get the logged-in member's cooperative details
+// ─────────────────────────────────────────────
+router.get("/members/me", async (req: Request, res: Response) => {
+  const email = req.headers["x-user-email"] as string;
+  if (!email) {
+    return res.status(400).json({ error: "Missing user email header" });
+  }
+
+  try {
+    const [member] = await db
+      .select({
+        id: cooperativeMembers.id,
+        cooperativeId: cooperativeMembers.cooperativeId,
+        cooperativeName: cooperatives.name,
+        whatsappLink: cooperatives.whatsappLink,
+        registrationFee: cooperatives.registrationFee,
+        firstName: cooperativeMembers.firstName,
+        lastName: cooperativeMembers.lastName,
+        email: cooperativeMembers.email,
+        phone: cooperativeMembers.phone,
+        lga: cooperativeMembers.lga,
+        registrationFeePaid: cooperativeMembers.registrationFeePaid,
+        monthlyContributionAmount: cooperativeMembers.monthlyContributionAmount,
+        status: cooperativeMembers.status,
+        joinedAt: cooperativeMembers.joinedAt,
+      })
+      .from(cooperativeMembers)
+      .leftJoin(cooperatives, eq(cooperativeMembers.cooperativeId, cooperatives.id))
+      .where(eq(cooperativeMembers.email, email))
+      .limit(1);
+
+    if (!member) {
+      return res.status(404).json({ error: "Cooperative member record not found" });
+    }
+
+    return res.json(member);
+  } catch (err) {
+    console.error("[cooperative] fetch self member record error:", err);
+    return res.status(500).json({ error: "Failed to fetch self member record" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /cooperative/members/me/payments
+// Get the logged-in member's payment history
+// ─────────────────────────────────────────────
+router.get("/members/me/payments", async (req: Request, res: Response) => {
+  const email = req.headers["x-user-email"] as string;
+  if (!email) {
+    return res.status(400).json({ error: "Missing user email header" });
+  }
+
+  try {
+    const [member] = await db
+      .select()
+      .from(cooperativeMembers)
+      .where(eq(cooperativeMembers.email, email))
+      .limit(1);
+
+    if (!member) {
+      return res.status(404).json({ error: "Member not found" });
+    }
+
+    const payments = await db
+      .select({
+        id: cooperativePayments.id,
+        amount: cooperativePayments.amount,
+        currency: cooperativePayments.currency,
+        reference: cooperativePayments.reference,
+        status: cooperativePayments.status,
+        createdAt: cooperativePayments.createdAt,
+        updatedAt: cooperativePayments.updatedAt,
+      })
+      .from(cooperativePayments)
+      .where(eq(cooperativePayments.memberId, member.id))
+      .orderBy(cooperativePayments.createdAt);
+
+    return res.json(payments);
+  } catch (err) {
+    console.error("[cooperative] fetch member payments error:", err);
+    return res.status(500).json({ error: "Failed to fetch payments" });
   }
 });
 
 // ─────────────────────────────────────────────
 // GET /cooperative/members/:id
-// Admin only — get a single cooperative member
+// Admin/Coordinator — get a single cooperative member
 // ─────────────────────────────────────────────
 router.get("/members/:id", async (req: Request, res: Response) => {
+  const role = req.headers["x-user-role"] as string;
+  const assignedLga = req.headers["x-user-assigned-lga"] as string;
+
   try {
     const [member] = await db
       .select()
@@ -401,6 +850,10 @@ router.get("/members/:id", async (req: Request, res: Response) => {
 
     if (!member) {
       return res.status(404).json({ error: "Member not found" });
+    }
+
+    if (role === "coordinator" && assignedLga && member.lga !== assignedLga) {
+      return res.status(403).json({ error: "Forbidden — member is outside your assigned LGA" });
     }
 
     return res.json(member);
@@ -418,6 +871,9 @@ router.get("/members/:id", async (req: Request, res: Response) => {
 router.get(
   "/members/by-application/:applicationId",
   async (req: Request, res: Response) => {
+    const role = req.headers["x-user-role"] as string;
+    const assignedLga = req.headers["x-user-assigned-lga"] as string;
+
     try {
       const [member] = await db
         .select()
@@ -431,6 +887,10 @@ router.get(
           .json({ error: "No cooperative record found for this application" });
       }
 
+      if (role === "coordinator" && assignedLga && member.lga !== assignedLga) {
+        return res.status(403).json({ error: "Forbidden — member is outside your assigned LGA" });
+      }
+
       return res.json(member);
     } catch {
       return res.status(500).json({ error: "Failed to fetch member" });
@@ -440,14 +900,18 @@ router.get(
 
 // ─────────────────────────────────────────────
 // PATCH /cooperative/members/:id
-// Admin only — activate or deactivate a member
+// Admin/Coordinator — update a member
 // ─────────────────────────────────────────────
 router.patch("/members/:id", async (req: Request, res: Response) => {
+  const role = req.headers["x-user-role"] as string;
+  const assignedLga = req.headers["x-user-assigned-lga"] as string;
+
   const schema = z.object({
     status: z.enum(["active", "inactive"]).optional(),
     livestockType: z.string().optional(),
     willingToContribute: z.boolean().optional(),
     agreesToConstitution: z.boolean().optional(),
+    remarks: z.string().optional().nullable(),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -456,6 +920,20 @@ router.patch("/members/:id", async (req: Request, res: Response) => {
   }
 
   try {
+    const [existing] = await db
+      .select()
+      .from(cooperativeMembers)
+      .where(eq(cooperativeMembers.id, req.params.id))
+      .limit(1);
+
+    if (!existing) {
+      return res.status(404).json({ error: "Member not found" });
+    }
+
+    if (role === "coordinator" && assignedLga && existing.lga !== assignedLga) {
+      return res.status(403).json({ error: "Forbidden — member is outside your assigned LGA" });
+    }
+
     const [updated] = await db
       .update(cooperativeMembers)
       .set({
@@ -464,10 +942,6 @@ router.patch("/members/:id", async (req: Request, res: Response) => {
       })
       .where(eq(cooperativeMembers.id, req.params.id))
       .returning();
-
-    if (!updated) {
-      return res.status(404).json({ error: "Member not found" });
-    }
 
     return res.json(updated);
   } catch (err) {
@@ -478,30 +952,65 @@ router.patch("/members/:id", async (req: Request, res: Response) => {
 
 // ─────────────────────────────────────────────
 // GET /cooperative/stats
-// Admin only — quick stats for the dashboard
+// Admin/Coordinator — quick stats for the dashboard
 // ─────────────────────────────────────────────
-router.get("/stats", async (_req: Request, res: Response) => {
+router.get("/stats", async (req: Request, res: Response) => {
+  const role = req.headers["x-user-role"] as string;
+  const assignedLga = req.headers["x-user-assigned-lga"] as string;
+
   try {
-    const [total] = await db
-      .select({ count: count() })
-      .from(cooperativeMembers);
+    let totalQuery;
+    let activeQuery;
+    let inactiveQuery;
 
-    const [active] = await db
-      .select({ count: count() })
-      .from(cooperativeMembers)
-      .where(eq(cooperativeMembers.status, "active"));
+    if (role === "coordinator" && assignedLga) {
+      totalQuery = db
+        .select({ count: count() })
+        .from(cooperativeMembers)
+        .where(eq(cooperativeMembers.lga, assignedLga));
+      activeQuery = db
+        .select({ count: count() })
+        .from(cooperativeMembers)
+        .where(
+          and(
+            eq(cooperativeMembers.status, "active"),
+            eq(cooperativeMembers.lga, assignedLga)
+          )
+        );
+      inactiveQuery = db
+        .select({ count: count() })
+        .from(cooperativeMembers)
+        .where(
+          and(
+            eq(cooperativeMembers.status, "inactive"),
+            eq(cooperativeMembers.lga, assignedLga)
+          )
+        );
+    } else {
+      totalQuery = db
+        .select({ count: count() })
+        .from(cooperativeMembers);
+      activeQuery = db
+        .select({ count: count() })
+        .from(cooperativeMembers)
+        .where(eq(cooperativeMembers.status, "active"));
+      inactiveQuery = db
+        .select({ count: count() })
+        .from(cooperativeMembers)
+        .where(eq(cooperativeMembers.status, "inactive"));
+    }
 
-    const [inactive] = await db
-      .select({ count: count() })
-      .from(cooperativeMembers)
-      .where(eq(cooperativeMembers.status, "inactive"));
+    const [total] = await totalQuery;
+    const [active] = await activeQuery;
+    const [inactive] = await inactiveQuery;
 
     return res.json({
       total: Number(total.count),
       active: Number(active.count),
       inactive: Number(inactive.count),
     });
-  } catch {
+  } catch (err) {
+    console.error("[cooperative] fetch stats error:", err);
     return res.status(500).json({ error: "Failed to fetch cooperative stats" });
   }
 });

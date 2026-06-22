@@ -18,7 +18,9 @@ const createUserSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   phone: z.string().optional(),
-  role: z.enum(["trainee", "trainer", "admin"]).default("trainee"),
+  role: z.enum(["trainee", "trainer", "coordinator", "admin"]).default("trainee"),
+  assignedState: z.string().optional().nullable(),
+  assignedLga: z.string().optional().nullable(),
 });
 
 // GET /users
@@ -107,6 +109,8 @@ userRouter.post("/", async (req: Request, res: Response) => {
       firstName: newUser.firstName,
       lastName: newUser.lastName,
       role: newUser.role,
+      assignedState: newUser.assignedState,
+      assignedLga: newUser.assignedLga,
     });
 
     return res.status(201).json(newUser);
@@ -123,6 +127,9 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
     lastName: z.string().optional(),
     phone: z.string().optional(),
     isActive: z.boolean().optional(),
+    role: z.enum(["trainee", "trainer", "coordinator", "admin"]).optional(),
+    assignedState: z.string().optional().nullable(),
+    assignedLga: z.string().optional().nullable(),
   });
 
   const parsed = allowedFields.safeParse(req.body);

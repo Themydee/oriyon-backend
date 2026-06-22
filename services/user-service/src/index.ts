@@ -97,6 +97,63 @@ async function setupConsumers() {
       });
     }
   );
+
+  // Cooperative payment verified → create user profile (if not exists) → publish user.created
+  await consumeEvent(
+    "cooperative.payment_verified",
+    "user-service.cooperative.payment_verified",
+    async (payload) => {
+      const { email, firstName, lastName, phone, lga } = payload as any;
+      if (!email) {
+        console.error("[user-service][cooperative.payment_verified] Missing email");
+        return;
+      }
+
+      // Check if user already exists
+      const [existing] = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
+
+      if (existing) {
+        console.log(`[user-service] User ${email} already exists — skipping cooperative provisioning`);
+        return;
+      }
+
+      // Generate a new UUID
+      const { randomUUID } = await import("crypto");
+      const userId = randomUUID();
+
+      // Create user profile in user DB
+      const [newUser] = await db
+        .insert(users)
+        .values({
+          id: userId,
+          email,
+          firstName: firstName || "Cooperative",
+          lastName: lastName || "Member",
+          phone: phone || null,
+          role: "trainee",
+          assignedLga: lga || null,
+          isCooperativeOnly: true,
+        })
+        .returning();
+
+      console.log(`[user-service] Created cooperative-only user: ${email}`);
+
+      // Publish user.created
+      await publishEvent("user.created", {
+        userId: newUser.id,
+        email: newUser.email,
+        firstName: newUser.firstName,
+        lastName: newUser.lastName,
+        role: newUser.role,
+        assignedLga: newUser.assignedLga,
+        isCooperativeOnly: newUser.isCooperativeOnly,
+      });
+    }
+  );
 }
 
 // ─────────────────────────────────────────────

@@ -64,6 +64,13 @@
       "when": 1782071718668,
       "tag": "0008_dizzy_moira_mactaggert",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1782121771415,
+      "tag": "0009_modern_karen_page",
+      "breakpoints": true
     }
   ]
 }

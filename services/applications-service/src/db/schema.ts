@@ -6,6 +6,8 @@
     timestamp,
     boolean,
     pgEnum,
+    integer,
+    jsonb,
   } from "drizzle-orm/pg-core";
 
   export const applicationStatusEnum = pgEnum("application_status", [
@@ -117,6 +119,8 @@
   zone: varchar("zone", { length: 150 }),
   lga: varchar("lga", { length: 100 }),
   isActive: boolean("is_active").notNull().default(true),
+  whatsappLink: varchar("whatsapp_link", { length: 255 }),
+  registrationFee: integer("registration_fee").default(2000),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -168,5 +172,19 @@ export const cooperativeMembers = pgTable("cooperative_members", {
 
   status: cooperativeStatusEnum("status").notNull().default("active"),
   joinedAt: timestamp("joined_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const paymentStatusEnum = pgEnum("payment_status", ["pending", "success", "failed"]);
+
+export const cooperativePayments = pgTable("cooperative_payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  memberId: uuid("member_id").references(() => cooperativeMembers.id).notNull(),
+  amount: integer("amount").notNull(), // Amount paid in minor unit (kobo)
+  currency: varchar("currency", { length: 10 }).default("NGN").notNull(),
+  reference: varchar("reference", { length: 100 }).notNull().unique(), // Paystack txn reference
+  status: paymentStatusEnum("status").default("pending").notNull(),
+  metadata: jsonb("metadata"), // Raw response details from Paystack
+  createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

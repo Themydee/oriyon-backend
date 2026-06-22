@@ -273,7 +273,7 @@ app.post(
 app.get(
   "/api/cooperative/members",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "coordinator"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -283,7 +283,27 @@ app.get(
 app.get(
   "/api/cooperative/members/status/:status",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "coordinator"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.get(
+  "/api/cooperative/members/me",
+  authenticate,
+  requireRole("admin", "coordinator", "trainer", "trainee"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.get(
+  "/api/cooperative/members/me/payments",
+  authenticate,
+  requireRole("admin", "coordinator", "trainer", "trainee"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -293,7 +313,7 @@ app.get(
 app.get(
   "/api/cooperative/members/:id",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "coordinator"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -303,7 +323,7 @@ app.get(
 app.get(
   "/api/cooperative/by-application/:applicationId",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "coordinator"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -313,7 +333,7 @@ app.get(
 app.patch(
   "/api/cooperative/members/:id",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "coordinator"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -323,7 +343,24 @@ app.patch(
 app.get(
   "/api/cooperative/stats",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "coordinator"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
+app.post(
+  "/api/cooperative/payment/initialize",
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.post(
+  "/api/cooperative/payment/verify",
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,

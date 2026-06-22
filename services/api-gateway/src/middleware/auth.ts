@@ -4,7 +4,10 @@ import jwt from "jsonwebtoken";
 interface JwtPayload {
   userId: string;
   email: string;
-  role: "trainee" | "trainer" | "admin";
+  role: "trainee" | "trainer" | "coordinator" | "admin";
+  assignedState?: string | null;
+  assignedLga?: string | null;
+  isCooperativeOnly?: boolean;
 }
 
 declare global {
@@ -28,6 +31,9 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
     req.headers["x-user-id"] = payload.userId;
     req.headers["x-user-email"] = payload.email;
     req.headers["x-user-role"] = payload.role;
+    req.headers["x-user-assigned-state"] = payload.assignedState || "";
+    req.headers["x-user-assigned-lga"] = payload.assignedLga || "";
+    req.headers["x-user-is-cooperative-only"] = payload.isCooperativeOnly ? "true" : "false";
 
     next();
   } catch {
@@ -36,7 +42,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
 }
 
 
-export function requireRole(...roles: Array<"trainee" | "trainer" | "admin">) {
+export function requireRole(...roles: Array<"trainee" | "trainer" | "coordinator" | "admin">) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: "Unauthorized" });

@@ -117,7 +117,7 @@ async function setupConsumers() {
       // If token is provided instead of setupLink, build the link
       const effectiveLink =
         setupLink ||
-        `${process.env.FRONTEND_URL}/setup-password?token=${token}`;
+        `${process.env.FRONTEND_URL}/auth/setup?token=${token}`;
 
       const tpl = templates.accountSetup(firstName || "there", effectiveLink);
       await sendEmail({ to: email, ...tpl });

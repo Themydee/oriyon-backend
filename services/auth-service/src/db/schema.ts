@@ -17,7 +17,10 @@ export const authUsers = pgTable("auth_users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: varchar("email", { length: 255 }).notNull().unique(),
   passwordHash: text("password_hash"),                          // nullable until set-password
-  role: varchar("role", { length: 20 }).notNull().default("trainee"), // trainee | trainer | admin
+  role: varchar("role", { length: 20 }).notNull().default("trainee"), // trainee | trainer | coordinator | admin
+  assignedState: varchar("assigned_state", { length: 100 }),
+  assignedLga: varchar("assigned_lga", { length: 100 }),
+  isCooperativeOnly: boolean("is_cooperative_only").notNull().default(false),
   isActive: boolean("is_active").notNull().default(false),      // false until set-password completes
   lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

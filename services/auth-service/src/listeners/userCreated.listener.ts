@@ -24,10 +24,13 @@ interface UserCreatedPayload {
   firstName: string;
   lastName: string;
   role: string;
+  assignedState?: string | null;
+  assignedLga?: string | null;
+  isCooperativeOnly?: boolean;
 }
 
 export async function handleUserCreated(payload: Record<string, unknown>) {
-  const { userId, email, firstName, lastName, role } = payload as unknown as UserCreatedPayload;
+  const { userId, email, firstName, lastName, role, assignedState, assignedLga, isCooperativeOnly } = payload as unknown as UserCreatedPayload;
 
   if (!userId || !email) {
     console.error("[auth-service][handleUserCreated] Missing required fields:", payload);
@@ -54,6 +57,9 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
       email,
       passwordHash: null,
       role: role as any,
+      assignedState: assignedState || null,
+      assignedLga: assignedLga || null,
+      isCooperativeOnly: isCooperativeOnly ?? false,
       isActive: false,
     });
 

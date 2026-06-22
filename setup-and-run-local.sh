@@ -128,6 +128,12 @@ done
 echo "Checking admin account seeding..."
 (cd services/auth-service && npx ts-node src/seed-admin.ts)
 
+echo "Seeding coordinators..."
+(cd services/auth-service && npx ts-node src/seed-coordinator.ts)
+
+echo "Checking trainer account seeding..."
+(cd services/auth-service && npx ts-node src/seed-trainer.ts)
+
 # 8. LAUNCH STACK
 echo "================================================="
 echo "Launching all microservices..."

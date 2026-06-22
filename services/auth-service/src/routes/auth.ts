@@ -43,9 +43,16 @@ const changePasswordSchema = z.object({
 // HELPERS
 // ─────────────────────────────────────────────
 
-function generateAccessToken(user: { id: string; email: string; role: string }) {
+function generateAccessToken(user: { id: string; email: string; role: string; assignedState?: string | null; assignedLga?: string | null; isCooperativeOnly?: boolean }) {
   return jwt.sign(
-    { userId: user.id, email: user.email, role: user.role },
+    {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      assignedState: user.assignedState || null,
+      assignedLga: user.assignedLga || null,
+      isCooperativeOnly: user.isCooperativeOnly ?? false,
+    },
     process.env.JWT_SECRET!,
     { expiresIn: (process.env.JWT_EXPIRES_IN || "15m") as any }
   );

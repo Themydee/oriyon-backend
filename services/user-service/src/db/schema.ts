@@ -8,7 +8,7 @@ import {
   pgEnum,
 } from "drizzle-orm/pg-core";
 
-export const roleEnum = pgEnum("role", ["trainee", "trainer", "admin"]);
+export const roleEnum = pgEnum("role", ["trainee", "trainer", "coordinator", "admin"]);
 
 export const users = pgTable("users", {
   id:        uuid("id").primaryKey(), 
@@ -17,6 +17,9 @@ export const users = pgTable("users", {
   lastName:  varchar("last_name", { length: 100 }).notNull(),
   phone:     varchar("phone", { length: 20 }),
   role:      roleEnum("role").notNull().default("trainee"),
+  assignedState: varchar("assigned_state", { length: 100 }),
+  assignedLga: varchar("assigned_lga", { length: 100 }),
+  isCooperativeOnly: boolean("is_cooperative_only").notNull().default(false),
   isActive:  boolean("is_active").notNull().default(true),
 
   
