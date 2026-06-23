@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
+import crypto from "crypto";
 import { db } from "../index";
 import { users, cohorts, cohortMembers, groups, groupMembers } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
@@ -13,14 +14,15 @@ export const cohortRouter = Router();
 // ─────────────────────────────────────────────
 
 const createUserSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().uuid().optional(),
   email: z.string().email(),
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  phone: z.string().optional(),
+  phone: z.string().optional().nullable(),
   role: z.enum(["trainee", "trainer", "coordinator", "admin"]).default("trainee"),
   assignedState: z.string().optional().nullable(),
   assignedLga: z.string().optional().nullable(),
+  assignedZone: z.string().optional().nullable(),
 });
 
 // GET /users
@@ -101,7 +103,17 @@ userRouter.post("/", async (req: Request, res: Response) => {
       .limit(1);
     if (existing) return res.status(409).json({ error: "User already exists" });
 
-    const [newUser] = await db.insert(users).values(parsed.data).returning();
+    const userId = parsed.data.id || crypto.randomUUID();
+    const insertData = {
+      ...parsed.data,
+      id: userId,
+      phone: parsed.data.phone || null,
+      assignedState: parsed.data.assignedState || null,
+      assignedLga: parsed.data.assignedLga || null,
+      assignedZone: parsed.data.assignedZone || null,
+    };
+
+    const [newUser] = await db.insert(users).values(insertData).returning();
 
     await publishEvent("user.created", {
       userId: newUser.id,
@@ -111,6 +123,7 @@ userRouter.post("/", async (req: Request, res: Response) => {
       role: newUser.role,
       assignedState: newUser.assignedState,
       assignedLga: newUser.assignedLga,
+      assignedZone: newUser.assignedZone,
     });
 
     return res.status(201).json(newUser);
@@ -125,11 +138,12 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
   const allowedFields = z.object({
     firstName: z.string().optional(),
     lastName: z.string().optional(),
-    phone: z.string().optional(),
+    phone: z.string().optional().nullable(),
     isActive: z.boolean().optional(),
     role: z.enum(["trainee", "trainer", "coordinator", "admin"]).optional(),
     assignedState: z.string().optional().nullable(),
     assignedLga: z.string().optional().nullable(),
+    assignedZone: z.string().optional().nullable(),
   });
 
   const parsed = allowedFields.safeParse(req.body);

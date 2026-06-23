@@ -43,7 +43,7 @@ const changePasswordSchema = z.object({
 // HELPERS
 // ─────────────────────────────────────────────
 
-function generateAccessToken(user: { id: string; email: string; role: string; assignedState?: string | null; assignedLga?: string | null; isCooperativeOnly?: boolean }) {
+function generateAccessToken(user: { id: string; email: string; role: string; assignedState?: string | null; assignedLga?: string | null; assignedZone?: string | null; isCooperativeOnly?: boolean }) {
   return jwt.sign(
     {
       userId: user.id,
@@ -51,6 +51,7 @@ function generateAccessToken(user: { id: string; email: string; role: string; as
       role: user.role,
       assignedState: user.assignedState || null,
       assignedLga: user.assignedLga || null,
+      assignedZone: user.assignedZone || null,
       isCooperativeOnly: user.isCooperativeOnly ?? false,
     },
     process.env.JWT_SECRET!,
@@ -442,6 +443,52 @@ router.patch("/change-password", async (req: Request, res: Response) => {
     return res.json({ message: "Password changed successfully. Please log in again." });
   } catch (err) {
     console.error("[auth] change-password error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /auth/admin/setup-token/:email
+// Admin only — fetch setup token for manual copying
+// ─────────────────────────────────────────────
+router.get("/admin/setup-token/:email", async (req: Request, res: Response) => {
+  const callerRole = req.headers["x-user-role"] as string;
+  if (callerRole !== "admin") {
+    return res.status(403).json({ error: "Forbidden — admin only" });
+  }
+
+  const { email } = req.params;
+
+  try {
+    const [user] = await db
+      .select()
+      .from(authUsers)
+      .where(eq(authUsers.email, email))
+      .limit(1);
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found in auth system" });
+    }
+
+    const [setupToken] = await db
+      .select()
+      .from(setupTokens)
+      .where(
+        and(
+          eq(setupTokens.userId, user.id),
+          eq(setupTokens.used, false)
+        )
+      )
+      .orderBy(setupTokens.createdAt)
+      .limit(1);
+
+    if (!setupToken) {
+      return res.status(404).json({ error: "No active setup token found" });
+    }
+
+    return res.json({ token: setupToken.token });
+  } catch (err) {
+    console.error("[auth] fetch setup token error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });

@@ -20,6 +20,7 @@ export const authUsers = pgTable("auth_users", {
   role: varchar("role", { length: 20 }).notNull().default("trainee"), // trainee | trainer | coordinator | admin
   assignedState: varchar("assigned_state", { length: 100 }),
   assignedLga: varchar("assigned_lga", { length: 100 }),
+  assignedZone: varchar("assigned_zone", { length: 150 }),
   isCooperativeOnly: boolean("is_cooperative_only").notNull().default(false),
   isActive: boolean("is_active").notNull().default(false),      // false until set-password completes
   lastLoginAt: timestamp("last_login_at"),

@@ -7,6 +7,7 @@ interface JwtPayload {
   role: "trainee" | "trainer" | "coordinator" | "admin";
   assignedState?: string | null;
   assignedLga?: string | null;
+  assignedZone?: string | null;
   isCooperativeOnly?: boolean;
 }
 
@@ -33,6 +34,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
     req.headers["x-user-role"] = payload.role;
     req.headers["x-user-assigned-state"] = payload.assignedState || "";
     req.headers["x-user-assigned-lga"] = payload.assignedLga || "";
+    req.headers["x-user-assigned-zone"] = payload.assignedZone || "";
     req.headers["x-user-is-cooperative-only"] = payload.isCooperativeOnly ? "true" : "false";
 
     next();

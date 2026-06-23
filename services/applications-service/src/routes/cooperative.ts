@@ -618,6 +618,8 @@ router.post("/join", async (req: Request, res: Response) => {
 router.get("/members", async (req: Request, res: Response) => {
   const role = req.headers["x-user-role"] as string;
   const assignedLga = req.headers["x-user-assigned-lga"] as string;
+  const assignedState = req.headers["x-user-assigned-state"] as string;
+  const assignedZone = req.headers["x-user-assigned-zone"] as string;
 
   try {
     const query = db
@@ -664,9 +666,22 @@ router.get("/members", async (req: Request, res: Response) => {
       .from(cooperativeMembers)
       .leftJoin(cooperatives, eq(cooperativeMembers.cooperativeId, cooperatives.id));
 
-    const members = (role === "coordinator" && assignedLga)
-      ? await query.where(eq(cooperativeMembers.lga, assignedLga)).orderBy(cooperativeMembers.joinedAt)
-      : await query.orderBy(cooperativeMembers.joinedAt);
+    let finalQuery = query;
+    if (role === "coordinator") {
+      const conds = [];
+      if (assignedLga) {
+        conds.push(eq(cooperativeMembers.lga, assignedLga));
+      } else if (assignedState) {
+        conds.push(eq(cooperatives.state, assignedState));
+      } else if (assignedZone) {
+        conds.push(eq(cooperatives.zone, assignedZone));
+      }
+      if (conds.length > 0) {
+        finalQuery = finalQuery.where(and(...conds)) as any;
+      }
+    }
+
+    const members = await finalQuery.orderBy(cooperativeMembers.joinedAt);
 
     return res.json(members);
   } catch (err) {
@@ -683,6 +698,8 @@ router.get("/members/status/:status", async (req: Request, res: Response) => {
   const { status } = req.params;
   const role = req.headers["x-user-role"] as string;
   const assignedLga = req.headers["x-user-assigned-lga"] as string;
+  const assignedState = req.headers["x-user-assigned-state"] as string;
+  const assignedZone = req.headers["x-user-assigned-zone"] as string;
 
   if (status !== "active" && status !== "inactive") {
     return res.status(400).json({ error: "Invalid status value" });
@@ -690,8 +707,14 @@ router.get("/members/status/:status", async (req: Request, res: Response) => {
 
   try {
     let conditions = [eq(cooperativeMembers.status, status)];
-    if (role === "coordinator" && assignedLga) {
-      conditions.push(eq(cooperativeMembers.lga, assignedLga));
+    if (role === "coordinator") {
+      if (assignedLga) {
+        conditions.push(eq(cooperativeMembers.lga, assignedLga));
+      } else if (assignedState) {
+        conditions.push(eq(cooperatives.state, assignedState));
+      } else if (assignedZone) {
+        conditions.push(eq(cooperatives.zone, assignedZone));
+      }
     }
 
     const members = await db
@@ -957,48 +980,53 @@ router.patch("/members/:id", async (req: Request, res: Response) => {
 router.get("/stats", async (req: Request, res: Response) => {
   const role = req.headers["x-user-role"] as string;
   const assignedLga = req.headers["x-user-assigned-lga"] as string;
+  const assignedState = req.headers["x-user-assigned-state"] as string;
+  const assignedZone = req.headers["x-user-assigned-zone"] as string;
 
   try {
-    let totalQuery;
-    let activeQuery;
-    let inactiveQuery;
-
-    if (role === "coordinator" && assignedLga) {
-      totalQuery = db
-        .select({ count: count() })
-        .from(cooperativeMembers)
-        .where(eq(cooperativeMembers.lga, assignedLga));
-      activeQuery = db
-        .select({ count: count() })
-        .from(cooperativeMembers)
-        .where(
-          and(
-            eq(cooperativeMembers.status, "active"),
-            eq(cooperativeMembers.lga, assignedLga)
-          )
-        );
-      inactiveQuery = db
-        .select({ count: count() })
-        .from(cooperativeMembers)
-        .where(
-          and(
-            eq(cooperativeMembers.status, "inactive"),
-            eq(cooperativeMembers.lga, assignedLga)
-          )
-        );
-    } else {
-      totalQuery = db
+    const getStatsQuery = (status?: "active" | "inactive") => {
+      let q = db
         .select({ count: count() })
         .from(cooperativeMembers);
-      activeQuery = db
-        .select({ count: count() })
-        .from(cooperativeMembers)
-        .where(eq(cooperativeMembers.status, "active"));
-      inactiveQuery = db
-        .select({ count: count() })
-        .from(cooperativeMembers)
-        .where(eq(cooperativeMembers.status, "inactive"));
-    }
+
+      let conds = [];
+      if (status) {
+        conds.push(eq(cooperativeMembers.status, status));
+      }
+
+      if (role === "coordinator") {
+        if (assignedLga) {
+          conds.push(eq(cooperativeMembers.lga, assignedLga));
+          if (conds.length > 0) {
+            return q.where(and(...conds));
+          }
+          return q;
+        } else if (assignedState) {
+          let qState = db
+            .select({ count: count() })
+            .from(cooperativeMembers)
+            .leftJoin(cooperatives, eq(cooperativeMembers.cooperativeId, cooperatives.id));
+          conds.push(eq(cooperatives.state, assignedState));
+          return qState.where(and(...conds));
+        } else if (assignedZone) {
+          let qZone = db
+            .select({ count: count() })
+            .from(cooperativeMembers)
+            .leftJoin(cooperatives, eq(cooperativeMembers.cooperativeId, cooperatives.id));
+          conds.push(eq(cooperatives.zone, assignedZone));
+          return qZone.where(and(...conds));
+        }
+      }
+
+      if (conds.length > 0) {
+        return q.where(and(...conds));
+      }
+      return q;
+    };
+
+    const totalQuery = getStatsQuery();
+    const activeQuery = getStatsQuery("active");
+    const inactiveQuery = getStatsQuery("inactive");
 
     const [total] = await totalQuery;
     const [active] = await activeQuery;

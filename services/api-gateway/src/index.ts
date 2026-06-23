@@ -129,6 +129,13 @@ app.get(
   keepPath,
   createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
 );
+app.get(
+  "/api/auth/admin/setup-token/:email",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
+);
 
 // AUTH — protected
 app.patch(

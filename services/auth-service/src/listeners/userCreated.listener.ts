@@ -32,11 +32,12 @@ interface UserCreatedPayload {
   role: string;
   assignedState?: string | null;
   assignedLga?: string | null;
+  assignedZone?: string | null;
   isCooperativeOnly?: boolean;
 }
 
 export async function handleUserCreated(payload: Record<string, unknown>) {
-  const { userId, email, firstName, lastName, role, assignedState, assignedLga, isCooperativeOnly } =
+  const { userId, email, firstName, lastName, role, assignedState, assignedLga, assignedZone, isCooperativeOnly } =
     payload as unknown as UserCreatedPayload;
 
   if (!userId || !email) {
@@ -109,6 +110,7 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
       role: role as any,
       assignedState: assignedState || null,
       assignedLga: assignedLga || null,
+      assignedZone: assignedZone || null,
       isCooperativeOnly: isCooperativeOnly ?? false,
       isActive: false,
     });
