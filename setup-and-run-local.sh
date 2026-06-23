@@ -34,7 +34,7 @@ JWT_REFRESH_SECRET=oriyon-refresh-secret-key-2026-qa-test
 JWT_EXPIRES_IN=15m
 JWT_REFRESH_EXPIRES_IN=7d
 FRONTEND_URL=http://localhost:3000
-RESEND_API_KEY=re_testkey123
+RESEND_API_KEY=re_8c6tiTMh_SMCL595AHtgAktyzvc1cUxEi
 EMAIL_FROM=no-reply@oriyoninternational.com
 EOT
   echo "✔ Created root .env"
@@ -90,7 +90,7 @@ create_env_if_missing "services/notifications-service/.env" "PORT=3005
 DATABASE_URL=postgres://localhost:5432/oriyon_notifications
 JWT_SECRET=oriyon-secret-key-2026-qa-test
 RABBITMQ_URL=amqp://localhost:5672
-RESEND_API_KEY=re_testkey123
+RESEND_API_KEY=re_8c6tiTMh_SMCL595AHtgAktyzvc1cUxEi
 EMAIL_FROM=no-reply@oriyoninternational.com
 FRONTEND_URL=http://localhost:3000"
 
