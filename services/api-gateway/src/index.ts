@@ -424,6 +424,13 @@ app.post(
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
+app.post(
+  "/api/users/bulk-email",
+  authenticate,
+  requireRole("admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
 
 // ADMIN — aggregated results for quizzes and exams
 app.get(

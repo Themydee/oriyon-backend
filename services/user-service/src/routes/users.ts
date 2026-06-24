@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
 import { db } from "../index";
@@ -130,6 +130,56 @@ userRouter.post("/", async (req: Request, res: Response) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Failed to create user" });
+  }
+});
+
+// POST /users/bulk-email
+userRouter.post("/bulk-email", async (req: Request, res: Response) => {
+  const schema = z.object({
+    subject: z.string().min(1, "Subject is required"),
+    body: z.string().min(1, "Body is required"),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    // Find trainees that have no cohort memberships and are not cooperative-only
+    const cohortLessTrainees = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+      })
+      .from(users)
+      .leftJoin(cohortMembers, eq(users.id, cohortMembers.userId))
+      .where(
+        and(
+          eq(users.role, "trainee"),
+          eq(users.isCooperativeOnly, false),
+          isNull(cohortMembers.id)
+        )
+      );
+
+    // Publish event for each trainee
+    for (const u of cohortLessTrainees) {
+      await publishEvent("application.custom_email_requested", {
+        email: u.email,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        subject: parsed.data.subject,
+        body: parsed.data.body,
+      });
+    }
+
+    return res.json({
+      message: `Dispatched bulk email to ${cohortLessTrainees.length} trainees`,
+      count: cohortLessTrainees.length,
+    });
+  } catch (err) {
+    console.error("[bulk-email] error:", err);
+    return res.status(500).json({ error: "Failed to send bulk email" });
   }
 });
 
