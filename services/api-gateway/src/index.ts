@@ -89,7 +89,7 @@ app.post(
 );
 app.post(
   "/api/auth/refresh",
-  strictLimiter,
+  limiter,
   keepPath,
   createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
 );
