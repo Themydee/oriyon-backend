@@ -1,0 +1,1 @@
+ALTER TYPE "role" ADD VALUE 'lead_trainer';

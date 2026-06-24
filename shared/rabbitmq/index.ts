@@ -1,9 +1,9 @@
-import amqplib, { Channel, Connection } from "amqplib";
+import amqplib, { Channel, ChannelModel } from "amqplib";
 
 const EXCHANGE_NAME = "oriyon.events";
 const EXCHANGE_TYPE = "topic";
 
-let connection: Connection | null = null;
+let connection: ChannelModel | null = null;
 let channel: Channel | null = null;
 
 export async function connectRabbitMQ(url: string): Promise<Channel> {
@@ -12,11 +12,13 @@ export async function connectRabbitMQ(url: string): Promise<Channel> {
   let retries = 10;
   while (retries > 0) {
     try {
-      connection = await amqplib.connect(url);
-      channel = await connection.createChannel();
-      await channel.assertExchange(EXCHANGE_NAME, EXCHANGE_TYPE, { durable: true });
+      const conn = await amqplib.connect(url);
+      connection = conn;
+      const ch = await conn.createChannel();
+      channel = ch;
+      await ch.assertExchange(EXCHANGE_NAME, EXCHANGE_TYPE, { durable: true });
 
-      connection.on("close", () => {
+      conn.on("close", () => {
         console.error("[RabbitMQ] Connection closed. Reconnecting...");
         channel = null;
         connection = null;
@@ -24,7 +26,7 @@ export async function connectRabbitMQ(url: string): Promise<Channel> {
       });
 
       console.log("[RabbitMQ] Connected successfully");
-      return channel;
+      return ch;
     } catch (err) {
       console.error(`[RabbitMQ] Connection failed. Retrying... (${retries} left)`);
       retries--;

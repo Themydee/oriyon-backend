@@ -23,7 +23,7 @@ export interface UserCreatedPayload {
   email: string;
   firstName: string;
   lastName: string;
-  role: "trainee" | "trainer" | "admin";
+  role: "trainee" | "trainer" | "lead_trainer" | "coordinator" | "admin";
   cohortId?: string;
 }
 
@@ -97,7 +97,7 @@ export interface CohortCompletedPayload {
 // ─────────────────────────────────────────────
 // SHARED DB TYPES
 // ─────────────────────────────────────────────
-export type UserRole = "trainee" | "trainer" | "admin";
+export type UserRole = "trainee" | "trainer" | "lead_trainer" | "coordinator" | "admin";
 export type ApplicationStatus = "pending" | "shortlisted" | "approved" | "rejected";
 export type LessonType = "video" | "document" | "quiz";
 export type SessionType = "online" | "physical";

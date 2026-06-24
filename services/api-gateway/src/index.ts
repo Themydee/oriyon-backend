@@ -300,7 +300,7 @@ app.get(
 app.get(
   "/api/cooperative/members/me",
   authenticate,
-  requireRole("admin", "coordinator", "trainer", "trainee"),
+  requireRole("admin", "coordinator", "trainer", "lead_trainer", "trainee"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -310,7 +310,7 @@ app.get(
 app.get(
   "/api/cooperative/members/me/payments",
   authenticate,
-  requireRole("admin", "coordinator", "trainer", "trainee"),
+  requireRole("admin", "coordinator", "trainer", "lead_trainer", "trainee"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -429,7 +429,7 @@ app.post(
 app.get(
   "/api/admin/results",
   authenticate,
-  requireRole("admin", "trainer"),
+  requireRole("admin", "trainer", "lead_trainer"),
   async (req: Request, res: Response) => {
     try {
       const authHeader = req.headers.authorization ?? "";
@@ -719,7 +719,7 @@ app.get(
 app.get(
   "/api/lms/quizzes/admin/attempts",
   authenticate,
-  requireRole("admin", "trainer"),
+  requireRole("admin", "trainer", "lead_trainer"),
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );

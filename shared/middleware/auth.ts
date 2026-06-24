@@ -4,7 +4,11 @@ import jwt from "jsonwebtoken";
 export interface JwtPayload {
   userId: string;
   email: string;
-  role: "trainee" | "trainer" | "admin";
+  role: "trainee" | "trainer" | "lead_trainer" | "coordinator" | "admin";
+  assignedState?: string | null;
+  assignedLga?: string | null;
+  assignedZone?: string | null;
+  isCooperativeOnly?: boolean;
   iat: number;
   exp: number;
 }
@@ -24,8 +28,16 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
   }
 
   const token = authHeader.split(" ")[1];
+  const secret = process.env.JWT_SECRET;
+  if (!token) {
+    return res.status(401).json({ error: "Missing or invalid token" });
+  }
+  if (!secret) {
+    return res.status(500).json({ error: "JWT secret not configured" });
+  }
+
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET!) as JwtPayload;
+    const payload = jwt.verify(token, secret) as unknown as JwtPayload;
     req.user = payload;
     next();
   } catch {
@@ -33,7 +45,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-export function requireRole(...roles: Array<"trainee" | "trainer" | "admin">) {
+export function requireRole(...roles: Array<"trainee" | "trainer" | "lead_trainer" | "coordinator" | "admin">) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: "Unauthenticated" });

@@ -19,7 +19,7 @@ const createUserSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   phone: z.string().optional().nullable(),
-  role: z.enum(["trainee", "trainer", "coordinator", "admin"]).default("trainee"),
+  role: z.enum(["trainee", "trainer", "coordinator", "lead_trainer", "admin"]).default("trainee"),
   assignedState: z.string().optional().nullable(),
   assignedLga: z.string().optional().nullable(),
   assignedZone: z.string().optional().nullable(),
@@ -140,7 +140,7 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
     lastName: z.string().optional(),
     phone: z.string().optional().nullable(),
     isActive: z.boolean().optional(),
-    role: z.enum(["trainee", "trainer", "coordinator", "admin"]).optional(),
+    role: z.enum(["trainee", "trainer", "coordinator", "lead_trainer", "admin"]).optional(),
     assignedState: z.string().optional().nullable(),
     assignedLga: z.string().optional().nullable(),
     assignedZone: z.string().optional().nullable(),
@@ -452,6 +452,9 @@ cohortRouter.post("/:cohortId/groups/:groupId/members", async (req: Request, res
 // DELETE /cohorts/:cohortId/groups/:groupId/members/:userId
 cohortRouter.delete("/:cohortId/groups/:groupId/members/:userId", async (req: Request, res: Response) => {
   const { groupId, userId } = req.params;
+  if (!groupId || !userId) {
+    return res.status(400).json({ error: "Missing required route parameters" });
+  }
   try {
     await db
       .delete(groupMembers)

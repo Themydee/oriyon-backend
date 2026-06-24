@@ -17,7 +17,7 @@ export const authUsers = pgTable("auth_users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: varchar("email", { length: 255 }).notNull().unique(),
   passwordHash: text("password_hash"),                          // nullable until set-password
-  role: varchar("role", { length: 20 }).notNull().default("trainee"), // trainee | trainer | coordinator | admin
+  role: varchar("role", { length: 20 }).notNull().default("trainee"), // trainee | trainer | lead_trainer | coordinator | admin
   assignedState: varchar("assigned_state", { length: 100 }),
   assignedLga: varchar("assigned_lga", { length: 100 }),
   assignedZone: varchar("assigned_zone", { length: 150 }),
