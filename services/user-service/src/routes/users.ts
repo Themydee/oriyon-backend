@@ -23,6 +23,7 @@ const createUserSchema = z.object({
   assignedState: z.string().optional().nullable(),
   assignedLga: z.string().optional().nullable(),
   assignedZone: z.string().optional().nullable(),
+  approvedRole: z.string().optional().nullable(),
 });
 
 // GET /users
@@ -194,6 +195,7 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
     assignedState: z.string().optional().nullable(),
     assignedLga: z.string().optional().nullable(),
     assignedZone: z.string().optional().nullable(),
+    approvedRole: z.string().optional().nullable(),
   });
 
   const parsed = allowedFields.safeParse(req.body);

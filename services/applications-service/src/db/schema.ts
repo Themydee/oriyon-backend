@@ -84,6 +84,11 @@
     understandsCredit: boolean("understands_credit").default(false),
     declarationConfirmed: boolean("declaration_confirmed").default(false),
 
+    // ── DESIRED TRAINEE ROLES ──
+    desiredRoleOption1: varchar("desired_role_option_1", { length: 255 }),
+    desiredRoleOption2: varchar("desired_role_option_2", { length: 255 }),
+    approvedRole: varchar("approved_role", { length: 255 }),
+
     // ── ADMIN ──
     status: applicationStatusEnum("status").notNull().default("pending"),
 

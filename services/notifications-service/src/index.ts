@@ -86,8 +86,8 @@ async function setupConsumers() {
     "application.approved",
     "notifications.application.approved",
     async (payload) => {
-      const { email, firstName } = payload as any;
-      const tpl = templates.applicationApproved(firstName);
+      const { email, firstName, approvedRole } = payload as any;
+      const tpl = templates.applicationApproved(firstName, approvedRole);
       await sendEmail({ to: email, ...tpl });
     },
   );

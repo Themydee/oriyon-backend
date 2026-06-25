@@ -71,6 +71,13 @@
       "when": 1782121771415,
       "tag": "0009_modern_karen_page",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782372396962,
+      "tag": "0010_flashy_galactus",
+      "breakpoints": true
     }
   ]
 }

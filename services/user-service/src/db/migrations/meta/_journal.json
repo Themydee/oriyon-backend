@@ -50,6 +50,13 @@
       "when": 1782327158638,
       "tag": "0006_wild_human_torch",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782372403307,
+      "tag": "0007_misty_smasher",
+      "breakpoints": true
     }
   ]
 }

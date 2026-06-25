@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "approved_role" varchar(255);

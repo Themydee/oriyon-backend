@@ -221,16 +221,17 @@ export const templates = {
     `, "Your EEWYLA application has been received — we'll be in touch within 5–7 working days."),
   }),
 
-  applicationApproved: (firstName: string) => ({
+  applicationApproved: (firstName: string, approvedRole?: string) => ({
     subject: "Congratulations — your EEWYLA application has been approved",
     html: base(`
       ${heading(`Congratulations, ${firstName}.`)}
       ${para("Your application to the <strong>EEWYLA Training Programme</strong> has been approved. You are now part of the Oriyon International family.")}
+      ${approvedRole ? para(`You have been approved for the track: <strong>${approvedRole}</strong>.`) : ""}
       ${para("You will receive a separate email shortly with a link to set up your account password and access the training portal. Please check your inbox — and your spam folder, just in case.")}
       ${notice("If you do not receive your account setup email within 15 minutes, contact us at <a href=\"mailto:training@oriyon.ng\" style=\"color:#5a7a5e;\">training@oriyon.ng</a> and we will resend it.")}
       ${para("We look forward to supporting your growth through the programme.")}
       ${signature()}
-    `, "You've been accepted into the EEWYLA Training Programme — your account setup link is on its way."),
+    `, `You've been accepted into the EEWYLA Training Programme${approvedRole ? ` for ${approvedRole}` : ""} — your account setup link is on its way.`),
   }),
 
   applicationRejected: (firstName: string) => ({

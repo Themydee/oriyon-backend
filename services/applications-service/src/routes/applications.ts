@@ -60,6 +60,8 @@ const submitSchema = z.object({
   reference2: z.string().optional(),
   understandsCredit: z.boolean().optional(),
   declarationConfirmed: z.boolean().optional(),
+  desiredRoleOption1: z.string().optional(),
+  desiredRoleOption2: z.string().optional(),
 });
 
 type ApplicationStatus = "pending" | "shortlisted" | "approved" | "rejection_review" | "rejected" | "archived";
@@ -77,6 +79,7 @@ const updateSchema = z.object({
   reviewedBy: z.string().uuid().optional(),
   reviewNotes: z.string().optional(),
   rejectionReason: z.string().optional(),
+  approvedRole: z.string().optional(),
 });
 
 const allowedTransitions: Record<string, string[]> = {
@@ -575,6 +578,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
         lastName: updated.lastName,
         phone: updated.phone,
         cohortId: updated.cohortId,
+        approvedRole: updated.approvedRole,
       });
     }
 

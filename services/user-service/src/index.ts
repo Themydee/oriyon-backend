@@ -57,7 +57,7 @@ async function setupConsumers() {
     "application.approved",
     "user-service.application.approved",
     async (payload) => {
-      const { userId, email, firstName, lastName, phone, cohortId } = payload as any;
+      const { userId, email, firstName, lastName, phone, cohortId, approvedRole } = payload as any;
 
       // Idempotency guard — skip if user already exists
       const [existing] = await db
@@ -81,6 +81,7 @@ async function setupConsumers() {
           lastName,
           phone,
           role: "trainee",
+          approvedRole,
         })
         .returning();
 

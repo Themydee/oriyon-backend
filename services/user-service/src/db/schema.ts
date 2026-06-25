@@ -22,6 +22,7 @@ export const users = pgTable("users", {
   assignedZone: varchar("assigned_zone", { length: 150 }),
   isCooperativeOnly: boolean("is_cooperative_only").notNull().default(false),
   isActive:  boolean("is_active").notNull().default(true),
+  approvedRole: varchar("approved_role", { length: 255 }),
 
   
   idType:       varchar("id_type", { length: 60 }),       
