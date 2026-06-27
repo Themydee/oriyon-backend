@@ -193,3 +193,20 @@ export const cooperativePayments = pgTable("cooperative_payments", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+export const complaints = pgTable("complaints", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  trackingCode: varchar("tracking_code", { length: 50 }).notNull().unique(),
+  name: varchar("name", { length: 150 }).notNull(),
+  email: varchar("email", { length: 255 }).notNull(),
+  phone: varchar("phone", { length: 20 }).notNull(),
+  natureOfComplaint: varchar("nature_of_complaint", { length: 150 }).notNull(),
+  dateOfIncident: varchar("date_of_incident", { length: 50 }).notNull(),
+  description: text("description").notNull(),
+  evidence: text("evidence"), // Base64 data URI
+  evidenceFilename: varchar("evidence_filename", { length: 255 }),
+  evidenceMimeType: varchar("evidence_mime_type", { length: 100 }),
+  status: varchar("status", { length: 50 }).notNull().default("pending"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});

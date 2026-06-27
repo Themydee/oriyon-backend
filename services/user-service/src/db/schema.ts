@@ -63,6 +63,7 @@ export const groups = pgTable("groups", {
 
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
+  practicalDay: varchar("practical_day", { length: 255 }),
 
   isActive: boolean("is_active").notNull().default(true),
 

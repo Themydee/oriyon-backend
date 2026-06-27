@@ -373,6 +373,7 @@ cohortRouter.post("/:id/groups", async (req: Request, res: Response) => {
   const schema = z.object({
     name: z.string().min(1),
     description: z.string().optional(),
+    practicalDay: z.string().optional().nullable(),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -388,6 +389,47 @@ cohortRouter.post("/:id/groups", async (req: Request, res: Response) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Failed to create group" });
+  }
+});
+
+// PATCH /cohorts/:cohortId/groups/:groupId — update a group
+cohortRouter.patch("/:cohortId/groups/:groupId", async (req: Request, res: Response) => {
+  const schema = z.object({
+    name: z.string().min(1).optional(),
+    description: z.string().optional().nullable(),
+    practicalDay: z.string().optional().nullable(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const { groupId } = req.params;
+
+  try {
+    const [updated] = await db
+      .update(groups)
+      .set({ ...parsed.data, updatedAt: new Date() })
+      .where(eq(groups.id, groupId))
+      .returning();
+
+    if (!updated) return res.status(404).json({ error: "Group not found" });
+
+    return res.json(updated);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to update group" });
+  }
+});
+
+// DELETE /cohorts/:cohortId/groups/:groupId — delete a group
+cohortRouter.delete("/:cohortId/groups/:groupId", async (req: Request, res: Response) => {
+  const { groupId } = req.params;
+  try {
+    await db.delete(groups).where(eq(groups.id, groupId));
+    return res.json({ message: "Group deleted successfully" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to delete group" });
   }
 });
 

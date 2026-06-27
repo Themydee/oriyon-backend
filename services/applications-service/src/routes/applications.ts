@@ -164,12 +164,42 @@ function evaluateAutoShortlist(app: z.infer<typeof submitSchema>): boolean {
 // ─────────────────────────────────────────────
 // POST /applications — Public Submission Engine
 // ─────────────────────────────────────────────
-router.post("/", async (req: Request, res: Response) => {
-  const parsed = submitSchema.safeParse(req.body);
-  if (!parsed.success)
-    return res.status(400).json({ error: parsed.error.flatten() });
-
   try {
+    // Duplicate email check
+    const [dupEmail] = await db
+      .select({ id: applications.id })
+      .from(applications)
+      .where(eq(sql`LOWER(${applications.email})`, parsed.data.email.toLowerCase()))
+      .limit(1);
+    if (dupEmail) {
+      return res.status(409).json({ error: "An application with this email already exists." });
+    }
+
+    // Duplicate phone check
+    const [dupPhone] = await db
+      .select({ id: applications.id })
+      .from(applications)
+      .where(eq(applications.phone, parsed.data.phone))
+      .limit(1);
+    if (dupPhone) {
+      return res.status(409).json({ error: "An application with this phone number already exists." });
+    }
+
+    // Duplicate name check (regular & inversed, case-insensitive)
+    const fNameLower = parsed.data.firstName.toLowerCase();
+    const lNameLower = parsed.data.lastName.toLowerCase();
+    const [dupName] = await db
+      .select({ id: applications.id })
+      .from(applications)
+      .where(
+        sql`(LOWER(${applications.firstName}) = ${fNameLower} AND LOWER(${applications.lastName}) = ${lNameLower}) OR 
+            (LOWER(${applications.firstName}) = ${lNameLower} AND LOWER(${applications.lastName}) = ${fNameLower})`
+      )
+      .limit(1);
+    if (dupName) {
+      return res.status(409).json({ error: "An application with this name already exists." });
+    }
+
     const passesAutoShortlist = evaluateAutoShortlist(parsed.data);
     const calculatedStatus: ApplicationStatus = passesAutoShortlist ? "shortlisted" : "pending";
 

@@ -408,7 +408,7 @@ router.post("/join", async (req: Request, res: Response) => {
     idNumber: z.string().optional().nullable(),
     nextOfKinName: z.string().optional().nullable(),
     nextOfKinPhone: z.string().optional().nullable(),
-    registrationFeePaid: z.string().optional().nullable(),
+    // registrationFeePaid is intentionally excluded — it must ONLY be set by the payment verification endpoint
     monthlyContributionAmount: z.string().optional().nullable(),
     attendanceCommitment: z.string().optional().nullable(),
     qualifiedForTraining: z.string().optional().nullable(),
@@ -448,7 +448,7 @@ router.post("/join", async (req: Request, res: Response) => {
     idNumber,
     nextOfKinName,
     nextOfKinPhone,
-    registrationFeePaid,
+    // registrationFeePaid intentionally not destructured — always forced to "NO" on insert
     monthlyContributionAmount,
     attendanceCommitment,
     qualifiedForTraining,
@@ -503,7 +503,7 @@ router.post("/join", async (req: Request, res: Response) => {
       idNumber: idNumber ?? undefined,
       nextOfKinName: nextOfKinName ?? undefined,
       nextOfKinPhone: nextOfKinPhone ?? undefined,
-      registrationFeePaid: registrationFeePaid ?? undefined,
+      registrationFeePaid: "NO", // Always start as unpaid — only the /payment/verify endpoint may set this to "YES"
       monthlyContributionAmount: monthlyContributionAmount ?? undefined,
       attendanceCommitment: attendanceCommitment ?? undefined,
       qualifiedForTraining: qualifiedForTraining ?? undefined,

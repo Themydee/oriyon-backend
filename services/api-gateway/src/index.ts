@@ -375,6 +375,27 @@ app.post(
   }),
 );
 
+
+// ─────────────────────────────────────────────
+// COMPLAINTS
+// ─────────────────────────────────────────────
+app.post(
+  "/api/complaints",
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.get(
+  "/api/complaints/:trackingCode",
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
 // ─────────────────────────────────────────────
 // CONTACT & NEWSLETTER
 // ─────────────────────────────────────────────
@@ -593,6 +614,33 @@ app.get(
 );
 app.post(
   "/api/cohorts/:cohortId/groups/:groupId/members",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({
+    target: USER_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.patch(
+  "/api/cohorts/:cohortId/groups/:groupId",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({
+    target: USER_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.delete(
+  "/api/cohorts/:cohortId/groups/:groupId",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({
+    target: USER_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.delete(
+  "/api/cohorts/:cohortId/groups/:groupId/members/:userId",
   authenticate,
   keepPath,
   createProxyMiddleware({

@@ -1,0 +1,1 @@
+ALTER TABLE "groups" ADD COLUMN "practical_day" varchar(255);

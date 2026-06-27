@@ -8,6 +8,7 @@ import postgres from "postgres";
 import { connectRabbitMQ } from "./rabbitmq";
 import applicationsRouter, { runAutoShortlistCheck } from "./routes/applications";
 import cooperativeRouter from "./routes/cooperative";
+import complaintsRouter from "./routes/complaints";
 import { seedCooperatives } from "./db/seed-coops";
 
 const app = express();
@@ -28,6 +29,8 @@ app.get("/health", (_req, res) => {
 app.use("/applications", applicationsRouter);
 app.use("/api/applications", applicationsRouter); 
 app.use("/api/cooperative", cooperativeRouter);
+app.use("/complaints", complaintsRouter);
+app.use("/api/complaints", complaintsRouter);
 
 async function bootstrap() {
   await connectRabbitMQ(process.env.RABBITMQ_URL!);
