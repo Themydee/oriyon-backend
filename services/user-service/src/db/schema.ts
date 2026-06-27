@@ -30,6 +30,8 @@ export const users = pgTable("users", {
   idFilename:   varchar("id_filename", { length: 255 }),    
   idMimeType:   varchar("id_mime_type", { length: 60 }),    
   idUploadedAt: timestamp("id_uploaded_at"),
+  kycStatus:    varchar("kyc_status", { length: 30 }),
+  kycRejectionReason: text("kyc_rejection_reason"),
 
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

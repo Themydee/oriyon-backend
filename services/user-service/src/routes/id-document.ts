@@ -62,6 +62,8 @@ router.patch("/:id/id-document", async (req: Request, res: Response) => {
         idFilename,
         idMimeType,
         idUploadedAt: new Date(),
+        kycStatus: "pending",
+        kycRejectionReason: null,
         updatedAt: new Date(),
       })
       .where(eq(users.id, req.params.id))
@@ -71,6 +73,8 @@ router.patch("/:id/id-document", async (req: Request, res: Response) => {
         idFilename:   users.idFilename,
         idMimeType:   users.idMimeType,
         idUploadedAt: users.idUploadedAt,
+        kycStatus:    users.kycStatus,
+        kycRejectionReason: users.kycRejectionReason,
       });
 
     return res.json({
@@ -97,6 +101,8 @@ router.get("/:id/id-document/meta", async (req: Request, res: Response) => {
         idFilename:   users.idFilename,
         idMimeType:   users.idMimeType,
         idUploadedAt: users.idUploadedAt,
+        kycStatus:    users.kycStatus,
+        kycRejectionReason: users.kycRejectionReason,
       })
       .from(users)
       .where(eq(users.id, req.params.id))
@@ -110,6 +116,8 @@ router.get("/:id/id-document/meta", async (req: Request, res: Response) => {
       idFilename:   user.idFilename,
       idMimeType:   user.idMimeType,
       idUploadedAt: user.idUploadedAt,
+      kycStatus:    user.kycStatus,
+      kycRejectionReason: user.kycRejectionReason,
     });
   } catch (err) {
     console.error("[users] id-document meta error:", err);
@@ -146,6 +154,57 @@ router.get("/:id/id-document", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("[users] id-document download error:", err);
     return res.status(500).json({ error: "Failed to retrieve ID document" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// POST /users/:id/kyc-verify
+// Admin verifies (approves/rejects) a user's uploaded ID document.
+// Body: { status: "approved" | "rejected", rejectionReason?: string }
+// ─────────────────────────────────────────────
+router.post("/:id/kyc-verify", async (req: Request, res: Response) => {
+  const schema = z.object({
+    status: z.enum(["approved", "rejected"]),
+    rejectionReason: z.string().optional().nullable(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { status, rejectionReason } = parsed.data;
+
+  try {
+    const [user] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, req.params.id))
+      .limit(1);
+
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const [updated] = await db
+      .update(users)
+      .set({
+        kycStatus: status,
+        kycRejectionReason: status === "rejected" ? rejectionReason || "ID details did not match or file was unreadable." : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, req.params.id))
+      .returning({
+        id: users.id,
+        kycStatus: users.kycStatus,
+        kycRejectionReason: users.kycRejectionReason,
+      });
+
+    return res.json({
+      message: `KYC document successfully ${status}`,
+      ...updated,
+    });
+  } catch (err) {
+    console.error("[users] kyc-verify error:", err);
+    return res.status(500).json({ error: "Failed to verify KYC status" });
   }
 });
 

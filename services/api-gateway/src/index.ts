@@ -534,6 +534,13 @@ app.get(
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
+app.post(
+  "/api/users/:id/kyc-verify",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
 
 // Generic user CRUD — after sub-paths
 app.get(
