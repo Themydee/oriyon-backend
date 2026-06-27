@@ -161,9 +161,11 @@ function evaluateAutoShortlist(app: z.infer<typeof submitSchema>): boolean {
 
 
 
-// ─────────────────────────────────────────────
-// POST /applications — Public Submission Engine
-// ─────────────────────────────────────────────
+router.post("/", async (req: Request, res: Response) => {
+  const parsed = submitSchema.safeParse(req.body);
+  if (!parsed.success)
+    return res.status(400).json({ error: parsed.error.flatten() });
+
   try {
     // Duplicate email check
     const [dupEmail] = await db

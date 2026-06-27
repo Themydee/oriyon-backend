@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { eq, count, and } from "drizzle-orm";
+import { eq, count, and, sql } from "drizzle-orm";
 import { z } from "zod";
 import axios from "axios";
 import { db } from "../index";
@@ -546,6 +546,47 @@ router.post("/join", async (req: Request, res: Response) => {
         phone,
         address: address ?? undefined,
       };
+    }
+
+    // Duplicate email check
+    if (memberData.email) {
+      const [dupEmail] = await db
+        .select({ id: cooperativeMembers.id })
+        .from(cooperativeMembers)
+        .where(eq(sql`LOWER(${cooperativeMembers.email})`, memberData.email.toLowerCase()))
+        .limit(1);
+      if (dupEmail) {
+        return res.status(409).json({ error: "A member with this email already exists." });
+      }
+    }
+
+    // Duplicate phone check
+    if (memberData.phone) {
+      const [dupPhone] = await db
+        .select({ id: cooperativeMembers.id })
+        .from(cooperativeMembers)
+        .where(eq(cooperativeMembers.phone, memberData.phone))
+        .limit(1);
+      if (dupPhone) {
+        return res.status(409).json({ error: "A member with this phone number already exists." });
+      }
+    }
+
+    // Duplicate name check (regular & inversed, case-insensitive)
+    if (memberData.firstName && memberData.lastName) {
+      const fNameLower = memberData.firstName.toLowerCase();
+      const lNameLower = memberData.lastName.toLowerCase();
+      const [dupName] = await db
+        .select({ id: cooperativeMembers.id })
+        .from(cooperativeMembers)
+        .where(
+          sql`(LOWER(${cooperativeMembers.firstName}) = ${fNameLower} AND LOWER(${cooperativeMembers.lastName}) = ${lNameLower}) OR 
+              (LOWER(${cooperativeMembers.firstName}) = ${lNameLower} AND LOWER(${cooperativeMembers.lastName}) = ${fNameLower})`
+        )
+        .limit(1);
+      if (dupName) {
+        return res.status(409).json({ error: "A member with this name already exists." });
+      }
     }
 
     // Check if already a member of this cooperative (idempotent)
