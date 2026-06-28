@@ -41,6 +41,7 @@ router.post("/", async (req: Request, res: Response) => {
     isActive: z.boolean().optional().default(true),
     whatsappLink: z.string().optional().nullable(),
     registrationFee: z.number().optional().nullable(),
+    registrationStatus: z.enum(["formal", "pending"]).optional().default("formal"),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -1123,6 +1124,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
     isActive: z.boolean().optional(),
     whatsappLink: z.string().optional().nullable(),
     registrationFee: z.number().optional().nullable(),
+    registrationStatus: z.enum(["formal", "pending"]).optional(),
   });
 
   const parsed = schema.safeParse(req.body);

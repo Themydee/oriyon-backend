@@ -1,0 +1,1 @@
+ALTER TABLE "cooperatives" ADD COLUMN "registration_status" varchar(50) DEFAULT 'formal' NOT NULL;
