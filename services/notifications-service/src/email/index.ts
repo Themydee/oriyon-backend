@@ -106,7 +106,7 @@ function base(content: string, preheader = "") {
               <p style="font-family:Arial,sans-serif; font-size:11px; color:#9e9c94; line-height:1.8; margin:0;">
                 Oriyon International &middot; EEWYLA Training Programme<br/>
                 Oyo State, Nigeria &middot;
-                <a href="mailto:training@oriyon.ng" style="color:#9e9c94; text-decoration:underline;">training@oriyon.ng</a>
+                <a href="mailto:eewyla@oriyoninternational.com" style="color:#9e9c94; text-decoration:underline;">eewyla@oriyoninternational.com</a>
                 <br/><br/>
                 You are receiving this email because you are registered with the EEWYLA Training Programme.<br/>
                 <a href="${BASE_URL}" style="color:#5a7a5e; text-decoration:none;">www.oriyoninternational.com</a>
@@ -216,7 +216,7 @@ export const templates = {
       ${heading(`Hi ${firstName},`)}
       ${para("Thank you for applying to the <strong>EEWYLA Training Programme</strong> by Oriyon International.")}
       ${para("Your application has been received and is now under review. Our team carefully assesses every submission and we will get back to you within <strong>5–7 working days</strong>.")}
-      ${notice(`Questions in the meantime? Reach us at <a href="mailto:training@oriyon.ng" style="color:#5a7a5e;">training@oriyon.ng</a>.`)}
+      ${notice(`Questions in the meantime? Reach us at <a href="mailto:eewyla@oriyoninternational.com" style="color:#5a7a5e;">eewyla@oriyoninternational.com</a>.`)}
       ${signature()}
     `, "Your EEWYLA application has been received — we'll be in touch within 5–7 working days."),
   }),
@@ -228,7 +228,7 @@ export const templates = {
       ${para("Your application to the <strong>EEWYLA Training Programme</strong> has been approved. You are now part of the Oriyon International family.")}
       ${approvedRole ? para(`You have been approved for the track: <strong>${approvedRole}</strong>.`) : ""}
       ${para("You will receive a separate email shortly with a link to set up your account password and access the training portal. Please check your inbox — and your spam folder, just in case.")}
-      ${notice("If you do not receive your account setup email within 15 minutes, contact us at <a href=\"mailto:training@oriyon.ng\" style=\"color:#5a7a5e;\">training@oriyon.ng</a> and we will resend it.")}
+      ${notice("If you do not receive your account setup email within 15 minutes, contact us at <a href=\"mailto:eewyla@oriyoninternational.com\" style=\"color:#5a7a5e;\">eewyla@oriyoninternational.com</a> and we will resend it.")}
       ${para("We look forward to supporting your growth through the programme.")}
       ${signature()}
     `, `You've been accepted into the EEWYLA Training Programme${approvedRole ? ` for ${approvedRole}` : ""} — your account setup link is on its way.`),
@@ -241,7 +241,7 @@ export const templates = {
       ${para("Thank you for your interest in the EEWYLA Training Programme and for taking the time to apply.")}
       ${para("After a thorough review of all applications, we are unable to offer you a place in the current cohort. This was a competitive intake and we appreciate the effort you put into your application.")}
       ${para("We encourage you to apply again when the next cohort opens. We announce future intakes on our website and through our mailing list.")}
-      ${notice(`For feedback on your application or to register interest in future cohorts, contact us at <a href="mailto:training@oriyon.ng" style="color:#5a7a5e;">training@oriyon.ng</a>.`)}
+      ${notice(`For feedback on your application or to register interest in future cohorts, contact us at <a href="mailto:eewyla@oriyoninternational.com" style="color:#5a7a5e;">eewyla@oriyoninternational.com</a>.`)}
       ${signature()}
     `, "An update on your EEWYLA Training Programme application."),
   }),
@@ -252,7 +252,7 @@ export const templates = {
     ${heading(`Hi ${firstName}, you've been shortlisted.`)}
     ${para("We are pleased to inform you that your application to the <strong>EEWYLA Training Programme</strong> has been reviewed and you have been <strong>shortlisted</strong> for the next stage.")}
     ${para("Our team will be in touch shortly with the next steps. Please ensure your contact details are up to date and watch your inbox carefully.")}
-    ${notice(`Questions? Contact us at <a href="mailto:training@oriyon.ng" style="color:#5a7a5e;">training@oriyon.ng</a>.`)}
+    ${notice(`Questions? Contact us at <a href="mailto:eewyla@oriyoninternational.com" style="color:#5a7a5e;">eewyla@oriyoninternational.com</a>.`)}
     ${signature()}
   `, "You've been shortlisted for the EEWYLA Training Programme — next steps coming soon."),
 }),
@@ -264,7 +264,7 @@ applicationRejectionReview: (firstName: string) => ({
     ${para("Thank you for your patience while we review applications for the EEWYLA Training Programme.")}
     ${para("Your application has been flagged for <strong>further review</strong> by our team. This is a normal part of our assessment process and does not mean your application has been rejected.")}
     ${para("We will contact you with a final decision within <strong>3–5 working days</strong>. No action is required from you at this time.")}
-    ${notice(`If you have any questions or updates to share about your application, reach us at <a href="mailto:training@oriyon.ng" style="color:#5a7a5e;">training@oriyon.ng</a>.`)}
+    ${notice(`If you have any questions or updates to share about your application, reach us at <a href="mailto:eewyla@oriyoninternational.com" style="color:#5a7a5e;">eewyla@oriyoninternational.com</a>.`)}
     ${signature()}
   `, "Your EEWYLA application is under further review — we'll be in touch within 3–5 working days."),
 }),
@@ -275,7 +275,7 @@ applicationRescued: (firstName: string) => ({
     ${heading(`Hi ${firstName}, we have good news.`)}
     ${para("After further review, we are pleased to let you know that your application to the <strong>EEWYLA Training Programme</strong> has been reconsidered and you have been <strong>shortlisted</strong>.")}
     ${para("Our team will be in touch shortly with details on the next steps. Thank you for your patience during the review process.")}
-    ${notice(`Questions? Contact us at <a href="mailto:training@oriyon.ng" style="color:#5a7a5e;">training@oriyon.ng</a>.`)}
+    ${notice(`Questions? Contact us at <a href="mailto:eewyla@oriyoninternational.com" style="color:#5a7a5e;">eewyla@oriyoninternational.com</a>.`)}
     ${signature()}
   `, "Your EEWYLA application has been reconsidered — you've been shortlisted."),
 }),
@@ -288,7 +288,7 @@ applicationRescued: (firstName: string) => ({
       ${heading(`Hi ${firstName}, your account is ready.`)}
       ${para("An account has been created for you on the Oriyon International platform. Click the button below to set your password and activate your access.")}
       ${ctaButton("Set Up My Account", setupLink)}
-      ${notice("<strong>This link expires in 24 hours.</strong> If it expires before you use it, contact us at <a href=\"mailto:training@oriyon.ng\" style=\"color:#5a7a5e;\">training@oriyon.ng</a> and we will send a new one.", "warning")}
+      ${notice("<strong>This link expires in 24 hours.</strong> If it expires before you use it, contact us at <a href=\"mailto:eewyla@oriyoninternational.com\" style=\"color:#5a7a5e;\">eewyla@oriyoninternational.com</a> and we will send a new one.", "warning")}
       ${para("Once active, your account gives you access to the EEWYLA training portal, your cohort schedule, and all programme resources.")}
       ${para("If you were not expecting this email, please ignore it — no action is required and your account will not be activated without the link.")}
       ${signature()}
@@ -372,7 +372,7 @@ applicationRescued: (firstName: string) => ({
     html: base(`
       ${heading(`Hi ${firstName},`)}
       ${para("Thank you for reaching out to Oriyon International. We have received your message and a member of our team will respond within <strong>2 business days</strong>.")}
-      ${notice(`For urgent matters, contact us directly at <a href="mailto:training@oriyon.ng" style="color:#5a7a5e;">training@oriyon.ng</a>.`)}
+      ${notice(`For urgent matters, contact us directly at <a href="mailto:eewyla@oriyoninternational.com" style="color:#5a7a5e;">eewyla@oriyoninternational.com</a>.`)}
       ${signature()}
     `, "We've received your message and will respond within 2 business days."),
   }),

@@ -1084,4 +1084,80 @@ router.get("/stats", async (req: Request, res: Response) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// GET /cooperative/:id
+// Public/Admin — get details of a single cooperative by ID
+// ─────────────────────────────────────────────────────────────
+router.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const [coop] = await db
+      .select()
+      .from(cooperatives)
+      .where(eq(cooperatives.id, req.params.id))
+      .limit(1);
+
+    if (!coop) {
+      return res.status(404).json({ error: "Cooperative not found" });
+    }
+
+    return res.json(coop);
+  } catch (err) {
+    console.error("[cooperative] fetch single error:", err);
+    return res.status(500).json({ error: "Failed to fetch cooperative" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// PATCH /cooperative/:id
+// Admin only — update cooperative details
+// ─────────────────────────────────────────────────────────────
+router.patch("/:id", async (req: Request, res: Response) => {
+  const schema = z.object({
+    name: z.string().min(1, "Name is required").optional(),
+    state: z.string().min(1, "State is required").optional(),
+    description: z.string().optional().nullable(),
+    locationId: z.string().optional().nullable(),
+    regionId: z.string().optional().nullable(),
+    zone: z.string().optional().nullable(),
+    lga: z.string().optional().nullable(),
+    isActive: z.boolean().optional(),
+    whatsappLink: z.string().optional().nullable(),
+    registrationFee: z.number().optional().nullable(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const [existing] = await db
+      .select()
+      .from(cooperatives)
+      .where(eq(cooperatives.id, req.params.id))
+      .limit(1);
+
+    if (!existing) {
+      return res.status(404).json({ error: "Cooperative not found" });
+    }
+
+    const [updated] = await db
+      .update(cooperatives)
+      .set({
+        ...parsed.data,
+        updatedAt: new Date(),
+      })
+      .where(eq(cooperatives.id, req.params.id))
+      .returning();
+
+    return res.json(updated);
+  } catch (err: any) {
+    console.error("[cooperative] update error:", err);
+    if (err.code === "23505") { // unique violation code in PG
+      return res.status(409).json({ error: "A cooperative with this name already exists" });
+    }
+    return res.status(500).json({ error: "Failed to update cooperative" });
+  }
+});
+
 export default router;

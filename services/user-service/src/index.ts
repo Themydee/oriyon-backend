@@ -9,7 +9,7 @@ import { connectRabbitMQ, consumeEvent, publishEvent } from "./rabbitmq";
 import { userRouter, cohortRouter } from "./routes/users";
 import adminRouter from "./routes/admin";
 import idDocumentRouter from "./routes/id-document";
-import { users } from "./db/schema";
+import { users, cohortMembers, groupMembers } from "./db/schema";
 import { eq } from "drizzle-orm";
 
 const app = express();
@@ -49,7 +49,7 @@ app.use("/api/cohorts", cohortRouter);
 // ─────────────────────────────────────────────
 async function setupConsumers() {
 
-  // Application approved → create user profile → publish user.created
+  // Application approved → create user profile or reactivate if existing → publish user.created
   // user.created is then picked up by:
   //   auth-service  → creates auth record + setup token
   //   notifications-service → sends setup email (via user.setup_requested)
@@ -59,7 +59,7 @@ async function setupConsumers() {
     async (payload) => {
       const { userId, email, firstName, lastName, phone, cohortId, approvedRole } = payload as any;
 
-      // Idempotency guard — skip if user already exists
+      // Idempotency guard — check if user already exists
       const [existing] = await db
         .select()
         .from(users)
@@ -67,7 +67,26 @@ async function setupConsumers() {
         .limit(1);
 
       if (existing) {
-        console.log(`[user-service] User ${email} already exists — skipping`);
+        console.log(`[user-service] User ${email} already exists — reactivating`);
+        
+        const [reactivatedUser] = await db
+          .update(users)
+          .set({
+            isActive: true,
+            approvedRole,
+            updatedAt: new Date(),
+          })
+          .where(eq(users.id, existing.id))
+          .returning();
+
+        // Publish user.created with existing userId so auth-service can reactivate it
+        await publishEvent("user.created", {
+          userId: reactivatedUser.id,
+          email: reactivatedUser.email,
+          firstName: reactivatedUser.firstName,
+          lastName: reactivatedUser.lastName,
+          role: reactivatedUser.role,
+        });
         return;
       }
 
@@ -95,6 +114,53 @@ async function setupConsumers() {
         firstName: newUser.firstName,
         lastName: newUser.lastName,
         role: newUser.role,
+      });
+    }
+  );
+
+  // Application revoked (moved back to review) → deactivate user profile & memberships → publish user.deactivated
+  await consumeEvent(
+    "application.revoked",
+    "user-service.application.revoked",
+    async (payload) => {
+      const { email, applicationId } = payload as any;
+      if (!email) {
+        console.error("[user-service][application.revoked] Missing email in payload");
+        return;
+      }
+
+      // Find user by email
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
+
+      if (!user) {
+        console.log(`[user-service] No user found for email ${email} — skipping deactivation`);
+        return;
+      }
+
+      // Deactivate user profile
+      await db
+        .update(users)
+        .set({
+          isActive: false,
+          approvedRole: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, user.id));
+
+      // Remove any cohort and group memberships
+      await db.delete(cohortMembers).where(eq(cohortMembers.userId, user.id));
+      await db.delete(groupMembers).where(eq(groupMembers.userId, user.id));
+
+      console.log(`[user-service] Deactivated user profile & memberships for ${email} (${user.id})`);
+
+      // Publish user.deactivated event
+      await publishEvent("user.deactivated", {
+        userId: user.id,
+        email: user.email,
       });
     }
   );

@@ -86,7 +86,7 @@ const allowedTransitions: Record<string, string[]> = {
   pending:          ["shortlisted", "rejection_review"],
   shortlisted:      ["approved", "rejection_review"],
   rejection_review: ["shortlisted", "rejected"],
-  approved:         [],
+  approved:         ["rejection_review"],
   rejected:         [],
   archived:         [],
 };
@@ -570,10 +570,16 @@ router.patch("/:id", async (req: Request, res: Response) => {
       });
     }
 
+    const wasApproved = current.status === "approved";
     const updatePayload: Record<string, any> = {
       ...parsed.data,
       updatedAt: new Date(),
     };
+
+    if (wasApproved && parsed.data.status === "rejection_review") {
+      updatePayload.approvedRole = null;
+      updatePayload.cohortId = null;
+    }
 
     if (parsed.data.status === "rejected") {
       updatePayload.rejectedAt = new Date();
@@ -615,6 +621,12 @@ router.patch("/:id", async (req: Request, res: Response) => {
     }
 
     if (updated.status === "rejection_review") {
+      if (wasApproved) {
+        await publishEvent("application.revoked", {
+          applicationId: updated.id,
+          email: updated.email,
+        });
+      }
       await publishEvent("application.rejection_review", {
         applicationId: updated.id,
         email: updated.email,

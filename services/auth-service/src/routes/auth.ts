@@ -90,7 +90,14 @@ router.post("/login", async (req: Request, res: Response) => {
       .where(eq(authUsers.email, email))
       .limit(1);
 
-    if (!user || !user.isActive) {
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    if (!user.isActive) {
+      if (user.passwordHash) {
+        return res.status(403).json({ error: "Your application is undergoing a revisit. Access is restricted at this time." });
+      }
       return res.status(401).json({ error: "Invalid credentials" });
     }
 

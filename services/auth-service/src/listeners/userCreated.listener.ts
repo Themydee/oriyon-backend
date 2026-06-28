@@ -57,8 +57,15 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
 
     if (existing) {
       if (existing.passwordHash) {
-        // Account is fully active — nothing to do
-        console.log(`[auth-service][handleUserCreated] User ${email} already active — skipping`);
+        if (!existing.isActive) {
+          await db
+            .update(authUsers)
+            .set({ isActive: true, updatedAt: new Date() })
+            .where(eq(authUsers.id, existing.id));
+          console.log(`[auth-service][handleUserCreated] Reactivated existing user ${email}`);
+        } else {
+          console.log(`[auth-service][handleUserCreated] User ${email} already active — skipping`);
+        }
         return;
       }
 
