@@ -1,6 +1,6 @@
 import { db } from "../index";
 import { cooperatives } from "./schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 export async function seedCooperatives() {
   console.log("[applications-service] Seeding cooperatives...");
@@ -41,15 +41,15 @@ export async function seedCooperatives() {
     ];
 
     for (const coop of defaultCoops) {
-      // Check if already exists
+      // Check if already exists (case-insensitive)
       const [existing] = await db
         .select()
         .from(cooperatives)
-        .where(eq(cooperatives.name, coop.name))
+        .where(sql`LOWER(${cooperatives.name}) = ${coop.name.toLowerCase()}`)
         .limit(1);
 
       if (!existing) {
-        await db.insert(cooperatives).values(coop);
+        await db.insert(cooperatives).values(coop).onConflictDoNothing({ target: cooperatives.name });
         console.log(`✔ Seeded cooperative: ${coop.name}`);
       }
     }
