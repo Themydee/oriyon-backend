@@ -15,13 +15,60 @@ const router = Router();
 router.get("/", async (_req: Request, res: Response) => {
   try {
     const list = await db
-      .select()
+      .select({
+        id: cooperatives.id,
+        name: cooperatives.name,
+        state: cooperatives.state,
+        description: cooperatives.description,
+        locationId: cooperatives.locationId,
+        regionId: cooperatives.regionId,
+        zone: cooperatives.zone,
+        lga: cooperatives.lga,
+        isActive: cooperatives.isActive,
+        whatsappLink: cooperatives.whatsappLink,
+        registrationFee: cooperatives.registrationFee,
+        registrationStatus: cooperatives.registrationStatus,
+        createdAt: cooperatives.createdAt,
+        updatedAt: cooperatives.updatedAt,
+        memberCount: count(cooperativeMembers.id),
+      })
       .from(cooperatives)
+      .leftJoin(cooperativeMembers, eq(cooperatives.id, cooperativeMembers.cooperativeId))
+      .groupBy(cooperatives.id)
       .orderBy(cooperatives.name);
     return res.json(list);
   } catch (err) {
     console.error("[cooperative] fetch cooperatives error:", err);
     return res.status(500).json({ error: "Failed to fetch cooperatives list" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /cooperative/:id
+// Public — get single cooperative detail with its members
+// ─────────────────────────────────────────────
+router.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const [coop] = await db
+      .select()
+      .from(cooperatives)
+      .where(eq(cooperatives.id, req.params.id))
+      .limit(1);
+
+    if (!coop) {
+      return res.status(404).json({ error: "Cooperative not found" });
+    }
+
+    const members = await db
+      .select()
+      .from(cooperativeMembers)
+      .where(eq(cooperativeMembers.cooperativeId, req.params.id))
+      .orderBy(cooperativeMembers.joinedAt);
+
+    return res.json({ cooperative: coop, members });
+  } catch (err) {
+    console.error("[cooperative] fetch cooperative by id error:", err);
+    return res.status(500).json({ error: "Failed to fetch cooperative details" });
   }
 });
 
