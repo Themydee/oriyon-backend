@@ -49,7 +49,7 @@ router.get("/", async (_req: Request, res: Response) => {
 // ─────────────────────────────────────────────
 router.post("/", async (req: Request, res: Response) => {
   const schema = z.object({
-    name: z.string().min(1, "Name is required"),
+    name: z.string().trim().min(1, "Name is required"),
     state: z.string().min(1, "State is required"),
     description: z.string().optional().nullable(),
     locationId: z.string().optional().nullable(),
@@ -68,6 +68,16 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
+    const existingCoop = await db
+      .select({ id: cooperatives.id })
+      .from(cooperatives)
+      .where(sql`LOWER(${cooperatives.name}) = ${parsed.data.name.toLowerCase()}`)
+      .limit(1);
+
+    if (existingCoop.length > 0) {
+      return res.status(409).json({ error: "A cooperative with this name already exists" });
+    }
+
     const [newCoop] = await db
       .insert(cooperatives)
       .values(parsed.data)
