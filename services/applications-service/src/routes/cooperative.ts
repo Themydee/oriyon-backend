@@ -1005,6 +1005,7 @@ router.patch("/members/:id", async (req: Request, res: Response) => {
     willingToContribute: z.boolean().optional(),
     agreesToConstitution: z.boolean().optional(),
     remarks: z.string().optional().nullable(),
+    registrationFeePaid: z.enum(["YES", "NO"]).optional(),
   });
 
   const parsed = schema.safeParse(req.body);
