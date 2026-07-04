@@ -120,11 +120,15 @@ router.post("/login", async (req: Request, res: Response) => {
       .set({ lastLoginAt: new Date() })
       .where(eq(authUsers.id, user.id));
 
-    await publishEvent(EVENTS.USER_LOGGED_IN, {
-      userId: user.id,
-      email: user.email,
-      timestamp: new Date().toISOString(),
-    });
+    try {
+      await publishEvent(EVENTS.USER_LOGGED_IN, {
+        userId: user.id,
+        email: user.email,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (rabbitmqErr) {
+      console.error("[auth] Failed to publish user.logged_in event to RabbitMQ, continuing login:", rabbitmqErr);
+    }
 
     return res.json({ accessToken, refreshToken, role: user.role });
   } catch (err) {

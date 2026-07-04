@@ -16,20 +16,36 @@ export async function connectRabbitMQ(url: string) {
       await channel.assertExchange(EXCHANGE, "topic", { durable: true });
       console.log("[auth-service][RabbitMQ] Connected");
 
-      // Graceful shutdown
+      // Handle channel errors and close events
+      channel.on("close", () => {
+        console.error("[auth-service][RabbitMQ] Channel closed");
+        channel = null;
+      });
+
+      channel.on("error", (err) => {
+        console.error("[auth-service][RabbitMQ] Channel error:", err.message);
+      });
+
+      // Graceful shutdown and reconnection
       connection.on("close", () => {
         console.error("[auth-service][RabbitMQ] Connection closed. Reconnecting...");
+        channel = null;
+        connection = null;
         setTimeout(() => connectRabbitMQ(url), 5000);
       });
 
       connection.on("error", (err) => {
         console.error("[auth-service][RabbitMQ] Connection error:", err.message);
+        channel = null;
+        connection = null;
       });
 
       return channel;
-    } catch {
+    } catch (err: any) {
       retries--;
-      console.error(`[auth-service][RabbitMQ] Retrying... (${retries} left)`);
+      console.error(`[auth-service][RabbitMQ] Connection attempt failed: ${err.message}. Retrying... (${retries} left)`);
+      channel = null;
+      connection = null;
       await new Promise((r) => setTimeout(r, 5000));
     }
   }
