@@ -1045,6 +1045,38 @@ router.patch("/members/:id", async (req: Request, res: Response) => {
 });
 
 // ─────────────────────────────────────────────
+// DELETE /cooperative/members/:id
+// Admin/Coordinator — delete a member (decline manual registry)
+// ─────────────────────────────────────────────
+router.delete("/members/:id", async (req: Request, res: Response) => {
+  const role = req.headers["x-user-role"] as string;
+  const assignedLga = req.headers["x-user-assigned-lga"] as string;
+
+  try {
+    const [existing] = await db
+      .select()
+      .from(cooperativeMembers)
+      .where(eq(cooperativeMembers.id, req.params.id))
+      .limit(1);
+
+    if (!existing) {
+      return res.status(404).json({ error: "Member not found" });
+    }
+
+    if (role === "coordinator" && assignedLga && existing.lga !== assignedLga) {
+      return res.status(403).json({ error: "Forbidden — member is outside your assigned LGA" });
+    }
+
+    await db.delete(cooperativeMembers).where(eq(cooperativeMembers.id, req.params.id));
+    return res.json({ message: "Member declined and removed successfully" });
+  } catch (err) {
+    console.error("[cooperative] delete member error:", err);
+    return res.status(500).json({ error: "Failed to delete member" });
+  }
+});
+
+
+// ─────────────────────────────────────────────
 // GET /cooperative/stats
 // Admin/Coordinator — quick stats for the dashboard
 // ─────────────────────────────────────────────
