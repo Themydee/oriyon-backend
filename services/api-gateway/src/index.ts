@@ -313,6 +313,16 @@ app.delete(
     changeOrigin: true,
   }),
 );
+app.post(
+  "/api/cooperative/announcements/broadcast",
+  authenticate,
+  requireRole("admin", "coordinator"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
 app.patch(
   "/api/cooperative/:id",
   authenticate,

@@ -1290,6 +1290,109 @@ router.post("/:id/announcements", async (req: Request, res: Response) => {
   }
 });
 
+// POST /cooperative/announcements/broadcast
+router.post("/announcements/broadcast", async (req: Request, res: Response) => {
+  const role = req.headers["x-user-role"] as string;
+  const assignedLga = req.headers["x-user-assigned-lga"] as string;
+  const assignedState = req.headers["x-user-assigned-state"] as string;
+  const assignedZone = req.headers["x-user-assigned-zone"] as string;
+
+  const schema = z.object({
+    title: z.string().trim().min(1, "Title is required"),
+    content: z.string().trim().min(1, "Content is required"),
+    level: z.enum(["state", "zone", "lga", "cooperative"]).default("cooperative"),
+    postedBy: z.string().trim().min(1, "postedBy is required"),
+    targetCooperativeId: z.string().uuid().optional().nullable(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { title, content, level, postedBy, targetCooperativeId } = parsed.data;
+
+  try {
+    let targetCoops: any[] = [];
+
+    if (role === "admin") {
+      if (targetCooperativeId) {
+        targetCoops = await db
+          .select({ id: cooperatives.id })
+          .from(cooperatives)
+          .where(eq(cooperatives.id, targetCooperativeId));
+      } else {
+        targetCoops = await db
+          .select({ id: cooperatives.id })
+          .from(cooperatives)
+          .where(eq(cooperatives.isActive, true));
+      }
+    } else if (role === "coordinator") {
+      if (assignedLga) {
+        targetCoops = await db
+          .select({ id: cooperatives.id })
+          .from(cooperatives)
+          .where(
+            and(
+              eq(cooperatives.isActive, true),
+              sql`LOWER(${cooperatives.lga}) = ${assignedLga.toLowerCase()} OR LOWER(${cooperatives.name}) = ${assignedLga.toLowerCase()}`
+            )
+          );
+      } else if (assignedZone) {
+        targetCoops = await db
+          .select({ id: cooperatives.id })
+          .from(cooperatives)
+          .where(
+            and(
+              eq(cooperatives.isActive, true),
+              sql`LOWER(${cooperatives.zone}) = ${assignedZone.toLowerCase()}`
+            )
+          );
+      } else if (assignedState) {
+        targetCoops = await db
+          .select({ id: cooperatives.id })
+          .from(cooperatives)
+          .where(
+            and(
+              eq(cooperatives.isActive, true),
+              sql`LOWER(${cooperatives.state}) = ${assignedState.toLowerCase()}`
+            )
+          );
+      }
+    } else {
+      return res.status(403).json({ error: "Only admins and coordinators can broadcast announcements" });
+    }
+
+    if (targetCoops.length === 0) {
+      return res.status(404).json({ error: "No matching cooperatives found for your assignment scope." });
+    }
+
+    const createdAnnouncements = [];
+    for (const coop of targetCoops) {
+      const [ann] = await db
+        .insert(announcements)
+        .values({
+          cooperativeId: coop.id,
+          title,
+          content,
+          level,
+          postedBy,
+        })
+        .returning();
+      createdAnnouncements.push(ann);
+    }
+
+    return res.status(201).json({
+      message: `Announcement successfully sent to ${targetCoops.length} cooperative(s)`,
+      count: targetCoops.length,
+      announcements: createdAnnouncements,
+    });
+  } catch (err) {
+    console.error("[cooperative] broadcast error:", err);
+    return res.status(500).json({ error: "Failed to broadcast announcement" });
+  }
+});
+
 // DELETE /cooperative/:id/announcements/:announcementId
 router.delete("/:id/announcements/:announcementId", async (req: Request, res: Response) => {
   const { announcementId } = req.params;
