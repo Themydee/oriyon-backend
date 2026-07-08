@@ -50,8 +50,16 @@ app.use(
 );
 app.use(morgan("combined"));
 
-const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200 });
-const strictLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20 });
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5000, // Increased to support 1000+ concurrent users
+  message: { error: "Too many requests from this IP, please try again after 15 minutes." }
+});
+const strictLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000, // Increased to support high volume of concurrent auth requests
+  message: { error: "Too many authentication attempts from this IP, please try again after 15 minutes." }
+});
 app.use(limiter);
 
 function keepPath(req: Request, _res: Response, next: NextFunction) {
