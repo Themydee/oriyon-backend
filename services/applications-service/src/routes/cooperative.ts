@@ -1313,58 +1313,57 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
   const { title, content, level, postedBy, targetCooperativeId } = parsed.data;
 
   try {
+    const allCoops = await db
+      .select({
+        id: cooperatives.id,
+        name: cooperatives.name,
+        state: cooperatives.state,
+        zone: cooperatives.zone,
+        lga: cooperatives.lga,
+        isActive: cooperatives.isActive,
+      })
+      .from(cooperatives)
+      .where(eq(cooperatives.isActive, true));
+
     let targetCoops: any[] = [];
+
+    const normalize = (str: string | null | undefined) => {
+      if (!str) return "";
+      return str.toLowerCase().replace(/\s+/g, "").replace(/state/g, "").trim();
+    };
 
     if (role === "admin") {
       if (targetCooperativeId) {
-        targetCoops = await db
-          .select({ id: cooperatives.id })
-          .from(cooperatives)
-          .where(eq(cooperatives.id, targetCooperativeId));
+        targetCoops = allCoops.filter(c => c.id === targetCooperativeId);
       } else {
-        targetCoops = await db
-          .select({ id: cooperatives.id })
-          .from(cooperatives)
-          .where(eq(cooperatives.isActive, true));
+        targetCoops = allCoops;
       }
     } else if (role === "coordinator") {
-      if (assignedLga) {
-        targetCoops = await db
-          .select({ id: cooperatives.id })
-          .from(cooperatives)
-          .where(
-            and(
-              eq(cooperatives.isActive, true),
-              sql`LOWER(${cooperatives.lga}) = ${assignedLga.toLowerCase()} OR LOWER(${cooperatives.name}) = ${assignedLga.toLowerCase()}`
-            )
-          );
-      } else if (assignedZone) {
-        targetCoops = await db
-          .select({ id: cooperatives.id })
-          .from(cooperatives)
-          .where(
-            and(
-              eq(cooperatives.isActive, true),
-              sql`LOWER(${cooperatives.zone}) = ${assignedZone.toLowerCase()}`
-            )
-          );
-      } else if (assignedState) {
-        targetCoops = await db
-          .select({ id: cooperatives.id })
-          .from(cooperatives)
-          .where(
-            and(
-              eq(cooperatives.isActive, true),
-              sql`LOWER(${cooperatives.state}) = ${assignedState.toLowerCase()}`
-            )
-          );
+      if (level === "state") {
+        if (!assignedState) {
+          return res.status(403).json({ error: "State scope unauthorized (no assigned state)" });
+        }
+        const normState = normalize(assignedState);
+        targetCoops = allCoops.filter(c => normalize(c.state).includes(normState) || normState.includes(normalize(c.state)));
+      } else if (level === "zone") {
+        if (!assignedZone) {
+          return res.status(403).json({ error: "Zone scope unauthorized (no assigned zone)" });
+        }
+        const normZone = normalize(assignedZone);
+        targetCoops = allCoops.filter(c => normalize(c.zone).includes(normZone) || normZone.includes(normalize(c.zone)));
+      } else if (level === "lga" || level === "cooperative") {
+        if (!assignedLga) {
+          return res.status(403).json({ error: "LGA scope unauthorized (no assigned LGA)" });
+        }
+        const normLga = normalize(assignedLga);
+        targetCoops = allCoops.filter(c => normalize(c.lga).includes(normLga) || normLga.includes(normalize(c.lga)) || normalize(c.name).includes(normLga));
       }
     } else {
       return res.status(403).json({ error: "Only admins and coordinators can broadcast announcements" });
     }
 
     if (targetCoops.length === 0) {
-      return res.status(404).json({ error: "No matching cooperatives found for your assignment scope." });
+      return res.status(404).json({ error: `No active cooperatives found matching your assignment scope (${level === "state" ? assignedState : level === "zone" ? assignedZone : assignedLga}).` });
     }
 
     const createdAnnouncements = [];
