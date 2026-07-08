@@ -211,3 +211,14 @@ export const complaints = pgTable("complaints", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+export const announcements = pgTable("announcements", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  cooperativeId: uuid("cooperative_id").references(() => cooperatives.id).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  content: text("content").notNull(),
+  level: varchar("level", { length: 50 }).notNull().default("cooperative"), // "state", "zone", "lga", "cooperative"
+  postedBy: varchar("posted_by", { length: 150 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});

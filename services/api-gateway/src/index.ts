@@ -285,6 +285,34 @@ app.get(
     changeOrigin: true,
   }),
 );
+app.get(
+  "/api/cooperative/:id/announcements",
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.post(
+  "/api/cooperative/:id/announcements",
+  authenticate,
+  requireRole("admin", "coordinator"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.delete(
+  "/api/cooperative/:id/announcements/:announcementId",
+  authenticate,
+  requireRole("admin", "coordinator"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
 app.patch(
   "/api/cooperative/:id",
   authenticate,
