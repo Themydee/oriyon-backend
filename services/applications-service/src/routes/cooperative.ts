@@ -1,5 +1,6 @@
+
 import { Router, Request, Response } from "express";
-import { eq, count, and, sql } from "drizzle-orm";
+import { eq, count, and, sql, or, isNull } from "drizzle-orm";
 import { z } from "zod";
 import axios from "axios";
 import { db } from "../index";
@@ -641,6 +642,47 @@ router.post("/join", async (req: Request, res: Response) => {
       });
     }
 
+    // Auto-generate memberId if not provided
+    if (!memberData.memberId) {
+      let resolvedStateName = "Oyo State";
+      if (finalCooperativeId) {
+        const [coop] = await db
+          .select({ state: cooperatives.state })
+          .from(cooperatives)
+          .where(eq(cooperatives.id, finalCooperativeId))
+          .limit(1);
+        if (coop) {
+          resolvedStateName = coop.state;
+        }
+      } else {
+        const [defaultCoop] = await db
+          .select({ state: cooperatives.state })
+          .from(cooperatives)
+          .where(eq(cooperatives.name, "Ibadan North"))
+          .limit(1);
+        if (defaultCoop) {
+          resolvedStateName = defaultCoop.state;
+        }
+      }
+
+      const stateCode = (resolvedStateName || "OYO")
+        .replace(/State/i, "")
+        .trim()
+        .toUpperCase();
+      
+      const statePrefix = stateCode.split(/\s+/).length > 1
+        ? stateCode.split(/\s+/).map((w: string) => w[0]).join("").substring(0, 3)
+        : stateCode.substring(0, 3);
+
+      const countResult = await db
+        .select({ count: count() })
+        .from(cooperativeMembers);
+      
+      const nextCount = Number(countResult[0]?.count || 0) + 1;
+      const paddedCount = String(nextCount).padStart(4, "0");
+      memberData.memberId = `${statePrefix}-COOP-${paddedCount}`;
+    }
+
     // Create the cooperative member record
     const [member] = await db
       .insert(cooperativeMembers)
@@ -851,7 +893,7 @@ router.get("/members/me", async (req: Request, res: Response) => {
   }
 
   try {
-    const [member] = await db
+    let [member] = await db
       .select({
         id: cooperativeMembers.id,
         cooperativeId: cooperativeMembers.cooperativeId,
@@ -863,6 +905,7 @@ router.get("/members/me", async (req: Request, res: Response) => {
         email: cooperativeMembers.email,
         phone: cooperativeMembers.phone,
         lga: cooperativeMembers.lga,
+        memberId: cooperativeMembers.memberId,
         registrationFeePaid: cooperativeMembers.registrationFeePaid,
         monthlyContributionAmount: cooperativeMembers.monthlyContributionAmount,
         status: cooperativeMembers.status,
@@ -875,6 +918,45 @@ router.get("/members/me", async (req: Request, res: Response) => {
 
     if (!member) {
       return res.status(404).json({ error: "Cooperative member record not found" });
+    }
+
+    // Runtime auto-generation fallback for existing members without memberId
+    if (!member.memberId) {
+      let resolvedStateName = "Oyo State";
+      if (member.cooperativeId) {
+        const [coop] = await db
+          .select({ state: cooperatives.state })
+          .from(cooperatives)
+          .where(eq(cooperatives.id, member.cooperativeId))
+          .limit(1);
+        if (coop) {
+          resolvedStateName = coop.state;
+        }
+      }
+
+      const stateCode = (resolvedStateName || "OYO")
+        .replace(/State/i, "")
+        .trim()
+        .toUpperCase();
+      
+      const statePrefix = stateCode.split(/\s+/).length > 1
+        ? stateCode.split(/\s+/).map((w: string) => w[0]).join("").substring(0, 3)
+        : stateCode.substring(0, 3);
+
+      const countResult = await db
+        .select({ count: count() })
+        .from(cooperativeMembers);
+      
+      const nextCount = Number(countResult[0]?.count || 0) + 1;
+      const paddedCount = String(nextCount).padStart(4, "0");
+      const generatedId = `${statePrefix}-COOP-${paddedCount}`;
+
+      await db
+        .update(cooperativeMembers)
+        .set({ memberId: generatedId })
+        .where(eq(cooperativeMembers.id, member.id));
+
+      member.memberId = generatedId;
     }
 
     return res.json(member);
@@ -1411,5 +1493,64 @@ router.delete("/:id/announcements/:announcementId", async (req: Request, res: Re
     return res.status(500).json({ error: "Failed to delete announcement" });
   }
 });
+
+// Startup backfill script for existing members missing memberId
+export async function runCooperativeMemberIdBackfill() {
+  try {
+    const missing = await db
+      .select({
+        id: cooperativeMembers.id,
+        cooperativeId: cooperativeMembers.cooperativeId,
+      })
+      .from(cooperativeMembers)
+      .where(
+        or(
+          isNull(cooperativeMembers.memberId),
+          eq(cooperativeMembers.memberId, "")
+        )
+      );
+
+    if (missing.length === 0) {
+      return;
+    }
+
+    console.log(`[Cooperative Backfill] Found ${missing.length} members missing memberId. Starting backfill...`);
+
+    const coops = await db.select({ id: cooperatives.id, state: cooperatives.state }).from(cooperatives);
+    const coopMap = new Map(coops.map(c => [c.id, c.state]));
+
+    const [{ count: initialCount }] = await db
+      .select({ count: count() })
+      .from(cooperativeMembers);
+    
+    let currentTotalCount = Number(initialCount);
+
+    for (const member of missing) {
+      const stateName = (member.cooperativeId ? coopMap.get(member.cooperativeId) : null) || "Oyo State";
+      
+      const stateCode = stateName
+        .replace(/State/i, "")
+        .trim()
+        .toUpperCase();
+      
+      const statePrefix = stateCode.split(/\s+/).length > 1
+        ? stateCode.split(/\s+/).map((w: string) => w[0]).join("").substring(0, 3)
+        : stateCode.substring(0, 3);
+
+      currentTotalCount += 1;
+      const paddedCount = String(currentTotalCount).padStart(4, "0");
+      const generatedId = `${statePrefix}-COOP-${paddedCount}`;
+
+      await db
+        .update(cooperativeMembers)
+        .set({ memberId: generatedId })
+        .where(eq(cooperativeMembers.id, member.id));
+    }
+
+    console.log(`[Cooperative Backfill] Backfilled ${missing.length} member IDs successfully.`);
+  } catch (err) {
+    console.error("[Cooperative Backfill Error]:", err);
+  }
+}
 
 export default router;

@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { connectRabbitMQ } from "./rabbitmq";
 import applicationsRouter, { runAutoShortlistCheck } from "./routes/applications";
-import cooperativeRouter from "./routes/cooperative";
+import cooperativeRouter, { runCooperativeMemberIdBackfill } from "./routes/cooperative";
 import complaintsRouter from "./routes/complaints";
 const app = express();
 const PORT = process.env.PORT || 3004;
@@ -32,6 +32,11 @@ app.use("/api/complaints", complaintsRouter);
 
 async function bootstrap() {
   await connectRabbitMQ(process.env.RABBITMQ_URL!);
+
+  // Run backfill for existing cooperative members missing IDs
+  runCooperativeMemberIdBackfill().catch(err => {
+    console.error("[Cooperative ID Backfill Error]:", err);
+  });
 
   // Run auto-shortlist check once on startup, then every 10 minutes
   runAutoShortlistCheck().catch(err => {
