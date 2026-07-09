@@ -60,6 +60,7 @@ router.post("/", async (req: Request, res: Response) => {
     isActive: z.boolean().optional().default(true),
     whatsappLink: z.string().optional().nullable(),
     registrationFee: z.number().optional().nullable(),
+    monthlyContribution: z.number().optional().nullable(),
     registrationStatus: z.enum(["formal", "pending"]).optional().default("formal"),
   });
 
@@ -164,8 +165,16 @@ router.post("/payment/initialize", async (req: Request, res: Response) => {
     let reference = "";
 
     if (paymentType === "contribution") {
-      let contribAmount = 2000; // Default lock to 2000 as requested
-      if (member.monthlyContributionAmount) {
+      let contribAmount = 2000;
+      const [coop] = await db
+        .select()
+        .from(cooperatives)
+        .where(eq(cooperatives.id, member.cooperativeId))
+        .limit(1);
+
+      if (coop && coop.monthlyContribution !== null && coop.monthlyContribution !== undefined) {
+        contribAmount = coop.monthlyContribution;
+      } else if (member.monthlyContributionAmount) {
         const parsedAmount = parseInt(member.monthlyContributionAmount.replace(/[^0-9]/g, ""), 10);
         if (!isNaN(parsedAmount) && parsedAmount > 0) {
           contribAmount = parsedAmount;
@@ -900,6 +909,7 @@ router.get("/members/me", async (req: Request, res: Response) => {
         cooperativeName: cooperatives.name,
         whatsappLink: cooperatives.whatsappLink,
         registrationFee: cooperatives.registrationFee,
+        monthlyContribution: cooperatives.monthlyContribution,
         firstName: cooperativeMembers.firstName,
         lastName: cooperativeMembers.lastName,
         email: cooperativeMembers.email,
@@ -959,7 +969,10 @@ router.get("/members/me", async (req: Request, res: Response) => {
       member.memberId = generatedId;
     }
 
-    return res.json(member);
+    return res.json({
+      ...member,
+      monthlyContributionAmount: member.monthlyContributionAmount || String(member.monthlyContribution ?? 2000),
+    });
   } catch (err) {
     console.error("[cooperative] fetch self member record error:", err);
     return res.status(500).json({ error: "Failed to fetch self member record" });
@@ -1273,6 +1286,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
     isActive: z.boolean().optional(),
     whatsappLink: z.string().optional().nullable(),
     registrationFee: z.number().optional().nullable(),
+    monthlyContribution: z.number().optional().nullable(),
     registrationStatus: z.enum(["formal", "pending"]).optional(),
   });
 

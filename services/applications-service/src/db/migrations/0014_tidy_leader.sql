@@ -1,0 +1,1 @@
+ALTER TABLE "cooperatives" ADD COLUMN "monthly_contribution" integer DEFAULT 2000;

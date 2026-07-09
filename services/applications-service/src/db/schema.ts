@@ -126,6 +126,7 @@
   isActive: boolean("is_active").notNull().default(true),
   whatsappLink: varchar("whatsapp_link", { length: 255 }),
   registrationFee: integer("registration_fee").default(2000),
+  monthlyContribution: integer("monthly_contribution").default(2000),
   registrationStatus: varchar("registration_status", { length: 50 }).notNull().default("formal"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
