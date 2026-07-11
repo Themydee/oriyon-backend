@@ -437,6 +437,69 @@ router.get("/:id", async (req: Request, res: Response) => {
   }
 });
 
+
+// ─────────────────────────────────────────────
+// POST /applications/bulk-email — Send Bulk Email to Applicants
+// ─────────────────────────────────────────────
+router.post("/bulk-email", async (req: Request, res: Response) => {
+  const bulkEmailSchema = z.object({
+    status: z.enum([
+      "all",
+      "pending",
+      "shortlisted",
+      "approved",
+      "rejection_review",
+      "rejected",
+      "archived",
+    ]),
+    subject: z.string().min(1, "Subject is required"),
+    body: z.string().min(1, "Message body is required"),
+  });
+
+  const parsed = bulkEmailSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const { status, subject, body } = parsed.data;
+
+    let queryConditions = [eq(applications.isDeleted, false)];
+    if (status !== "all") {
+      queryConditions.push(eq(applications.status, status as any));
+    }
+
+    const targets = await db
+      .select()
+      .from(applications)
+      .where(and(...queryConditions));
+
+    if (targets.length === 0) {
+      return res.status(404).json({ error: "No applicants found matching criteria." });
+    }
+
+    // Publish event for each target to be processed by notifications service
+    for (const app of targets) {
+      await publishEvent("application.custom_email_requested", {
+        applicationId: app.id,
+        email: app.email,
+        firstName: app.firstName,
+        lastName: app.lastName,
+        subject,
+        body,
+      });
+    }
+
+    return res.json({
+      message: `Bulk email successfully queued for ${targets.length} applicants.`,
+      count: targets.length,
+    });
+  } catch (err) {
+    console.error("[POST /applications/bulk-email] error:", err);
+    return res.status(500).json({ error: "Failed to dispatch bulk email requests" });
+  }
+});
+
 // ─────────────────────────────────────────────
 // POST /applications/:id/email — Send Direct Custom Email
 // ─────────────────────────────────────────────
