@@ -209,6 +209,17 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
       .returning();
 
     if (!updated) return res.status(404).json({ error: "User not found" });
+
+    // Publish event to keep auth-service in sync
+    await publishEvent("user.updated", {
+      userId: updated.id,
+      role: updated.role,
+      assignedState: updated.assignedState,
+      assignedLga: updated.assignedLga,
+      assignedZone: updated.assignedZone,
+      isActive: updated.isActive,
+    });
+
     return res.json(updated);
   } catch (err) {
     return res.status(500).json({ error: "Failed to update user" });

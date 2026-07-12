@@ -96,7 +96,7 @@ weeksRouter.get("/:id", async (req: Request, res: Response) => {
 
     // Secure unlockDate for trainees
     const userRole = req.headers["x-user-role"] as string;
-    if (userRole === "trainee" && week.unlockDate) {
+    if ((userRole === "trainee" || userRole === "coordinator") && week.unlockDate) {
       const now = new Date();
       const unlock = new Date(week.unlockDate);
       if (now < unlock) {
@@ -191,7 +191,7 @@ lessonsRouter.get("/:id", async (req: Request, res: Response) => {
 
     // Secure unlockDate for trainees
     const userRole = req.headers["x-user-role"] as string;
-    if (userRole === "trainee") {
+    if (userRole === "trainee" || userRole === "coordinator") {
       const [week] = await db.select().from(weeks).where(eq(weeks.id, lesson.weekId)).limit(1);
       if (week && week.unlockDate) {
         const now = new Date();

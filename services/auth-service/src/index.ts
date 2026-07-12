@@ -9,6 +9,7 @@ import { connectRabbitMQ, subscribeToEvent } from "./rabbitmq";
 import authRouter from "./routes/auth";
 import { handleUserCreated } from "./listeners/userCreated.listener";
 import { handleUserDeactivated } from "./listeners/userDeactivated.listener";
+import { handleUserUpdated } from "./listeners/userUpdated.listener";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -46,6 +47,7 @@ async function bootstrap() {
   // Register RabbitMQ listeners
   await subscribeToEvent("user.created", handleUserCreated);
   await subscribeToEvent("user.deactivated", handleUserDeactivated);
+  await subscribeToEvent("user.updated", handleUserUpdated);
 
   app.listen(PORT, () => {
     console.log(`[auth-service] Running on port ${PORT}`);

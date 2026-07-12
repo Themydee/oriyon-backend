@@ -49,7 +49,19 @@ export function requireRole(...roles: Array<"trainee" | "trainer" | "lead_traine
     if (!req.user) {
       return res.status(401).json({ error: "Unauthorized" });
     }
-    if (!roles.includes(req.user.role)) {
+
+    let userHasRole = roles.includes(req.user.role);
+
+    // Support dual trainee-coordinator role (a trainee assigned a cooperative location behaves as coordinator too)
+    if (!userHasRole && roles.includes("coordinator")) {
+      const isTraineeCoordinator = (req.user.role === "trainee") &&
+        (req.user.assignedLga || req.user.assignedState || req.user.assignedZone);
+      if (isTraineeCoordinator) {
+        userHasRole = true;
+      }
+    }
+
+    if (!userHasRole) {
       return res.status(403).json({ error: "Forbidden — insufficient role" });
     }
     next();
