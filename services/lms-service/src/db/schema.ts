@@ -42,6 +42,7 @@ export const weeks = pgTable("weeks", {
   requiresQuizPass: boolean("requires_quiz_pass").notNull().default(true),
   isPublished: boolean("is_published").notNull().default(false),
   objectives: jsonb("objectives").$type<string[]>().notNull().default([]),
+  unlockDate: timestamp("unlock_date"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

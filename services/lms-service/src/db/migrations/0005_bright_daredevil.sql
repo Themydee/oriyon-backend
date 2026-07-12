@@ -1,0 +1,1 @@
+ALTER TABLE "weeks" ADD COLUMN "unlock_date" timestamp;

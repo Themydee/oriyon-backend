@@ -36,6 +36,13 @@
       "when": 1781946285868,
       "tag": "0004_greedy_stryfe",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783889952459,
+      "tag": "0005_bright_daredevil",
+      "breakpoints": true
     }
   ]
 }

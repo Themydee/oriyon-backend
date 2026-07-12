@@ -94,6 +94,16 @@ weeksRouter.get("/:id", async (req: Request, res: Response) => {
     const [week] = await db.select().from(weeks).where(eq(weeks.id, req.params.id)).limit(1);
     if (!week) return res.status(404).json({ error: "Week not found" });
 
+    // Secure unlockDate for trainees
+    const userRole = req.headers["x-user-role"] as string;
+    if (userRole === "trainee" && week.unlockDate) {
+      const now = new Date();
+      const unlock = new Date(week.unlockDate);
+      if (now < unlock) {
+        return res.status(403).json({ error: `This week is locked until ${unlock.toLocaleDateString()}` });
+      }
+    }
+
     const weekLessons = await db
       .select()
       .from(lessons)
@@ -115,12 +125,17 @@ weeksRouter.post("/", async (req: Request, res: Response) => {
     weekNumber: z.number().int().positive(),
     isPublished: z.boolean().optional(),
     objectives: z.array(z.string()).optional(),
+    unlockDate: z.string().nullable().optional(),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
-    const [week] = await db.insert(weeks).values(parsed.data).returning();
+    const values = {
+      ...parsed.data,
+      unlockDate: parsed.data.unlockDate ? new Date(parsed.data.unlockDate) : null,
+    };
+    const [week] = await db.insert(weeks).values(values).returning();
     return res.status(201).json(week);
   } catch {
     return res.status(500).json({ error: "Failed to create week" });
@@ -129,15 +144,37 @@ weeksRouter.post("/", async (req: Request, res: Response) => {
 
 // PATCH /lms/weeks/:id
 weeksRouter.patch("/:id", async (req: Request, res: Response) => {
+  const schema = z.object({
+    cohortId: z.string().uuid().optional(),
+    title: z.string().min(1).optional(),
+    description: z.string().optional(),
+    weekNumber: z.number().int().positive().optional(),
+    isPublished: z.boolean().optional(),
+    requiresQuizPass: z.boolean().optional(),
+    objectives: z.array(z.string()).optional(),
+    unlockDate: z.string().nullable().optional(),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
   try {
+    const updates: any = {
+      ...parsed.data,
+      updatedAt: new Date(),
+    };
+    if (parsed.data.unlockDate !== undefined) {
+      updates.unlockDate = parsed.data.unlockDate ? new Date(parsed.data.unlockDate) : null;
+    }
+
     const [updated] = await db
       .update(weeks)
-      .set({ ...req.body, updatedAt: new Date() })
+      .set(updates)
       .where(eq(weeks.id, req.params.id))
       .returning();
     if (!updated) return res.status(404).json({ error: "Week not found" });
     return res.json(updated);
-  } catch {
+  } catch (err) {
+    console.error(err);
     return res.status(500).json({ error: "Failed to update week" });
   }
 });
@@ -151,6 +188,20 @@ lessonsRouter.get("/:id", async (req: Request, res: Response) => {
   try {
     const [lesson] = await db.select().from(lessons).where(eq(lessons.id, req.params.id)).limit(1);
     if (!lesson) return res.status(404).json({ error: "Lesson not found" });
+
+    // Secure unlockDate for trainees
+    const userRole = req.headers["x-user-role"] as string;
+    if (userRole === "trainee") {
+      const [week] = await db.select().from(weeks).where(eq(weeks.id, lesson.weekId)).limit(1);
+      if (week && week.unlockDate) {
+        const now = new Date();
+        const unlock = new Date(week.unlockDate);
+        if (now < unlock) {
+          return res.status(403).json({ error: `This week is locked until ${unlock.toLocaleDateString()}` });
+        }
+      }
+    }
+
     return res.json(lesson);
   } catch {
     return res.status(500).json({ error: "Failed to fetch lesson" });
