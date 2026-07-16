@@ -76,6 +76,10 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
             .where(eq(authUsers.id, existing.id));
           console.log(`[auth-service][handleUserCreated] User ${email} already active — updated fields`);
         }
+        await publishEvent("user.activated", {
+          userId: existing.id,
+          isActive: true,
+        });
         return;
       }
 

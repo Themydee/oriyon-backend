@@ -242,6 +242,16 @@ router.post("/set-password", async (req: Request, res: Response) => {
       .set({ passwordHash, isActive: true, updatedAt: new Date() })
       .where(eq(authUsers.id, setupToken.userId));
 
+    // Publish user.activated to sync user-service profile
+    try {
+      await publishEvent("user.activated", {
+        userId: setupToken.userId,
+        isActive: true,
+      });
+    } catch (rabbitmqErr) {
+      console.error("[auth] Failed to publish user.activated event to RabbitMQ, continuing set-password:", rabbitmqErr);
+    }
+
     // Invalidate the token
     await db
       .update(setupTokens)

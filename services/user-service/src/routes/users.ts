@@ -112,6 +112,7 @@ userRouter.post("/", async (req: Request, res: Response) => {
       assignedState: parsed.data.assignedState || null,
       assignedLga: parsed.data.assignedLga || null,
       assignedZone: parsed.data.assignedZone || null,
+      isActive: false,
     };
 
     const [newUser] = await db.insert(users).values(insertData).returning();

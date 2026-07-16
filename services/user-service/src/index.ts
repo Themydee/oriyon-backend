@@ -103,6 +103,7 @@ async function setupConsumers() {
           phone,
           role: "trainee",
           approvedRole,
+          isActive: false,
         })
         .returning();
 
@@ -206,6 +207,7 @@ async function setupConsumers() {
           role: "trainee",
           assignedLga: lga || null,
           isCooperativeOnly: true,
+          isActive: false,
         })
         .returning();
 
@@ -221,6 +223,29 @@ async function setupConsumers() {
         assignedLga: newUser.assignedLga,
         isCooperativeOnly: newUser.isCooperativeOnly,
       });
+    }
+  );
+
+  // User activated (password setup complete) → update isActive to true in user profile
+  await consumeEvent(
+    "user.activated",
+    "user-service.user.activated",
+    async (payload) => {
+      const { userId, isActive } = payload as any;
+      if (!userId) {
+        console.error("[user-service][user.activated] Missing userId");
+        return;
+      }
+
+      await db
+        .update(users)
+        .set({
+          isActive: isActive ?? true,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, userId));
+
+      console.log(`[user-service] User ${userId} activated status synced: ${isActive}`);
     }
   );
 }
