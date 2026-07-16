@@ -74,6 +74,7 @@ async function setupConsumers() {
           .set({
             isActive: true,
             approvedRole,
+            isCooperativeOnly: false,
             updatedAt: new Date(),
           })
           .where(eq(users.id, existing.id))
@@ -86,6 +87,7 @@ async function setupConsumers() {
           firstName: reactivatedUser.firstName,
           lastName: reactivatedUser.lastName,
           role: reactivatedUser.role,
+          isCooperativeOnly: false,
         });
         return;
       }

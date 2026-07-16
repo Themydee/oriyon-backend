@@ -56,21 +56,36 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
       .limit(1);
 
     if (existing) {
+      const updateData: any = {
+        isCooperativeOnly: isCooperativeOnly ?? false,
+        updatedAt: new Date(),
+      };
+
       if (existing.passwordHash) {
         if (!existing.isActive) {
+          updateData.isActive = true;
           await db
             .update(authUsers)
-            .set({ isActive: true, updatedAt: new Date() })
+            .set(updateData)
             .where(eq(authUsers.id, existing.id));
           console.log(`[auth-service][handleUserCreated] Reactivated existing user ${email}`);
         } else {
-          console.log(`[auth-service][handleUserCreated] User ${email} already active — skipping`);
+          await db
+            .update(authUsers)
+            .set(updateData)
+            .where(eq(authUsers.id, existing.id));
+          console.log(`[auth-service][handleUserCreated] User ${email} already active — updated fields`);
         }
         return;
       }
 
       // Auth record exists but no password set → resend the setup email
-      console.log(`[auth-service][handleUserCreated] User ${email} exists without password — resending setup email`);
+      console.log(`[auth-service][handleUserCreated] User ${email} exists without password — updating and resending setup email`);
+
+      await db
+        .update(authUsers)
+        .set(updateData)
+        .where(eq(authUsers.id, existing.id));
 
       // Reuse a still-valid setup token, or create a fresh one
       const [existingToken] = await db
@@ -89,7 +104,7 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
       } else {
         // Expired or missing — rotate to a fresh token
         token = crypto.randomBytes(32).toString("hex");
-        expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 1 week
         await db.delete(setupTokens).where(eq(setupTokens.userId, existing.id));
         await db.insert(setupTokens).values({ userId: existing.id, token, expiresAt });
         console.log(`[auth-service][handleUserCreated] Rotated setup token for ${email}`);
@@ -124,7 +139,7 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
 
     // ── 3. Generate one-time setup token ─────────────────────────────────────
     const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 1 week
 
     await db.insert(setupTokens).values({ userId, token, expiresAt });
 

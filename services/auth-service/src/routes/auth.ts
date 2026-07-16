@@ -338,7 +338,7 @@ router.post("/resend-setup", async (req: Request, res: Response) => {
     if (!user || user.passwordHash) return res.json(genericResponse);
 
     const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours for setup
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days (1 week) for setup
 
     await db.insert(setupTokens).values({ userId: user.id, token, expiresAt });
 
