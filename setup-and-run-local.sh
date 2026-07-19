@@ -57,7 +57,8 @@ AUTH_SERVICE_URL=http://localhost:3001
 USER_SERVICE_URL=http://localhost:3002
 LMS_SERVICE_URL=http://localhost:3003
 APPLICATIONS_SERVICE_URL=http://localhost:3004
-NOTIFICATIONS_SERVICE_URL=http://localhost:3005"
+NOTIFICATIONS_SERVICE_URL=http://localhost:3005
+SHOP_SERVICE_URL=http://localhost:3006"
 
 create_env_if_missing "services/auth-service/.env" "PORT=3001
 DATABASE_URL=postgres://localhost:5432/oriyon_auth
@@ -96,7 +97,7 @@ FRONTEND_URL=http://localhost:3000"
 
 # 3. CREATE DATABASES IF MISSING
 echo "Ensuring databases exist..."
-for db in oriyon_auth oriyon_user oriyon_lms oriyon_applications oriyon_notifications; do
+for db in oriyon_auth oriyon_user oriyon_lms oriyon_applications oriyon_notifications oriyon_shop; do
   createdb "$db" 2>/dev/null && echo "✔ Created database: $db" || echo "✔ Database $db already exists"
 done
 
@@ -119,7 +120,7 @@ find services/auth-service/src -name "*.js" -delete 2>/dev/null
 
 # 6. RUN MIGRATIONS
 echo "Running database migrations..."
-for service in auth-service user-service lms-service applications-service notifications-service; do
+for service in auth-service user-service lms-service applications-service notifications-service shop-service; do
   echo "Migrating $service..."
   (cd "services/$service" && npm run migrate)
 done
@@ -133,6 +134,9 @@ echo "Seeding coordinators..."
 
 echo "Checking trainer account seeding..."
 (cd services/auth-service && npx ts-node src/seed-trainer.ts)
+
+echo "Seeding shop products..."
+(cd services/shop-service && npm run db:seed)
 
 # 8. LAUNCH STACK
 echo "================================================="
@@ -153,6 +157,9 @@ echo "🚀 Started applications-service on http://localhost:3004"
 
 (cd services/notifications-service && npm run dev > ../../notifications.log 2>&1) &
 echo "🚀 Started notifications-service on http://localhost:3005"
+
+(cd services/shop-service && npm run dev > ../../shop.log 2>&1) &
+echo "🚀 Started shop-service on http://localhost:3006"
 
 # Allow backend services to bind ports before starting API Gateway
 sleep 2

@@ -19,6 +19,7 @@ const {
   LMS_SERVICE_URL,
   APPLICATIONS_SERVICE_URL,
   NOTIFICATIONS_SERVICE_URL,
+  SHOP_SERVICE_URL = "http://localhost:3006",
 } = process.env;
 
 const fetchFn: any = (globalThis as any).fetch;
@@ -26,6 +27,8 @@ const fetchFn: any = (globalThis as any).fetch;
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:3006",
+  "http://localhost:3007",
+  "http://localhost:3008",
   "https://www.oriyoninternational.com",
   "https://oriyoninternational.com",
 ];
@@ -446,6 +449,94 @@ app.post(
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
     changeOrigin: true,
+  }),
+);
+
+// ─────────────────────────────────────────────
+// SHOP SERVICE
+// ─────────────────────────────────────────────
+app.get(
+  "/api/shop/products",
+  keepPath,
+  createProxyMiddleware({
+    target: SHOP_SERVICE_URL,
+    changeOrigin: true,
+    pathRewrite: { "^/api/shop": "" },
+  }),
+);
+app.post(
+  "/api/shop/checkout",
+  keepPath,
+  createProxyMiddleware({
+    target: SHOP_SERVICE_URL,
+    changeOrigin: true,
+    pathRewrite: { "^/api/shop": "" },
+  }),
+);
+app.get(
+  "/api/shop/orders/:ref",
+  keepPath,
+  createProxyMiddleware({
+    target: SHOP_SERVICE_URL,
+    changeOrigin: true,
+    pathRewrite: { "^/api/shop": "" },
+  }),
+);
+
+// Admin endpoints (Role guarded)
+app.get(
+  "/api/shop/admin/orders",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: SHOP_SERVICE_URL,
+    changeOrigin: true,
+    pathRewrite: { "^/api/shop": "" },
+  }),
+);
+app.patch(
+  "/api/shop/admin/orders/:id/status",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: SHOP_SERVICE_URL,
+    changeOrigin: true,
+    pathRewrite: { "^/api/shop": "" },
+  }),
+);
+app.post(
+  "/api/shop/admin/products",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: SHOP_SERVICE_URL,
+    changeOrigin: true,
+    pathRewrite: { "^/api/shop": "" },
+  }),
+);
+app.patch(
+  "/api/shop/admin/products/:id",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: SHOP_SERVICE_URL,
+    changeOrigin: true,
+    pathRewrite: { "^/api/shop": "" },
+  }),
+);
+app.get(
+  "/api/shop/admin/stats",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: SHOP_SERVICE_URL,
+    changeOrigin: true,
+    pathRewrite: { "^/api/shop": "" },
   }),
 );
 

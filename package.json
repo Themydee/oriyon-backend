@@ -4,7 +4,7 @@
   "description": "Full microservice backend for oriyoninternational.com built with: **Node.js · TypeScript · Express · PostgreSQL · Drizzle ORM · RabbitMQ · Docker**",
   "main": "index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "bash start-local.sh",
     "build": "tsc",
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",

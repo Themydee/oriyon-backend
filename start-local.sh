@@ -23,6 +23,9 @@ echo "✔ Started applications-service on http://localhost:3004"
 (cd services/notifications-service && npm run dev > ../../notifications.log 2>&1) &
 echo "✔ Started notifications-service on http://localhost:3005"
 
+(cd services/shop-service && npm run dev > ../../shop.log 2>&1) &
+echo "✔ Started shop-service on http://localhost:3006"
+
 # Pause briefly for microservices to bind ports before starting Gateway
 sleep 2
 
