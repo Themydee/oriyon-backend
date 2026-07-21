@@ -31,6 +31,8 @@ const allowedOrigins = [
   "http://localhost:3008",
   "https://www.oriyoninternational.com",
   "https://oriyoninternational.com",
+  "https://shop.oriyoninternational.com",
+  "https://www.shop.oriyoninternational.com",
 ];
 
 // Configure helmet with CSP disabled to allow Swagger UI's inline scripts/styles to render successfully
