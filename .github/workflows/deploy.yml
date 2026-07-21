@@ -44,7 +44,7 @@ jobs:
             echo "================================================="
             echo "Running migrations..."
             echo "================================================="
-            for service in auth-service user-service lms-service applications-service notifications-service; do
+            for service in auth-service user-service lms-service applications-service notifications-service shop-service; do
               echo "Migrating $service..."
               (cd "services/$service" && npm run migrate) || { echo "❌ Migration failed in $service"; exit 1; }
             done
@@ -52,7 +52,7 @@ jobs:
             echo "================================================="
             echo "Building services..."
             echo "================================================="
-            for service in api-gateway auth-service user-service lms-service applications-service notifications-service; do
+            for service in api-gateway auth-service user-service lms-service applications-service notifications-service shop-service; do
               echo "Building $service..."
               (cd "services/$service" && npm run build) || { echo "❌ Build failed in $service"; exit 1; }
             done

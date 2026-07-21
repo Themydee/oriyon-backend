@@ -27,12 +27,14 @@ services:
       LMS_SERVICE_URL: http://lms-service:3003
       APPLICATIONS_SERVICE_URL: http://applications-service:3004
       NOTIFICATIONS_SERVICE_URL: http://notifications-service:3005
+      SHOP_SERVICE_URL: http://shop-service:3006
     depends_on:
       - auth-service
       - user-service
       - lms-service
       - applications-service
       - notifications-service
+      - shop-service
     networks:
       - oriyon-network
 
@@ -123,5 +125,21 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY}
       EMAIL_FROM: ${EMAIL_FROM}
       FRONTEND_URL: ${FRONTEND_URL}
+    networks:
+      - oriyon-network
+
+  shop-service:
+    build:
+      context: ./services/shop-service
+      dockerfile: Dockerfile
+    container_name: oriyon-shop-service
+    restart: unless-stopped
+    ports:
+      - "3006:3006"
+    environment:
+      PORT: 3006
+      DATABASE_URL: ${SHOP_DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      RABBITMQ_URL: ${RABBITMQ_URL}
     networks:
       - oriyon-network
