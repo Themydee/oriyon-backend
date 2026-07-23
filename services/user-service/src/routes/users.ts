@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, sql, ilike, or } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
 import { db } from "../index";
@@ -27,13 +27,63 @@ const createUserSchema = z.object({
 });
 
 // GET /users
-userRouter.get("/", async (_req: Request, res: Response) => {
+// Supports: ?page=1&limit=50&search=john&role=trainee
+userRouter.get("/", async (req: Request, res: Response) => {
   try {
-    const allUsers = await db.select().from(users).orderBy(users.createdAt);
-    const allCohortMembers = await db.select().from(cohortMembers);
-    const allGroupMembers = await db.select().from(groupMembers);
-    const allCohorts = await db.select().from(cohorts);
-    const allGroups = await db.select().from(groups);
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const offset = (page - 1) * limit;
+    const search = (req.query.search as string) || "";
+    const roleFilter = req.query.role as string | undefined;
+
+    // Build where conditions
+    const conditions = [];
+    if (search) {
+      conditions.push(
+        or(
+          ilike(users.firstName, `%${search}%`),
+          ilike(users.lastName, `%${search}%`),
+          ilike(users.email, `%${search}%`)
+        )
+      );
+    }
+    if (roleFilter) {
+      conditions.push(eq(users.role, roleFilter as any));
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    // Paginated users
+    const [allUsers, [{ count }]] = await Promise.all([
+      db
+        .select()
+        .from(users)
+        .where(whereClause)
+        .orderBy(users.createdAt)
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(users)
+        .where(whereClause),
+    ]);
+
+    if (allUsers.length === 0) {
+      return res.json({
+        data: [],
+        pagination: { page, limit, total: count, totalPages: Math.ceil(count / limit) },
+      });
+    }
+
+    // Only fetch memberships for the current page of users
+    const userIds = allUsers.map((u) => u.id);
+
+    const [allCohortMembers, allGroupMembers, allCohorts, allGroups] = await Promise.all([
+      db.select().from(cohortMembers).where(sql`${cohortMembers.userId} = ANY(${sql.raw(`ARRAY[${userIds.map((id) => `'${id}'`).join(",")}]::uuid[]`)})`),
+      db.select().from(groupMembers).where(sql`${groupMembers.userId} = ANY(${sql.raw(`ARRAY[${userIds.map((id) => `'${id}'`).join(",")}]::uuid[]`)})`),
+      db.select().from(cohorts),
+      db.select().from(groups),
+    ]);
 
     const cohortMap = new Map(allCohorts.map((c) => [c.id, c.name]));
     const groupMap = new Map(allGroups.map((g) => [g.id, g.name]));
@@ -58,7 +108,15 @@ userRouter.get("/", async (_req: Request, res: Response) => {
       groups: userGroupMap.get(u.id) || [],
     }));
 
-    return res.json(usersWithMemberships);
+    return res.json({
+      data: usersWithMemberships,
+      pagination: {
+        page,
+        limit,
+        total: count,
+        totalPages: Math.ceil(count / limit),
+      },
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Failed to fetch users" });
@@ -146,7 +204,6 @@ userRouter.post("/bulk-email", async (req: Request, res: Response) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
-    // Find trainees that have no cohort memberships and are not cooperative-only
     const cohortLessTrainees = await db
       .select({
         id: users.id,
@@ -164,7 +221,6 @@ userRouter.post("/bulk-email", async (req: Request, res: Response) => {
         )
       );
 
-    // Publish event for each trainee
     for (const u of cohortLessTrainees) {
       await publishEvent("application.custom_email_requested", {
         email: u.email,
@@ -211,7 +267,6 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
 
     if (!updated) return res.status(404).json({ error: "User not found" });
 
-    // Publish event to keep auth-service in sync
     await publishEvent("user.updated", {
       userId: updated.id,
       role: updated.role,
@@ -230,7 +285,7 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
 // DELETE /users/:id
 userRouter.delete("/:id", async (req: Request, res: Response) => {
   try {
-    await db  
+    await db
       .update(users)
       .set({ isActive: false })
       .where(eq(users.id, req.params.id));
@@ -244,7 +299,6 @@ userRouter.delete("/:id", async (req: Request, res: Response) => {
 // COHORTS
 // ─────────────────────────────────────────────
 
-// GET /cohorts
 cohortRouter.get("/", async (_req: Request, res: Response) => {
   try {
     const all = await db.select().from(cohorts).orderBy(cohorts.createdAt);
@@ -254,11 +308,6 @@ cohortRouter.get("/", async (_req: Request, res: Response) => {
   }
 });
 
-// ─────────────────────────────────────────────
-// GET /cohorts/groups/:id — single group with members
-// ⚠️ MUST be before /:id to avoid "groups" being
-// treated as a cohort ID
-// ─────────────────────────────────────────────
 cohortRouter.get("/groups/:id", async (req: Request, res: Response) => {
   try {
     const [group] = await db
@@ -288,7 +337,6 @@ cohortRouter.get("/groups/:id", async (req: Request, res: Response) => {
   }
 });
 
-// GET /cohorts/:id
 cohortRouter.get("/:id", async (req: Request, res: Response) => {
   try {
     const [cohort] = await db
@@ -309,7 +357,6 @@ cohortRouter.get("/:id", async (req: Request, res: Response) => {
   }
 });
 
-// POST /cohorts
 cohortRouter.post("/", async (req: Request, res: Response) => {
   const schema = z.object({
     name: z.string().min(1),
@@ -338,7 +385,6 @@ cohortRouter.post("/", async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /cohorts/:id
 cohortRouter.patch("/:id", async (req: Request, res: Response) => {
   try {
     const [updated] = await db
@@ -353,7 +399,6 @@ cohortRouter.patch("/:id", async (req: Request, res: Response) => {
   }
 });
 
-// POST /cohorts/:id/enrol
 cohortRouter.post("/:id/enrol", async (req: Request, res: Response) => {
   const { userId } = req.body;
   if (!userId) return res.status(400).json({ error: "userId required" });
@@ -376,11 +421,6 @@ cohortRouter.post("/:id/enrol", async (req: Request, res: Response) => {
   }
 });
 
-// ─────────────────────────────────────────────
-// GROUPS
-// ─────────────────────────────────────────────
-
-// POST /cohorts/:id/groups — create a group
 cohortRouter.post("/:id/groups", async (req: Request, res: Response) => {
   const schema = z.object({
     name: z.string().min(1),
@@ -396,7 +436,6 @@ cohortRouter.post("/:id/groups", async (req: Request, res: Response) => {
       .insert(groups)
       .values({ cohortId: req.params.id, ...parsed.data })
       .returning();
-
     return res.status(201).json(group);
   } catch (err) {
     console.error(err);
@@ -404,7 +443,6 @@ cohortRouter.post("/:id/groups", async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /cohorts/:cohortId/groups/:groupId — update a group
 cohortRouter.patch("/:cohortId/groups/:groupId", async (req: Request, res: Response) => {
   const schema = z.object({
     name: z.string().min(1).optional(),
@@ -425,7 +463,6 @@ cohortRouter.patch("/:cohortId/groups/:groupId", async (req: Request, res: Respo
       .returning();
 
     if (!updated) return res.status(404).json({ error: "Group not found" });
-
     return res.json(updated);
   } catch (err) {
     console.error(err);
@@ -433,7 +470,6 @@ cohortRouter.patch("/:cohortId/groups/:groupId", async (req: Request, res: Respo
   }
 });
 
-// DELETE /cohorts/:cohortId/groups/:groupId — delete a group
 cohortRouter.delete("/:cohortId/groups/:groupId", async (req: Request, res: Response) => {
   const { groupId } = req.params;
   try {
@@ -445,7 +481,6 @@ cohortRouter.delete("/:cohortId/groups/:groupId", async (req: Request, res: Resp
   }
 });
 
-// GET /cohorts/:id/groups — list groups with member details
 cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
   try {
     const allGroups = await db
@@ -454,7 +489,6 @@ cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
       .where(eq(groups.cohortId, req.params.id))
       .orderBy(groups.createdAt);
 
-    // For each group fetch its members
     const groupsWithMembers = await Promise.all(
       allGroups.map(async (group) => {
         const members = await db
@@ -470,11 +504,7 @@ cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
           .innerJoin(users, eq(users.id, groupMembers.userId))
           .where(eq(groupMembers.groupId, group.id));
 
-        return {
-          ...group,
-          memberCount: members.length,
-          members,
-        };
+        return { ...group, memberCount: members.length, members };
       })
     );
 
@@ -484,12 +514,8 @@ cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
   }
 });
 
-// POST /cohorts/:cohortId/groups/:groupId/members — add member to group
 cohortRouter.post("/:cohortId/groups/:groupId/members", async (req: Request, res: Response) => {
-  const schema = z.object({
-    userId: z.string().uuid(),
-  });
-
+  const schema = z.object({ userId: z.string().uuid() });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -497,25 +523,16 @@ cohortRouter.post("/:cohortId/groups/:groupId/members", async (req: Request, res
   const { userId } = parsed.data;
 
   try {
-    // 1. Check user is enrolled in cohort
     const [cohortMember] = await db
       .select()
       .from(cohortMembers)
-      .where(
-        and(
-          eq(cohortMembers.userId, userId),
-          eq(cohortMembers.cohortId, cohortId)
-        )
-      )
+      .where(and(eq(cohortMembers.userId, userId), eq(cohortMembers.cohortId, cohortId)))
       .limit(1);
 
     if (!cohortMember) {
-      return res.status(400).json({
-        error: "User must be enrolled in this cohort before joining a group",
-      });
+      return res.status(400).json({ error: "User must be enrolled in this cohort before joining a group" });
     }
 
-    // 2. Check group belongs to cohort
     const [group] = await db
       .select()
       .from(groups)
@@ -526,23 +543,16 @@ cohortRouter.post("/:cohortId/groups/:groupId/members", async (req: Request, res
       return res.status(400).json({ error: "Group does not belong to this cohort" });
     }
 
-    // 3. Check not already in this group
     const [alreadyMember] = await db
       .select()
       .from(groupMembers)
-      .where(
-        and(
-          eq(groupMembers.groupId, groupId),
-          eq(groupMembers.userId, userId)
-        )
-      )
+      .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, userId)))
       .limit(1);
 
     if (alreadyMember) {
       return res.status(409).json({ error: "User is already a member of this group" });
     }
 
-    // 4. Add to group
     const [member] = await db
       .insert(groupMembers)
       .values({ groupId, userId })
@@ -555,7 +565,6 @@ cohortRouter.post("/:cohortId/groups/:groupId/members", async (req: Request, res
   }
 });
 
-// DELETE /cohorts/:cohortId/groups/:groupId/members/:userId
 cohortRouter.delete("/:cohortId/groups/:groupId/members/:userId", async (req: Request, res: Response) => {
   const { groupId, userId } = req.params;
   if (!groupId || !userId) {
@@ -564,12 +573,7 @@ cohortRouter.delete("/:cohortId/groups/:groupId/members/:userId", async (req: Re
   try {
     await db
       .delete(groupMembers)
-      .where(
-        and(
-          eq(groupMembers.groupId, groupId),
-          eq(groupMembers.userId, userId)
-        )
-      );
+      .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, userId)));
     return res.json({ message: "Member removed from group" });
   } catch {
     return res.status(500).json({ error: "Failed to remove member from group" });
