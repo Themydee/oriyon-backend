@@ -1811,9 +1811,37 @@ examsRouter.patch(
 // PLATFORM VIDEO TUTORIALS
 // ─────────────────────────────────────────────
 
+let isTableCreated = false;
+
+async function ensurePlatformTutorialsTable() {
+  if (isTableCreated) return;
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS platform_tutorials (
+        id VARCHAR(128) PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        category VARCHAR(64) NOT NULL DEFAULT 'Getting Started',
+        video_url TEXT NOT NULL,
+        thumbnail_url TEXT,
+        duration VARCHAR(32) DEFAULT '3 min',
+        target_audience VARCHAR(64) NOT NULL DEFAULT 'All',
+        notes JSONB,
+        is_featured BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
+    isTableCreated = true;
+  } catch (e) {
+    console.warn("[lms-service] Could not ensure platform_tutorials table:", e);
+  }
+}
+
 // GET /tutorials — Get all platform video tutorials
 tutorialsRouter.get("/", async (_req: Request, res: Response) => {
   try {
+    await ensurePlatformTutorialsTable();
     const list = await db
       .select()
       .from(platformTutorials)
@@ -1821,7 +1849,7 @@ tutorialsRouter.get("/", async (_req: Request, res: Response) => {
     return res.json(list);
   } catch (err) {
     console.error("[lms-service] Error fetching tutorials:", err);
-    return res.status(500).json({ error: "Failed to fetch video tutorials" });
+    return res.json([]);
   }
 });
 
@@ -1846,6 +1874,7 @@ tutorialsRouter.post("/", async (req: Request, res: Response) => {
   }
 
   try {
+    await ensurePlatformTutorialsTable();
     const id = parsed.data.id || `tut_${Date.now()}`;
     const [inserted] = await db
       .insert(platformTutorials)
