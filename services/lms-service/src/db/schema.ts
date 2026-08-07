@@ -258,3 +258,19 @@ export const examViolations = pgTable("exam_violations", {
   type: violationTypeEnum("type").notNull(),
   occurredAt: timestamp("occurred_at").notNull().defaultNow(),
 });
+
+// ─── Platform Video Tutorials ───────────────────────────────────────────────
+export const platformTutorials = pgTable("platform_tutorials", {
+  id: varchar("id", { length: 128 }).primaryKey(),
+  title: text("title").notNull(),
+  description: text("description"),
+  category: varchar("category", { length: 64 }).notNull().default("Getting Started"),
+  videoUrl: text("video_url").notNull(),
+  thumbnailUrl: text("thumbnail_url"),
+  duration: varchar("duration", { length: 32 }).default("3 min"),
+  targetAudience: varchar("target_audience", { length: 64 }).notNull().default("All"),
+  notes: jsonb("notes").$type<string[]>(),
+  isFeatured: boolean("is_featured").default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});

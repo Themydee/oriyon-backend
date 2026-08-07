@@ -1,8 +1,8 @@
 import { Router, Request, Response } from "express";
-import { eq, and, isNull, sql,  type InferModel } from "drizzle-orm";
+import { eq, and, isNull, sql, desc, type InferModel } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../index";
-import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, exams, examQuestions, examSessions, examAnswers, examViolations } from "../db/schema";
+import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, exams, examQuestions, examSessions, examAnswers, examViolations, platformTutorials } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 
 type WeekRow = InferModel<typeof weeks>;
@@ -14,6 +14,7 @@ export const progressRouter = Router();
 export const sessionsRouter = Router();
 export const quizzesRouter = Router();
 export const examsRouter = Router();
+export const tutorialsRouter = Router();
 // ─────────────────────────────────────────────
 // HELPER — fetch user from user-service
 // Gets email + firstName for notification events
@@ -1805,4 +1806,125 @@ examsRouter.patch(
     }
   }
 );
+
+// ─────────────────────────────────────────────
+// PLATFORM VIDEO TUTORIALS
+// ─────────────────────────────────────────────
+
+// GET /tutorials — Get all platform video tutorials
+tutorialsRouter.get("/", async (_req: Request, res: Response) => {
+  try {
+    const list = await db
+      .select()
+      .from(platformTutorials)
+      .orderBy(desc(platformTutorials.isFeatured), desc(platformTutorials.createdAt));
+    return res.json(list);
+  } catch (err) {
+    console.error("[lms-service] Error fetching tutorials:", err);
+    return res.status(500).json({ error: "Failed to fetch video tutorials" });
+  }
+});
+
+// POST /tutorials — Add new platform video tutorial
+tutorialsRouter.post("/", async (req: Request, res: Response) => {
+  const schema = z.object({
+    id: z.string().optional(),
+    title: z.string().min(1, "Title is required"),
+    description: z.string().optional().default(""),
+    category: z.string().optional().default("Getting Started"),
+    videoUrl: z.string().min(1, "Video URL is required"),
+    thumbnailUrl: z.string().optional(),
+    duration: z.string().optional().default("3 min"),
+    targetAudience: z.string().optional().default("All"),
+    notes: z.array(z.string()).optional().default([]),
+    isFeatured: z.boolean().optional().default(false),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const id = parsed.data.id || `tut_${Date.now()}`;
+    const [inserted] = await db
+      .insert(platformTutorials)
+      .values({
+        id,
+        title: parsed.data.title,
+        description: parsed.data.description,
+        category: parsed.data.category,
+        videoUrl: parsed.data.videoUrl,
+        thumbnailUrl: parsed.data.thumbnailUrl,
+        duration: parsed.data.duration,
+        targetAudience: parsed.data.targetAudience,
+        notes: parsed.data.notes,
+        isFeatured: parsed.data.isFeatured,
+      })
+      .returning();
+
+    return res.status(201).json(inserted);
+  } catch (err) {
+    console.error("[lms-service] Error creating tutorial:", err);
+    return res.status(500).json({ error: "Failed to create video tutorial" });
+  }
+});
+
+// PATCH /tutorials/:id — Update platform video tutorial
+tutorialsRouter.patch("/:id", async (req: Request, res: Response) => {
+  try {
+    const [existing] = await db
+      .select()
+      .from(platformTutorials)
+      .where(eq(platformTutorials.id, req.params.id))
+      .limit(1);
+
+    if (!existing) {
+      return res.status(404).json({ error: "Tutorial not found" });
+    }
+
+    const { title, description, category, videoUrl, thumbnailUrl, duration, targetAudience, notes, isFeatured } = req.body;
+
+    const [updated] = await db
+      .update(platformTutorials)
+      .set({
+        ...(title !== undefined && { title }),
+        ...(description !== undefined && { description }),
+        ...(category !== undefined && { category }),
+        ...(videoUrl !== undefined && { videoUrl }),
+        ...(thumbnailUrl !== undefined && { thumbnailUrl }),
+        ...(duration !== undefined && { duration }),
+        ...(targetAudience !== undefined && { targetAudience }),
+        ...(notes !== undefined && { notes }),
+        ...(isFeatured !== undefined && { isFeatured }),
+        updatedAt: new Date(),
+      })
+      .where(eq(platformTutorials.id, req.params.id))
+      .returning();
+
+    return res.json(updated);
+  } catch (err) {
+    console.error("[lms-service] Error updating tutorial:", err);
+    return res.status(500).json({ error: "Failed to update video tutorial" });
+  }
+});
+
+// DELETE /tutorials/:id — Delete platform video tutorial
+tutorialsRouter.delete("/:id", async (req: Request, res: Response) => {
+  try {
+    const [deleted] = await db
+      .delete(platformTutorials)
+      .where(eq(platformTutorials.id, req.params.id))
+      .returning();
+
+    if (!deleted) {
+      return res.status(404).json({ error: "Tutorial not found" });
+    }
+
+    return res.json({ success: true, id: deleted.id });
+  } catch (err) {
+    console.error("[lms-service] Error deleting tutorial:", err);
+    return res.status(500).json({ error: "Failed to delete video tutorial" });
+  }
+});
  

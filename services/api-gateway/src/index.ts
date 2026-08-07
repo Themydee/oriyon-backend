@@ -1126,6 +1126,36 @@ app.get(
 );
 
 // ─────────────────────────────────────────────
+// PLATFORM VIDEO TUTORIALS
+// ─────────────────────────────────────────────
+app.get(
+  "/api/lms/tutorials",
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.post(
+  "/api/lms/tutorials",
+  authenticate,
+  requireRole("admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.patch(
+  "/api/lms/tutorials/:id",
+  authenticate,
+  requireRole("admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.delete(
+  "/api/lms/tutorials/:id",
+  authenticate,
+  requireRole("admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+
+// ─────────────────────────────────────────────
 // 404
 // ─────────────────────────────────────────────
 app.use((_req, res) => {
