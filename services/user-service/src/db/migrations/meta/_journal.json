@@ -71,6 +71,13 @@
       "when": 1782597309793,
       "tag": "0009_concerned_gauntlet",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786525224235,
+      "tag": "0010_spotty_mole_man",
+      "breakpoints": true
     }
   ]
 }
