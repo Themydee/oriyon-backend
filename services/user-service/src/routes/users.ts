@@ -253,6 +253,7 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
     assignedLga: z.string().optional().nullable(),
     assignedZone: z.string().optional().nullable(),
     approvedRole: z.string().optional().nullable(),
+    physicalSiteId: z.string().optional().nullable(),
   });
 
   const parsed = allowedFields.safeParse(req.body);
@@ -498,6 +499,7 @@ cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
             lastName: users.lastName,
             email: users.email,
             phone: users.phone,
+            physicalSiteId: users.physicalSiteId,
             joinedAt: groupMembers.joinedAt,
           })
           .from(groupMembers)

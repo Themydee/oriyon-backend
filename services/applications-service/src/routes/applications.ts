@@ -83,12 +83,12 @@ const updateSchema = z.object({
 });
 
 const allowedTransitions: Record<string, string[]> = {
-  pending:          ["shortlisted", "rejection_review"],
-  shortlisted:      ["approved", "rejection_review"],
+  pending: ["shortlisted", "rejection_review"],
+  shortlisted: ["approved", "rejection_review"],
   rejection_review: ["shortlisted", "rejected"],
-  approved:         ["rejection_review"],
-  rejected:         [],
-  archived:         [],
+  approved: ["rejection_review"],
+  rejected: [],
+  archived: [],
 };
 
 // ─────────────────────────────────────────────
@@ -114,17 +114,17 @@ function evaluateAutoShortlist(app: z.infer<typeof submitSchema>): boolean {
   if (detailsText.includes("widow") && (detailsText.includes("defense") || detailsText.includes("military") || detailsText.includes("soldier"))) {
     totalScore += 8;
   }
-  
+
   if ((app.isBreadwinner === "yes" || app.isBreadwinner === "true") && (app.hasDependants === "yes" || app.hasDependants === "true")) {
     totalScore += 5;
   }
-  
+
   if (detailsText.includes("orphan") || detailsText.includes("orphaned")) {
     totalScore += 5;
   }
 
   // 4. EDUCATION LEVEL & DIGITAL INFRASTRUCTURE SCORING (Max 15 Points)
-  const isAnimalScience = ["animal science", "animal husbandry"].some((field) => 
+  const isAnimalScience = ["animal science", "animal husbandry"].some((field) =>
     (app.fieldOfStudy || "").toLowerCase().includes(field)
   );
   if (isAnimalScience) {
@@ -238,8 +238,8 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     return res.status(201).json({
-      message: passesAutoShortlist 
-        ? "Application submitted and automatically shortlisted based on criteria." 
+      message: passesAutoShortlist
+        ? "Application submitted and automatically shortlisted based on criteria."
         : "Application submitted successfully and is currently under review.",
       id: application.id,
       status: application.status,

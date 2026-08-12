@@ -13,6 +13,10 @@ interface SendEmailOptions {
 export async function sendEmail({ to, subject, html }: SendEmailOptions) {
   try {
     const result = await resend.emails.send({ from: FROM, to, subject, html });
+    if (result.error) {
+      console.error(`[notifications] Resend API error for ${to}:`, result.error);
+      throw new Error(`Resend API Error: ${result.error.message}`);
+    }
     console.log(`[notifications] Email sent to ${to} — subject: "${subject}"`);
     return result;
   } catch (err) {
@@ -174,7 +178,7 @@ function infoBox(rows: { label: string; value: string }[]) {
 
 function notice(text: string, type: "info" | "warning" = "info") {
   const border = type === "warning" ? "#c9a84c" : "#5a7a5e";
-  const bg     = type === "warning" ? "#fdf8ee" : "#f2f7f2";
+  const bg = type === "warning" ? "#fdf8ee" : "#f2f7f2";
   return `
     <table cellpadding="0" cellspacing="0" border="0"
       style="border-left:3px solid ${border}; background-color:${bg}; margin:20px 0; width:100%;">
@@ -247,19 +251,19 @@ export const templates = {
   }),
 
   applicationShortlisted: (firstName: string) => ({
-  subject: "Great news — you've been shortlisted for EEWYLA",
-  html: base(`
+    subject: "Great news — you've been shortlisted for EEWYLA",
+    html: base(`
     ${heading(`Hi ${firstName}, you've been shortlisted.`)}
     ${para("We are pleased to inform you that your application to the <strong>EEWYLA Training Programme</strong> has been reviewed and you have been <strong>shortlisted</strong> for the next stage.")}
     ${para("Our team will be in touch shortly with the next steps. Please ensure your contact details are up to date and watch your inbox carefully.")}
     ${notice(`Questions? Contact us at <a href="mailto:eewyla@oriyoninternational.com" style="color:#5a7a5e;">eewyla@oriyoninternational.com</a>.`)}
     ${signature()}
   `, "You've been shortlisted for the EEWYLA Training Programme — next steps coming soon."),
-}),
+  }),
 
-applicationRejectionReview: (firstName: string) => ({
-  subject: "Update on your EEWYLA application",
-  html: base(`
+  applicationRejectionReview: (firstName: string) => ({
+    subject: "Update on your EEWYLA application",
+    html: base(`
     ${heading(`Hi ${firstName},`)}
     ${para("Thank you for your patience while we review applications for the EEWYLA Training Programme.")}
     ${para("Your application has been flagged for <strong>further review</strong> by our team. This is a normal part of our assessment process and does not mean your application has been rejected.")}
@@ -267,18 +271,18 @@ applicationRejectionReview: (firstName: string) => ({
     ${notice(`If you have any questions or updates to share about your application, reach us at <a href="mailto:eewyla@oriyoninternational.com" style="color:#5a7a5e;">eewyla@oriyoninternational.com</a>.`)}
     ${signature()}
   `, "Your EEWYLA application is under further review — we'll be in touch within 3–5 working days."),
-}),
+  }),
 
-applicationRescued: (firstName: string) => ({
-  subject: "Great news — your EEWYLA application has been reconsidered",
-  html: base(`
+  applicationRescued: (firstName: string) => ({
+    subject: "Great news — your EEWYLA application has been reconsidered",
+    html: base(`
     ${heading(`Hi ${firstName}, we have good news.`)}
     ${para("After further review, we are pleased to let you know that your application to the <strong>EEWYLA Training Programme</strong> has been reconsidered and you have been <strong>shortlisted</strong>.")}
     ${para("Our team will be in touch shortly with details on the next steps. Thank you for your patience during the review process.")}
     ${notice(`Questions? Contact us at <a href="mailto:eewyla@oriyoninternational.com" style="color:#5a7a5e;">eewyla@oriyoninternational.com</a>.`)}
     ${signature()}
   `, "Your EEWYLA application has been reconsidered — you've been shortlisted."),
-}),
+  }),
 
   // ── Account Setup ──────────────────────────────────────────────
 
@@ -348,8 +352,8 @@ applicationRescued: (firstName: string) => ({
     html: base(`
       ${heading(`Hi ${firstName},`)}
       ${para(timedOut
-        ? "Your exam was submitted automatically because the allotted time expired."
-        : "Your exam has been successfully submitted.")}
+      ? "Your exam was submitted automatically because the allotted time expired."
+      : "Your exam has been successfully submitted.")}
       ${infoBox([
         { label: "MCQ score", value: `${mcqScore}%` },
         { label: "Status", value: timedOut ? "Timed out" : "Submitted" },

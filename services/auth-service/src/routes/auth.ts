@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import { eq, and } from "drizzle-orm";
 import { db } from "../index";
@@ -335,17 +336,33 @@ router.post("/resend-setup", async (req: Request, res: Response) => {
   }
 
   const { email } = parsed.data;
-  const genericResponse = { message: "If that email is registered and pending setup, a new link has been sent." };
 
   try {
-    const [user] = await db
+    let [user] = await db
       .select()
       .from(authUsers)
       .where(eq(authUsers.email, email))
       .limit(1);
 
-    // If no user, or they already set a password (passwordHash is not null), just return generic response
-    if (!user || user.passwordHash) return res.json(genericResponse);
+    // If no user exists in authUsers yet, auto-provision their account record
+    if (!user) {
+      const newId = uuidv4();
+      const [newUser] = await db
+        .insert(authUsers)
+        .values({
+          id: newId,
+          email,
+          role: "trainee",
+          isActive: false,
+        })
+        .returning();
+      user = newUser;
+    }
+
+    // If they already set a password, inform caller
+    if (user.passwordHash) {
+      return res.json({ message: "User has already set up their account password." });
+    }
 
     const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days (1 week) for setup
@@ -359,7 +376,7 @@ router.post("/resend-setup", async (req: Request, res: Response) => {
       expiresAt: expiresAt.toISOString(),
     });
 
-    return res.json(genericResponse);
+    return res.json({ message: `Account setup email successfully sent to ${email}.` });
   } catch (err) {
     console.error("[auth] resend-setup error:", err);
     return res.status(500).json({ error: "Internal server error" });

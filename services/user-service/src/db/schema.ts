@@ -20,6 +20,7 @@ export const users = pgTable("users", {
   assignedState: varchar("assigned_state", { length: 100 }),
   assignedLga: varchar("assigned_lga", { length: 100 }),
   assignedZone: varchar("assigned_zone", { length: 150 }),
+  physicalSiteId: varchar("physical_site_id", { length: 100 }),
   isCooperativeOnly: boolean("is_cooperative_only").notNull().default(false),
   isActive:  boolean("is_active").notNull().default(true),
   approvedRole: varchar("approved_role", { length: 255 }),
