@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { eq, and, isNull, sql, ilike, or } from "drizzle-orm";
+import { eq, and, isNull, sql, ilike, or, inArray } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
 import { db } from "../index";
@@ -79,8 +79,8 @@ userRouter.get("/", async (req: Request, res: Response) => {
     const userIds = allUsers.map((u) => u.id);
 
     const [allCohortMembers, allGroupMembers, allCohorts, allGroups] = await Promise.all([
-      db.select().from(cohortMembers).where(sql`${cohortMembers.userId} = ANY(${sql.raw(`ARRAY[${userIds.map((id) => `'${id}'`).join(",")}]::uuid[]`)})`),
-      db.select().from(groupMembers).where(sql`${groupMembers.userId} = ANY(${sql.raw(`ARRAY[${userIds.map((id) => `'${id}'`).join(",")}]::uuid[]`)})`),
+      db.select().from(cohortMembers).where(inArray(cohortMembers.userId, userIds)),
+      db.select().from(groupMembers).where(inArray(groupMembers.userId, userIds)),
       db.select().from(cohorts),
       db.select().from(groups),
     ]);
