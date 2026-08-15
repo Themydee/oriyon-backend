@@ -23,6 +23,7 @@ export const users = pgTable("users", {
   physicalSiteId: varchar("physical_site_id", { length: 100 }),
   isCooperativeOnly: boolean("is_cooperative_only").notNull().default(false),
   isActive:  boolean("is_active").notNull().default(true),
+  blacklistReason: text("blacklist_reason"),
   approvedRole: varchar("approved_role", { length: 255 }),
 
   

@@ -2,7 +2,7 @@ import { db } from "../index";
 import { authUsers } from "../db/schema";
 
 export async function handleUserUpdated(payload: Record<string, unknown>) {
-  const { userId, role, assignedState, assignedLga, assignedZone, isActive } =
+  const { userId, role, assignedState, assignedLga, assignedZone, isActive, blacklistReason } =
     payload as unknown as {
       userId: string;
       role?: string;
@@ -10,6 +10,7 @@ export async function handleUserUpdated(payload: Record<string, unknown>) {
       assignedLga?: string | null;
       assignedZone?: string | null;
       isActive?: boolean;
+      blacklistReason?: string | null;
     };
 
   if (!userId) {
@@ -26,6 +27,7 @@ export async function handleUserUpdated(payload: Record<string, unknown>) {
     if (assignedLga !== undefined) updateData.assignedLga = assignedLga;
     if (assignedZone !== undefined) updateData.assignedZone = assignedZone;
     if (isActive !== undefined) updateData.isActive = isActive;
+    if (blacklistReason !== undefined) updateData.blacklistReason = blacklistReason;
 
     await db.update(authUsers).set(updateData).where(eq(authUsers.id, userId));
     console.log(`[auth-service][handleUserUpdated] Synced auth record for ${userId}`);

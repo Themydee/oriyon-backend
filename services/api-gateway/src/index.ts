@@ -619,6 +619,13 @@ app.post(
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
+app.post(
+  "/api/users/bulk-status",
+  authenticate,
+  requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
 
 // ADMIN — aggregated results for quizzes and exams
 app.get(

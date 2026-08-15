@@ -241,6 +241,53 @@ userRouter.post("/bulk-email", async (req: Request, res: Response) => {
   }
 });
 
+// POST /users/bulk-status
+userRouter.post("/bulk-status", async (req: Request, res: Response) => {
+  const schema = z.object({
+    userIds: z.array(z.string().uuid()).min(1, "userIds array cannot be empty"),
+    isActive: z.boolean(),
+    blacklistReason: z.string().optional().nullable(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const { userIds, isActive, blacklistReason } = parsed.data;
+
+  try {
+    const updatedUsers = await db
+      .update(users)
+      .set({
+        isActive,
+        blacklistReason: isActive ? null : (blacklistReason ?? null),
+        updatedAt: new Date(),
+      })
+      .where(inArray(users.id, userIds))
+      .returning();
+
+    for (const u of updatedUsers) {
+      await publishEvent("user.updated", {
+        userId: u.id,
+        role: u.role,
+        assignedState: u.assignedState,
+        assignedLga: u.assignedLga,
+        assignedZone: u.assignedZone,
+        isActive: u.isActive,
+        blacklistReason: u.blacklistReason,
+      });
+    }
+
+    return res.json({
+      message: `Successfully updated status for ${updatedUsers.length} user(s)`,
+      updatedCount: updatedUsers.length,
+      users: updatedUsers,
+    });
+  } catch (err) {
+    console.error("[bulk-status] error:", err);
+    return res.status(500).json({ error: "Failed to update status for users" });
+  }
+});
+
 // PATCH /users/:id
 userRouter.patch("/:id", async (req: Request, res: Response) => {
   const allowedFields = z.object({
@@ -248,6 +295,7 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
     lastName: z.string().optional(),
     phone: z.string().optional().nullable(),
     isActive: z.boolean().optional(),
+    blacklistReason: z.string().optional().nullable(),
     role: z.enum(["trainee", "trainer", "coordinator", "lead_trainer", "admin"]).optional(),
     assignedState: z.string().optional().nullable(),
     assignedLga: z.string().optional().nullable(),
@@ -260,9 +308,14 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
+    const updateData: any = { ...parsed.data, updatedAt: new Date() };
+    if (parsed.data.isActive === true) {
+      updateData.blacklistReason = null;
+    }
+
     const [updated] = await db
       .update(users)
-      .set({ ...parsed.data, updatedAt: new Date() })
+      .set(updateData)
       .where(eq(users.id, req.params.id))
       .returning();
 
@@ -275,6 +328,7 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
       assignedLga: updated.assignedLga,
       assignedZone: updated.assignedZone,
       isActive: updated.isActive,
+      blacklistReason: updated.blacklistReason,
     });
 
     return res.json(updated);
@@ -288,7 +342,7 @@ userRouter.delete("/:id", async (req: Request, res: Response) => {
   try {
     await db
       .update(users)
-      .set({ isActive: false })
+      .set({ isActive: false, updatedAt: new Date() })
       .where(eq(users.id, req.params.id));
     return res.json({ message: "User deactivated" });
   } catch (err) {
