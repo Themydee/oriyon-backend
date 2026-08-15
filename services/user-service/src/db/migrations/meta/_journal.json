@@ -78,6 +78,13 @@
       "when": 1786525224235,
       "tag": "0010_spotty_mole_man",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786782284924,
+      "tag": "0011_typical_venom",
+      "breakpoints": true
     }
   ]
 }

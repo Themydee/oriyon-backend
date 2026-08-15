@@ -1,1 +1,1 @@
-ALTER TABLE "users" ADD COLUMN "physical_site_id" varchar(100);
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "physical_site_id" varchar(100);

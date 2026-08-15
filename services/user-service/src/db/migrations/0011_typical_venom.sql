@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "blacklist_reason" text;
