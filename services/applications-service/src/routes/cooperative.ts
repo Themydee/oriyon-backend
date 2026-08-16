@@ -1,6 +1,6 @@
 
 import { Router, Request, Response } from "express";
-import { eq, count, and, sql, or, isNull } from "drizzle-orm";
+import { eq, count, and, sql, or, isNull, desc } from "drizzle-orm";
 import { z } from "zod";
 import axios from "axios";
 import { db } from "../index";
