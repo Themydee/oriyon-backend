@@ -1488,6 +1488,30 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
   }
 });
 
+// GET /cooperative/announcements/broadcast (Fetch all broadcast announcements)
+router.get("/announcements/broadcast", async (req: Request, res: Response) => {
+  try {
+    const list = await db
+      .select({
+        id: announcements.id,
+        cooperativeId: announcements.cooperativeId,
+        title: announcements.title,
+        content: announcements.content,
+        level: announcements.level,
+        postedBy: announcements.postedBy,
+        createdAt: announcements.createdAt,
+      })
+      .from(announcements)
+      .orderBy(desc(announcements.createdAt))
+      .limit(100);
+
+    return res.status(200).json(list);
+  } catch (err) {
+    console.error("[cooperative] fetch broadcasts error:", err);
+    return res.status(500).json({ error: "Failed to fetch broadcast announcements" });
+  }
+});
+
 // DELETE /cooperative/:id/announcements/:announcementId
 router.delete("/:id/announcements/:announcementId", async (req: Request, res: Response) => {
   const { announcementId } = req.params;

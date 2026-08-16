@@ -338,6 +338,15 @@ app.post(
     changeOrigin: true,
   }),
 );
+app.get(
+  "/api/cooperative/announcements/broadcast",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
 app.patch(
   "/api/cooperative/:id",
   authenticate,
