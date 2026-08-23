@@ -79,7 +79,17 @@ async function setupConsumers() {
   );
 }
 
+async function ensureDbColumns() {
+  try {
+    await queryClient`ALTER TABLE lessons ADD COLUMN IF NOT EXISTS audio_url text;`;
+    console.log("[lms-service] Auto-migration: ensured lessons.audio_url column exists.");
+  } catch (err) {
+    console.error("[lms-service] Failed to ensure lessons.audio_url column:", err);
+  }
+}
+
 async function bootstrap() {
+  await ensureDbColumns();
   await connectRabbitMQ(process.env.RABBITMQ_URL!);
   await setupConsumers();
   app.listen(PORT, () => {
