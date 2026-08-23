@@ -209,41 +209,92 @@ lessonsRouter.get("/:id", async (req: Request, res: Response) => {
   }
 });
 
+// Helper to sanitize media URLs (handles S3 URLs, s3:// protocol, spaces in URLs)
+function sanitizeMediaUrl(url?: string | null): string | null {
+  if (!url || !url.trim()) return null;
+  let clean = url.trim();
+  if (clean.startsWith("s3://")) {
+    const parts = clean.substring(5).split("/");
+    const bucket = parts[0];
+    const key = parts.slice(1).join("/");
+    clean = `https://${bucket}.s3.amazonaws.com/${key}`;
+  }
+  return clean.replace(/ /g, "%20");
+}
+
 // POST /lms/lessons
 lessonsRouter.post("/", async (req: Request, res: Response) => {
   const schema = z.object({
     weekId: z.string().uuid(),
     title: z.string().min(1),
-    description: z.string().optional(),
+    description: z.string().optional().nullable(),
     type: z.enum(["video", "document"]).default("video"),
-    videoUrl: z.string().url().optional(),
-    documentUrl: z.string().url().optional(),
-    durationMinutes: z.number().int().optional(),
+    videoUrl: z.string().optional().nullable(),
+    audioUrl: z.string().optional().nullable(),
+    documentUrl: z.string().optional().nullable(),
+    body: z.string().optional().nullable(),
+    durationMinutes: z.number().int().optional().nullable(),
     order: z.number().int().default(0),
     isPublished: z.boolean().optional(),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+  const data = {
+    ...parsed.data,
+    audioUrl: sanitizeMediaUrl(parsed.data.audioUrl),
+    videoUrl: sanitizeMediaUrl(parsed.data.videoUrl),
+  };
+
   try {
-    const [lesson] = await db.insert(lessons).values(parsed.data).returning();
+    const [lesson] = await db.insert(lessons).values(data).returning();
     return res.status(201).json(lesson);
-  } catch {
+  } catch (err) {
+    console.error("Failed to create lesson:", err);
     return res.status(500).json({ error: "Failed to create lesson" });
   }
 });
 
 // PATCH /lms/lessons/:id
 lessonsRouter.patch("/:id", async (req: Request, res: Response) => {
+  const schema = z.object({
+    weekId: z.string().uuid().optional(),
+    title: z.string().min(1).optional(),
+    description: z.string().optional().nullable(),
+    type: z.enum(["video", "document"]).optional(),
+    videoUrl: z.string().optional().nullable(),
+    audioUrl: z.string().optional().nullable(),
+    documentUrl: z.string().optional().nullable(),
+    body: z.string().optional().nullable(),
+    durationMinutes: z.number().int().optional().nullable(),
+    order: z.number().int().optional(),
+    isPublished: z.boolean().optional(),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const updateData: Record<string, any> = {
+    ...parsed.data,
+    updatedAt: new Date(),
+  };
+
+  if (parsed.data.audioUrl !== undefined) {
+    updateData.audioUrl = sanitizeMediaUrl(parsed.data.audioUrl);
+  }
+  if (parsed.data.videoUrl !== undefined) {
+    updateData.videoUrl = sanitizeMediaUrl(parsed.data.videoUrl);
+  }
+
   try {
     const [updated] = await db
       .update(lessons)
-      .set({ ...req.body, updatedAt: new Date() })
+      .set(updateData)
       .where(eq(lessons.id, req.params.id))
       .returning();
     if (!updated) return res.status(404).json({ error: "Lesson not found" });
     return res.json(updated);
-  } catch {
+  } catch (err) {
+    console.error("Failed to update lesson:", err);
     return res.status(500).json({ error: "Failed to update lesson" });
   }
 });

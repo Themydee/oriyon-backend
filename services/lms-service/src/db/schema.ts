@@ -58,6 +58,7 @@ export const lessons = pgTable("lessons", {
   description: text("description"),
   type: lessonTypeEnum("type").notNull().default("video"),
   videoUrl: text("video_url"),
+  audioUrl: text("audio_url"),
   documentUrl: text("document_url"),
   body: text("body"),
   durationMinutes: integer("duration_minutes"),
