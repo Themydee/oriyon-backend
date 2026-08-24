@@ -198,30 +198,45 @@ userRouter.post("/bulk-email", async (req: Request, res: Response) => {
   const schema = z.object({
     subject: z.string().min(1, "Subject is required"),
     body: z.string().min(1, "Body is required"),
+    targetUserIds: z.array(z.string().uuid()).optional(),
   });
 
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
-    const cohortLessTrainees = await db
-      .select({
-        id: users.id,
-        email: users.email,
-        firstName: users.firstName,
-        lastName: users.lastName,
-      })
-      .from(users)
-      .leftJoin(cohortMembers, eq(users.id, cohortMembers.userId))
-      .where(
-        and(
-          eq(users.role, "trainee"),
-          eq(users.isCooperativeOnly, false),
-          isNull(cohortMembers.id)
-        )
-      );
+    let recipients: { id: string; email: string; firstName: string; lastName: string }[] = [];
 
-    for (const u of cohortLessTrainees) {
+    if (parsed.data.targetUserIds && parsed.data.targetUserIds.length > 0) {
+      recipients = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
+        })
+        .from(users)
+        .where(inArray(users.id, parsed.data.targetUserIds));
+    } else {
+      recipients = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
+        })
+        .from(users)
+        .leftJoin(cohortMembers, eq(users.id, cohortMembers.userId))
+        .where(
+          and(
+            eq(users.role, "trainee"),
+            eq(users.isCooperativeOnly, false),
+            isNull(cohortMembers.id)
+          )
+        );
+    }
+
+    for (const u of recipients) {
       await publishEvent("application.custom_email_requested", {
         email: u.email,
         firstName: u.firstName,
@@ -232,8 +247,8 @@ userRouter.post("/bulk-email", async (req: Request, res: Response) => {
     }
 
     return res.json({
-      message: `Dispatched bulk email to ${cohortLessTrainees.length} trainees`,
-      count: cohortLessTrainees.length,
+      message: `Dispatched bulk email to ${recipients.length} trainees`,
+      count: recipients.length,
     });
   } catch (err) {
     console.error("[bulk-email] error:", err);
