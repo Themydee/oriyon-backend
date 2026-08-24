@@ -62,6 +62,11 @@ const submitSchema = z.object({
   declarationConfirmed: z.boolean().optional(),
   desiredRoleOption1: z.string().optional(),
   desiredRoleOption2: z.string().optional(),
+  idDocument: z.string().optional(),
+  idDocumentUrl: z.string().optional(),
+  idType: z.string().optional(),
+  idFilename: z.string().optional(),
+  idMimeType: z.string().optional(),
 });
 
 type ApplicationStatus = "pending" | "shortlisted" | "approved" | "rejection_review" | "rejected" | "archived";
@@ -208,12 +213,18 @@ router.post("/", async (req: Request, res: Response) => {
     const passesAutoShortlist = evaluateAutoShortlist(parsed.data);
     const calculatedStatus: ApplicationStatus = passesAutoShortlist ? "shortlisted" : "pending";
 
+    const hasDocFile = Boolean(parsed.data.idDocument || parsed.data.idDocumentUrl);
     const data = {
       ...parsed.data,
       status: calculatedStatus,
       devices: parsed.data.devices ? JSON.stringify(parsed.data.devices) : undefined,
       biggestChallenge: parsed.data.biggestChallenge ? JSON.stringify(parsed.data.biggestChallenge) : undefined,
       hasAccess: parsed.data.hasAccess ? JSON.stringify(parsed.data.hasAccess) : undefined,
+      idDocumentUrl: parsed.data.idDocumentUrl || parsed.data.idDocument || undefined,
+      idType: parsed.data.idType || (parsed.data.hasID && parsed.data.hasID !== "No" ? parsed.data.hasID : undefined),
+      idFilename: parsed.data.idFilename || (hasDocFile ? `${parsed.data.firstName}_${parsed.data.lastName}_ID` : undefined),
+      idMimeType: parsed.data.idMimeType || (hasDocFile ? "image/jpeg" : undefined),
+      idUploadedAt: hasDocFile ? new Date() : undefined,
     };
 
     const [application] = await db
