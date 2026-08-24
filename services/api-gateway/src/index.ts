@@ -231,7 +231,7 @@ app.post(
   }),
 );
 app.post(
-  "/api/applications/:id/email",
+  ["/api/applications/:id/email", "/api/applications/:id/send-email", "/api/admin/applications/:id/send-email", "/api/admin/applications/:id/email"],
   authenticate,
   requireRole("admin"),
   keepPath,

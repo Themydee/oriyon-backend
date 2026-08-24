@@ -541,9 +541,9 @@ router.post("/bulk-email", async (req: Request, res: Response) => {
 });
 
 // ─────────────────────────────────────────────
-// POST /applications/:id/email — Send Direct Custom Email
+// POST /applications/:id/email & POST /applications/:id/send-email — Send Direct Custom Email
 // ─────────────────────────────────────────────
-router.post("/:id/email", async (req: Request, res: Response) => {
+const handleSendEmailRequest = async (req: Request, res: Response) => {
   const emailSchema = z.object({
     subject: z.string().min(1, "Subject is required"),
     body: z.string().min(1, "Message body is required"),
@@ -584,7 +584,10 @@ router.post("/:id/email", async (req: Request, res: Response) => {
     console.error("[POST /applications/:id/email] error:", err);
     return res.status(500).json({ error: "Failed to dispatch email request" });
   }
-});
+};
+
+router.post("/:id/email", handleSendEmailRequest);
+router.post("/:id/send-email", handleSendEmailRequest);
 
 // ─────────────────────────────────────────────
 // PATCH /applications/:id/rescue
