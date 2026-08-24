@@ -75,20 +75,23 @@ const updateSchema = z.object({
     "rejected",
     "archived",
   ]),
-  cohortId: z.string().uuid().optional(),
-  reviewedBy: z.string().uuid().optional(),
-  reviewNotes: z.string().optional(),
-  rejectionReason: z.string().optional(),
-  approvedRole: z.string().optional(),
+  cohortId: z.string().uuid().optional().nullable().or(z.literal("")),
+  groupId: z.string().uuid().optional().nullable().or(z.literal("")),
+  reviewedBy: z.string().uuid().optional().nullable().or(z.literal("")),
+  reviewNotes: z.string().optional().nullable(),
+  rejectionReason: z.string().optional().nullable(),
+  approvedRole: z.string().optional().nullable(),
+  kycStatus: z.string().optional().nullable(),
+  kycRejectionReason: z.string().optional().nullable(),
 });
 
 const allowedTransitions: Record<string, string[]> = {
-  pending: ["shortlisted", "rejection_review"],
-  shortlisted: ["approved", "rejection_review"],
-  rejection_review: ["shortlisted", "rejected"],
-  approved: ["rejection_review"],
-  rejected: [],
-  archived: [],
+  pending: ["pending", "shortlisted", "approved", "rejection_review", "rejected", "archived"],
+  shortlisted: ["pending", "shortlisted", "approved", "rejection_review", "rejected", "archived"],
+  rejection_review: ["pending", "shortlisted", "approved", "rejection_review", "rejected", "archived"],
+  approved: ["pending", "shortlisted", "approved", "rejection_review", "rejected", "archived"],
+  rejected: ["pending", "shortlisted", "approved", "rejection_review", "rejected", "archived"],
+  archived: ["pending", "shortlisted", "approved", "rejection_review", "rejected", "archived"],
 };
 
 // ─────────────────────────────────────────────
