@@ -350,8 +350,16 @@ router.get("/", async (_req: Request, res: Response) => {
 
     return res.json(all.map(parseArrayFields));
   } catch (err) {
-    console.error("[GET /applications] error:", err);
-    return res.status(500).json({ error: "Failed to fetch applications" });
+    console.error("[GET /applications] Drizzle query error, using raw fallback:", err);
+    try {
+      const client = postgres(process.env.DATABASE_URL!);
+      const rows = await client`SELECT * FROM applications WHERE is_deleted = false ORDER BY submitted_at ASC`;
+      await client.end();
+      return res.json(rows.map(parseArrayFields));
+    } catch (fallbackErr) {
+      console.error("[GET /applications] fallback error:", fallbackErr);
+      return res.status(500).json({ error: "Failed to fetch applications" });
+    }
   }
 });
 
@@ -421,8 +429,16 @@ router.get("/status/:status", async (req: Request, res: Response) => {
       .orderBy(applications.submittedAt);
 
     return res.json(result.map(parseArrayFields));
-  } catch {
-    return res.status(500).json({ error: "Failed to fetch applications" });
+  } catch (err) {
+    console.error("[GET /applications/status] error, running fallback:", err);
+    try {
+      const client = postgres(process.env.DATABASE_URL!);
+      const rows = await client`SELECT * FROM applications WHERE status = ${req.params.status} AND is_deleted = false ORDER BY submitted_at ASC`;
+      await client.end();
+      return res.json(rows.map(parseArrayFields));
+    } catch {
+      return res.status(500).json({ error: "Failed to fetch applications" });
+    }
   }
 });
 
@@ -446,8 +462,17 @@ router.get("/:id", async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Application not found" });
 
     return res.json(parseArrayFields(application));
-  } catch {
-    return res.status(500).json({ error: "Failed to fetch application" });
+  } catch (err) {
+    console.error("[GET /applications/:id] error, running fallback:", err);
+    try {
+      const client = postgres(process.env.DATABASE_URL!);
+      const rows = await client`SELECT * FROM applications WHERE id = ${req.params.id} AND is_deleted = false LIMIT 1`;
+      await client.end();
+      if (!rows || rows.length === 0) return res.status(404).json({ error: "Application not found" });
+      return res.json(parseArrayFields(rows[0]));
+    } catch {
+      return res.status(500).json({ error: "Failed to fetch application" });
+    }
   }
 });
 
@@ -777,14 +802,35 @@ router.delete("/:id", async (req: Request, res: Response) => {
 });
 
 // ─────────────────────────────────────────────
-// HELPER — PARSE JSON ARRAYS
+// HELPER — PARSE JSON ARRAYS & NORMALIZE FIELDS
 // ─────────────────────────────────────────────
 function parseArrayFields(a: any) {
+  if (!a) return a;
+  const parseSafe = (val: any) => {
+    if (!val) return [];
+    if (Array.isArray(val)) return val;
+    if (typeof val === "object") return val;
+    try {
+      return JSON.parse(val);
+    } catch {
+      return [];
+    }
+  };
+
   return {
     ...a,
-    devices: a.devices ? JSON.parse(a.devices) : [],
-    biggestChallenge: a.biggestChallenge ? JSON.parse(a.biggestChallenge) : [],
-    hasAccess: a.hasAccess ? JSON.parse(a.hasAccess) : [],
+    devices: parseSafe(a.devices),
+    biggestChallenge: parseSafe(a.biggest_challenge || a.biggestChallenge),
+    hasAccess: parseSafe(a.has_access || a.hasAccess),
+    firstName: a.first_name || a.firstName,
+    lastName: a.last_name || a.lastName,
+    idDocumentUrl: a.id_document_url || a.idDocumentUrl,
+    idType: a.id_type || a.idType,
+    idFilename: a.id_filename || a.idFilename,
+    idMimeType: a.id_mime_type || a.idMimeType,
+    idUploadedAt: a.id_uploaded_at || a.idUploadedAt,
+    kycStatus: a.kyc_status || a.kycStatus,
+    kycRejectionReason: a.kyc_rejection_reason || a.kycRejectionReason,
   };
 }
 

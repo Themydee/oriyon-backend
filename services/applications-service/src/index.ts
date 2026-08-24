@@ -30,7 +30,27 @@ app.use("/api/cooperative", cooperativeRouter);
 app.use("/complaints", complaintsRouter);
 app.use("/api/complaints", complaintsRouter);
 
+async function ensureDbColumnsExist() {
+  try {
+    const client = postgres(process.env.DATABASE_URL!);
+    await client`
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS id_type VARCHAR(100);
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS id_document_url TEXT;
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS id_filename VARCHAR(255);
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS id_mime_type VARCHAR(100);
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS id_uploaded_at TIMESTAMP;
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS kyc_status VARCHAR(50) DEFAULT 'pending';
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS kyc_rejection_reason TEXT;
+    `;
+    console.log("[applications-service] Database columns verified.");
+    await client.end();
+  } catch (err) {
+    console.error("[applications-service] Migration error:", err);
+  }
+}
+
 async function bootstrap() {
+  await ensureDbColumnsExist();
   await connectRabbitMQ(process.env.RABBITMQ_URL!);
 
   // Run backfill for existing cooperative members missing IDs
