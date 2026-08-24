@@ -555,16 +555,33 @@ const handleSendEmailRequest = async (req: Request, res: Response) => {
   }
 
   try {
-    const [application] = await db
-      .select()
-      .from(applications)
-      .where(
-        and(
-          eq(applications.id, req.params.id),
-          eq(applications.isDeleted, false)
+    let application: any = null;
+    try {
+      const [appRecord] = await db
+        .select()
+        .from(applications)
+        .where(
+          and(
+            eq(applications.id, req.params.id),
+            eq(applications.isDeleted, false)
+          )
         )
-      )
-      .limit(1);
+        .limit(1);
+      application = appRecord;
+    } catch (dbErr) {
+      console.error("[POST /applications/:id/email] Drizzle query failed, using raw fallback:", dbErr);
+      const client = postgres(process.env.DATABASE_URL!);
+      const rows = await client`SELECT * FROM applications WHERE id = ${req.params.id} AND is_deleted = false LIMIT 1`;
+      await client.end();
+      if (rows && rows.length > 0) {
+        application = {
+          id: rows[0].id,
+          email: rows[0].email,
+          firstName: rows[0].first_name || rows[0].firstName,
+          lastName: rows[0].last_name || rows[0].lastName,
+        };
+      }
+    }
 
     if (!application) {
       return res.status(404).json({ error: "Application not found" });
