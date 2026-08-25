@@ -35,6 +35,11 @@ export const users = pgTable("users", {
   kycStatus:    varchar("kyc_status", { length: 30 }),
   kycRejectionReason: text("kyc_rejection_reason"),
 
+  passportPicture: text("passport_picture"),
+  passportUrl:     text("passport_url"),
+  avatarUrl:       text("avatar_url"),
+  photo:           text("photo"),
+
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
