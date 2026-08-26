@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { eq, and, isNull, sql, ilike, or, inArray } from "drizzle-orm";
+import { eq, and, isNull, sql, ilike, or, inArray, desc } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
 import { db } from "../index";
@@ -107,7 +107,7 @@ userRouter.get("/", async (req: Request, res: Response) => {
           .select()
           .from(users)
           .where(whereClause)
-          .orderBy(users.createdAt)
+          .orderBy(desc(users.createdAt))
           .limit(limit)
           .offset(offset),
         db
