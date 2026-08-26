@@ -63,19 +63,24 @@ weeksRouter.get("/", async (req: Request, res: Response) => {
             eq(weeks.cohortId, cohortId as string),
             eq(weeks.isPublished, true)
           )
+      : includeAll
+      ? undefined
       : eq(weeks.isPublished, true);
 
-    const allWeeks = await db
-      .select()
-      .from(weeks)
-      .where(condition);
+    const allWeeks = condition
+      ? await db.select().from(weeks).where(condition)
+      : await db.select().from(weeks);
 
     const weeksWithLessons = await Promise.all(
       allWeeks.map(async (week) => {
+        const lessonCondition = includeAll
+          ? eq(lessons.weekId, week.id)
+          : and(eq(lessons.weekId, week.id), eq(lessons.isPublished, true));
+
         const weekLessons = await db
           .select()
           .from(lessons)
-          .where(eq(lessons.weekId, week.id))
+          .where(lessonCondition)
           .orderBy(lessons.order);
 
         return { ...week, lessons: weekLessons };
@@ -92,6 +97,9 @@ weeksRouter.get("/", async (req: Request, res: Response) => {
 // GET /lms/weeks/:id  — includes lessons
 weeksRouter.get("/:id", async (req: Request, res: Response) => {
   try {
+    const { showAll } = req.query;
+    const includeAll = showAll === "true";
+
     const [week] = await db.select().from(weeks).where(eq(weeks.id, req.params.id)).limit(1);
     if (!week) return res.status(404).json({ error: "Week not found" });
 
@@ -105,10 +113,14 @@ weeksRouter.get("/:id", async (req: Request, res: Response) => {
       }
     }
 
+    const lessonCondition = includeAll
+      ? eq(lessons.weekId, req.params.id)
+      : and(eq(lessons.weekId, req.params.id), eq(lessons.isPublished, true));
+
     const weekLessons = await db
       .select()
       .from(lessons)
-      .where(eq(lessons.weekId, req.params.id))
+      .where(lessonCondition)
       .orderBy(lessons.order);
 
     return res.json({ ...week, lessons: weekLessons });
