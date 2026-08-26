@@ -499,17 +499,25 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
         physicalSiteId: "physical_site_id",
       };
 
+      const headerEmail = (req.headers["x-user-email"] as string | undefined) || "";
+      const escapedEmail = headerEmail.replace(/'/g, "''");
+
       for (const [jsKey, sqlCol] of Object.entries(colMap)) {
         if (updateData[jsKey] !== undefined) {
           try {
             const val = updateData[jsKey];
-            if (val === null) {
-              await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = NULL WHERE id = '${targetId}'::uuid`));
-            } else if (typeof val === "boolean") {
-              await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = ${val} WHERE id = '${targetId}'::uuid`));
+            let valSql = "NULL";
+            if (val !== null) {
+              if (typeof val === "boolean") {
+                valSql = `${val}`;
+              } else {
+                valSql = `'${String(val).replace(/'/g, "''")}'`;
+              }
+            }
+            if (escapedEmail) {
+              await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = ${valSql} WHERE id = '${targetId}'::uuid OR email = '${escapedEmail}'`));
             } else {
-              const escaped = String(val).replace(/'/g, "''");
-              await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = '${escaped}' WHERE id = '${targetId}'::uuid`));
+              await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = ${valSql} WHERE id = '${targetId}'::uuid`));
             }
           } catch (colErr) {
             console.warn(`Column ${sqlCol} update skipped (likely column missing on DB):`, colErr);
@@ -518,9 +526,15 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
       }
 
       try {
-        await db.execute(sql.raw(`UPDATE users SET updated_at = NOW() WHERE id = '${targetId}'::uuid`));
-        const rawRes = await db.execute(sql.raw(`SELECT * FROM users WHERE id = '${targetId}'::uuid LIMIT 1`));
-        updated = (rawRes as any)?.rows?.[0] || (Array.isArray(rawRes) ? rawRes[0] : null);
+        if (escapedEmail) {
+          await db.execute(sql.raw(`UPDATE users SET updated_at = NOW() WHERE id = '${targetId}'::uuid OR email = '${escapedEmail}'`));
+          const rawRes = await db.execute(sql.raw(`SELECT * FROM users WHERE id = '${targetId}'::uuid OR email = '${escapedEmail}' LIMIT 1`));
+          updated = (rawRes as any)?.rows?.[0] || (Array.isArray(rawRes) ? rawRes[0] : null);
+        } else {
+          await db.execute(sql.raw(`UPDATE users SET updated_at = NOW() WHERE id = '${targetId}'::uuid`));
+          const rawRes = await db.execute(sql.raw(`SELECT * FROM users WHERE id = '${targetId}'::uuid LIMIT 1`));
+          updated = (rawRes as any)?.rows?.[0] || (Array.isArray(rawRes) ? rawRes[0] : null);
+        }
       } catch (fetchErr) {
         console.error(`Fetching updated user row failed:`, fetchErr);
       }
