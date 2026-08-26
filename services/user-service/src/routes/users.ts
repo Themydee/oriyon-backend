@@ -145,65 +145,85 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Invalid user ID format" });
     }
 
-    let [user] = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, id))
-      .limit(1);
+    const headerUserId = req.headers["x-user-id"] as string | undefined;
+    const headerEmail = req.headers["x-user-email"] as string | undefined;
+    const headerRole = (req.headers["x-user-role"] as any) || "trainee";
 
-    if (!user) {
-      const headerUserId = req.headers["x-user-id"] as string | undefined;
-      const headerEmail = req.headers["x-user-email"] as string | undefined;
-      const headerRole = (req.headers["x-user-role"] as any) || "trainee";
+    let user: any = null;
 
-      if (headerEmail) {
-        // Fallback: search by email in case user ID differs
-        const [userByEmail] = await db
+    // 1. Try fetching user by ID using Drizzle
+    try {
+      const rows = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, id))
+        .limit(1);
+      user = rows[0] || null;
+    } catch (drizzleErr) {
+      console.error(`Drizzle select by ID failed, falling back to raw SQL:`, drizzleErr);
+      try {
+        const rawRes = await db.execute(sql`SELECT * FROM users WHERE id = ${id}::uuid LIMIT 1`);
+        const rows = (rawRes as any)?.rows || (Array.isArray(rawRes) ? rawRes : []);
+        user = rows[0] || null;
+      } catch (rawErr) {
+        console.error(`Raw SQL fetch by ID failed:`, rawErr);
+      }
+    }
+
+    // 2. If not found by ID, try fetching by email
+    if (!user && headerEmail) {
+      try {
+        const rows = await db
           .select()
           .from(users)
           .where(eq(users.email, headerEmail))
-          .limit(1)
-          .catch(() => []);
-
-        if (userByEmail) {
-          user = userByEmail;
-        }
-      }
-
-      // If still missing and authenticated user requests their own profile, auto-provision
-      if (!user && headerUserId && headerUserId === id && headerEmail) {
+          .limit(1);
+        user = rows[0] || null;
+      } catch (emailErr) {
+        console.error(`Drizzle select by email failed, falling back to raw SQL:`, emailErr);
         try {
-          const [newUser] = await db
-            .insert(users)
-            .values({
-              id,
-              email: headerEmail,
-              firstName: "Trainee",
-              lastName: "User",
-              role: ["trainee", "trainer", "coordinator", "lead_trainer", "admin"].includes(headerRole) ? headerRole : "trainee",
-              isActive: true,
-            })
-            .onConflictDoNothing()
-            .returning();
-
-          if (newUser) {
-            user = newUser;
-          } else {
-            // If onConflictDoNothing returned empty because of conflict, refetch by email/ID
-            const [refetched] = await db
-              .select()
-              .from(users)
-              .where(or(eq(users.id, id), eq(users.email, headerEmail)))
-              .limit(1);
-            user = refetched;
-          }
-        } catch (provisionErr) {
-          console.error(`Auto-provisioning user profile for ${id} failed:`, provisionErr);
+          const rawRes = await db.execute(sql`SELECT * FROM users WHERE email = ${headerEmail} LIMIT 1`);
+          const rows = (rawRes as any)?.rows || (Array.isArray(rawRes) ? rawRes : []);
+          user = rows[0] || null;
+        } catch (rawErr) {
+          console.error(`Raw SQL fetch by email failed:`, rawErr);
         }
       }
     }
 
-    if (!user) return res.status(404).json({ error: "User not found" });
+    // 3. If still missing and request is for authenticated user's own profile, auto-provision
+    if (!user && headerUserId && headerUserId === id && headerEmail) {
+      try {
+        const [newUser] = await db
+          .insert(users)
+          .values({
+            id,
+            email: headerEmail,
+            firstName: "Trainee",
+            lastName: "User",
+            role: ["trainee", "trainer", "coordinator", "lead_trainer", "admin"].includes(headerRole) ? headerRole : "trainee",
+            isActive: true,
+          })
+          .onConflictDoNothing()
+          .returning();
+
+        if (newUser) {
+          user = newUser;
+        } else {
+          try {
+            const rawRes = await db.execute(sql`SELECT * FROM users WHERE id = ${id}::uuid OR email = ${headerEmail} LIMIT 1`);
+            const rows = (rawRes as any)?.rows || (Array.isArray(rawRes) ? rawRes : []);
+            user = rows[0] || null;
+          } catch { /* ignore */ }
+        }
+      } catch (provisionErr) {
+        console.error(`Auto-provisioning user profile for ${id} failed:`, provisionErr);
+      }
+    }
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
     const membershipRes = await db
       .select()
