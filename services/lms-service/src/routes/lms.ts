@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { eq, and, isNull, sql, desc, type InferModel } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../index";
-import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, exams, examQuestions, examSessions, examAnswers, examViolations, platformTutorials } from "../db/schema";
+import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, practicalCheckins, exams, examQuestions, examSessions, examAnswers, examViolations, platformTutorials } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 
 type WeekRow = InferModel<typeof weeks>;
@@ -15,6 +15,7 @@ export const sessionsRouter = Router();
 export const quizzesRouter = Router();
 export const examsRouter = Router();
 export const tutorialsRouter = Router();
+export const practicalRouter = Router();
 // ─────────────────────────────────────────────
 // HELPER — fetch user from user-service
 // Gets email + firstName for notification events
@@ -899,6 +900,86 @@ week12Router.get("/checkins/:cohortId/:userId", async (req: Request, res: Respon
     return res.json({ checkins: all, days, fullyAttended });
   } catch {
     return res.status(500).json({ error: "Failed to fetch checkins" });
+  }
+});
+
+// ─── Practical Attendance Check-ins Router ──────────────────────────────────────
+
+// GET /lms/practical/checkins/:cohortId
+practicalRouter.get("/checkins/:cohortId", async (req: Request, res: Response) => {
+  const { cohortId } = req.params;
+  const { week } = req.query;
+  try {
+    const list = await db
+      .select()
+      .from(practicalCheckins)
+      .where(
+        week
+          ? and(
+              eq(practicalCheckins.cohortId, cohortId),
+              eq(practicalCheckins.weekNumber, Number(week))
+            )
+          : eq(practicalCheckins.cohortId, cohortId)
+      );
+    return res.json(list);
+  } catch (err) {
+    console.error("Fetch practical checkins error:", err);
+    return res.status(500).json({ error: "Failed to fetch practical checkins" });
+  }
+});
+
+// POST /lms/practical/checkins
+practicalRouter.post("/checkins", async (req: Request, res: Response) => {
+  const { cohortId, userId, groupId, weekNumber, codeSubmitted, verifiedBy } = req.body;
+  if (!cohortId || !userId || !weekNumber) {
+    return res.status(400).json({ error: "Missing required checkin fields" });
+  }
+
+  try {
+    const [existing] = await db
+      .select()
+      .from(practicalCheckins)
+      .where(
+        and(
+          eq(practicalCheckins.cohortId, cohortId),
+          eq(practicalCheckins.userId, userId),
+          eq(practicalCheckins.weekNumber, Number(weekNumber))
+        )
+      );
+
+    if (existing) {
+      return res.json({ message: "User already checked in for this week", checkin: existing });
+    }
+
+    const [inserted] = await db
+      .insert(practicalCheckins)
+      .values({
+        cohortId,
+        userId,
+        groupId: groupId || null,
+        weekNumber: Number(weekNumber),
+        codeSubmitted: codeSubmitted || "VERIFIED",
+        verifiedBy: verifiedBy || null,
+      })
+      .returning();
+
+    return res.status(201).json({ message: "Checkin recorded successfully", checkin: inserted });
+  } catch (err) {
+    console.error("Record practical checkin error:", err);
+    return res.status(500).json({ error: "Failed to record practical checkin" });
+  }
+});
+
+// GET /lms/practical/checkins/user/:userId
+practicalRouter.get("/checkins/user/:userId", async (req: Request, res: Response) => {
+  try {
+    const list = await db
+      .select()
+      .from(practicalCheckins)
+      .where(eq(practicalCheckins.userId, req.params.userId));
+    return res.json(list);
+  } catch (err) {
+    return res.status(500).json({ error: "Failed to fetch user checkins" });
   }
 });
 

@@ -1162,6 +1162,28 @@ app.get(
 );
 
 // ─────────────────────────────────────────────
+// WEEKLY PRACTICAL ATTENDANCE CHECK-INS
+// ─────────────────────────────────────────────
+app.get(
+  "/api/lms/practical/checkins/:cohortId",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.post(
+  "/api/lms/practical/checkins",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
+  "/api/lms/practical/checkins/user/:userId",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+
+// ─────────────────────────────────────────────
 // PLATFORM VIDEO TUTORIALS
 // ─────────────────────────────────────────────
 app.get(

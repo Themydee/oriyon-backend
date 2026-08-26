@@ -147,6 +147,19 @@ export const week12Checkins = pgTable("week12_checkins", {
   checkedInAt: timestamp("checked_in_at").notNull().defaultNow(),
 });
 
+// ─── Practical Check-ins ──────────────────────────────────────────────────────
+
+export const practicalCheckins = pgTable("practical_checkins", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  cohortId: uuid("cohort_id").notNull(),
+  groupId: varchar("group_id", { length: 128 }),
+  weekNumber: integer("week_number").notNull(),
+  codeSubmitted: varchar("code_submitted", { length: 128 }).notNull(),
+  verifiedBy: uuid("verified_by"),
+  checkedInAt: timestamp("checked_in_at").notNull().defaultNow(),
+});
+
 // ─── Physical Sessions ────────────────────────────────────────────────────────
 
 export const physicalSessions = pgTable("physical_sessions", {
