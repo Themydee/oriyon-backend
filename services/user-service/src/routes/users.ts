@@ -31,7 +31,7 @@ const createUserSchema = z.object({
 userRouter.get("/", async (req: Request, res: Response) => {
   try {
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string) || 50));
     const offset = (page - 1) * limit;
     const search = (req.query.search as string) || "";
     const roleFilter = req.query.role as string | undefined;
@@ -54,7 +54,7 @@ userRouter.get("/", async (req: Request, res: Response) => {
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
     // Paginated users
-    const [allUsers, [{ count }]] = await Promise.all([
+    const [allUsers, countRes] = await Promise.all([
       db
         .select()
         .from(users)
@@ -68,25 +68,38 @@ userRouter.get("/", async (req: Request, res: Response) => {
         .where(whereClause),
     ]);
 
-    if (allUsers.length === 0) {
+    const count = Number(countRes?.[0]?.count || 0);
+
+    if (!allUsers || allUsers.length === 0) {
       return res.json({
         data: [],
-        pagination: { page, limit, total: count, totalPages: Math.ceil(count / limit) },
+        pagination: { page, limit, total: count, totalPages: Math.ceil(count / limit) || 1 },
       });
     }
 
     // Only fetch memberships for the current page of users
-    const userIds = allUsers.map((u) => u.id);
+    const userIds = allUsers.map((u) => u.id).filter(Boolean);
 
-    const [allCohortMembers, allGroupMembers, allCohorts, allGroups] = await Promise.all([
-      db.select().from(cohortMembers).where(inArray(cohortMembers.userId, userIds)),
-      db.select().from(groupMembers).where(inArray(groupMembers.userId, userIds)),
-      db.select().from(cohorts),
-      db.select().from(groups),
-    ]);
+    let allCohortMembers: any[] = [];
+    let allGroupMembers: any[] = [];
+    let allCohorts: any[] = [];
+    let allGroups: any[] = [];
 
-    const cohortMap = new Map(allCohorts.map((c) => [c.id, c.name]));
-    const groupMap = new Map(allGroups.map((g) => [g.id, g.name]));
+    if (userIds.length > 0) {
+      const [cmRes, gmRes, cRes, gRes] = await Promise.all([
+        db.select().from(cohortMembers).where(inArray(cohortMembers.userId, userIds)).catch((e) => { console.error("Error fetching cohortMembers:", e); return []; }),
+        db.select().from(groupMembers).where(inArray(groupMembers.userId, userIds)).catch((e) => { console.error("Error fetching groupMembers:", e); return []; }),
+        db.select().from(cohorts).catch((e) => { console.error("Error fetching cohorts:", e); return []; }),
+        db.select().from(groups).catch((e) => { console.error("Error fetching groups:", e); return []; }),
+      ]);
+      allCohortMembers = cmRes || [];
+      allGroupMembers = gmRes || [];
+      allCohorts = cRes || [];
+      allGroups = gRes || [];
+    }
+
+    const cohortMap = new Map((allCohorts || []).map((c: any) => [c.id, c.name]));
+    const groupMap = new Map((allGroups || []).map((g: any) => [g.id, g.name]));
 
     const userCohortMap = new Map<string, { id: string; name: string }[]>();
     for (const cm of allCohortMembers) {
@@ -114,11 +127,11 @@ userRouter.get("/", async (req: Request, res: Response) => {
         page,
         limit,
         total: count,
-        totalPages: Math.ceil(count / limit),
+        totalPages: Math.ceil(count / limit) || 1,
       },
     });
   } catch (err) {
-    console.error(err);
+    console.error("GET /users error:", err);
     return res.status(500).json({ error: "Failed to fetch users" });
   }
 });
@@ -134,17 +147,22 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
 
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    const [membership] = await db
+    const membershipRes = await db
       .select()
       .from(cohortMembers)
       .where(eq(cohortMembers.userId, req.params.id))
-      .limit(1);
+      .limit(1)
+      .catch((e) => {
+        console.error("Error fetching cohort membership for user:", e);
+        return [];
+      });
 
     return res.json({
       ...user,
-      cohortId: membership?.cohortId ?? null,
+      cohortId: membershipRes?.[0]?.cohortId ?? null,
     });
   } catch (err) {
+    console.error(`GET /users/${req.params.id} error:`, err);
     return res.status(500).json({ error: "Failed to fetch user" });
   }
 });
