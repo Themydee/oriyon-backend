@@ -85,9 +85,21 @@ async function setupConsumers() {
 async function ensureDbColumns() {
   try {
     await queryClient`ALTER TABLE lessons ADD COLUMN IF NOT EXISTS audio_url text;`;
-    console.log("[lms-service] Auto-migration: ensured lessons.audio_url column exists.");
+    await queryClient`
+      CREATE TABLE IF NOT EXISTS practical_checkins (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id uuid NOT NULL,
+        cohort_id uuid NOT NULL,
+        group_id varchar(128),
+        week_number integer NOT NULL,
+        code_submitted varchar(128) NOT NULL,
+        verified_by uuid,
+        checked_in_at timestamp NOT NULL DEFAULT now()
+      );
+    `;
+    console.log("[lms-service] Auto-migration: ensured lessons.audio_url & practical_checkins table exist.");
   } catch (err) {
-    console.error("[lms-service] Failed to ensure lessons.audio_url column:", err);
+    console.error("[lms-service] Failed to ensure DB schema:", err);
   }
 }
 

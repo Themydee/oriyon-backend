@@ -250,10 +250,23 @@ async function setupConsumers() {
   );
 }
 
+async function ensureDbColumns() {
+  try {
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS passport_picture text;`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS passport_url text;`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text;`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo text;`;
+    console.log("[user-service] Auto-migration: ensured passport photo columns exist.");
+  } catch (err) {
+    console.error("[user-service] Failed to ensure photo columns:", err);
+  }
+}
+
 // ─────────────────────────────────────────────
 // START
 // ─────────────────────────────────────────────
 async function bootstrap() {
+  await ensureDbColumns();
   await connectRabbitMQ(process.env.RABBITMQ_URL!);
   await setupConsumers();
   app.listen(PORT, () => {
