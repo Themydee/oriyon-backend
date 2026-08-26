@@ -139,18 +139,54 @@ userRouter.get("/", async (req: Request, res: Response) => {
 // GET /users/:id
 userRouter.get("/:id", async (req: Request, res: Response) => {
   try {
-    const [user] = await db
+    const id = req.params.id;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (!isUuid) {
+      return res.status(400).json({ error: "Invalid user ID format" });
+    }
+
+    let [user] = await db
       .select()
       .from(users)
-      .where(eq(users.id, req.params.id))
+      .where(eq(users.id, id))
       .limit(1);
+
+    if (!user) {
+      const headerUserId = req.headers["x-user-id"] as string | undefined;
+      const headerEmail = req.headers["x-user-email"] as string | undefined;
+      const headerRole = (req.headers["x-user-role"] as any) || "trainee";
+
+      // If an authenticated user is requesting their own missing profile, auto-provision default profile
+      if (headerUserId && headerUserId === id && headerEmail) {
+        try {
+          const [newUser] = await db
+            .insert(users)
+            .values({
+              id,
+              email: headerEmail,
+              firstName: "Trainee",
+              lastName: "User",
+              role: ["trainee", "trainer", "coordinator", "lead_trainer", "admin"].includes(headerRole) ? headerRole : "trainee",
+              isActive: true,
+            })
+            .onConflictDoUpdate({
+              target: users.id,
+              set: { updatedAt: new Date() },
+            })
+            .returning();
+          user = newUser;
+        } catch (provisionErr) {
+          console.error(`Auto-provisioning user profile for ${id} failed:`, provisionErr);
+        }
+      }
+    }
 
     if (!user) return res.status(404).json({ error: "User not found" });
 
     const membershipRes = await db
       .select()
       .from(cohortMembers)
-      .where(eq(cohortMembers.userId, req.params.id))
+      .where(eq(cohortMembers.userId, id))
       .limit(1)
       .catch((e) => {
         console.error("Error fetching cohort membership for user:", e);
