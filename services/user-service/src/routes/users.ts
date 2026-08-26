@@ -13,18 +13,36 @@ export const cohortRouter = Router();
 // USERS
 // ─────────────────────────────────────────────
 
-const createUserSchema = z.object({
-  id: z.string().uuid().optional(),
-  email: z.string().email(),
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  phone: z.string().optional().nullable(),
-  role: z.enum(["trainee", "trainer", "coordinator", "lead_trainer", "admin"]).default("trainee"),
-  assignedState: z.string().optional().nullable(),
-  assignedLga: z.string().optional().nullable(),
-  assignedZone: z.string().optional().nullable(),
-  approvedRole: z.string().optional().nullable(),
-});
+function normalizeUserRow(user: any) {
+  if (!user) return null;
+  const firstName = user.firstName ?? user.first_name ?? "";
+  const lastName = user.lastName ?? user.last_name ?? "";
+  const passportPicture = user.passportPicture ?? user.passport_picture ?? user.passportUrl ?? user.passport_url ?? user.avatarUrl ?? user.avatar_url ?? user.photo ?? null;
+  return {
+    ...user,
+    id: user.id ?? user.id,
+    email: user.email ?? user.email,
+    firstName,
+    lastName,
+    first_name: firstName,
+    last_name: lastName,
+    phone: user.phone ?? null,
+    address: user.address ?? null,
+    role: user.role ?? "trainee",
+    assignedState: user.assignedState ?? user.assigned_state ?? null,
+    assignedLga: user.assignedLga ?? user.assigned_lga ?? null,
+    assignedZone: user.assignedZone ?? user.assigned_zone ?? null,
+    physicalSiteId: user.physicalSiteId ?? user.physical_site_id ?? null,
+    isCooperativeOnly: user.isCooperativeOnly ?? user.is_cooperative_only ?? false,
+    isActive: user.isActive ?? user.is_active ?? true,
+    blacklistReason: user.blacklistReason ?? user.blacklist_reason ?? null,
+    approvedRole: user.approvedRole ?? user.approved_role ?? null,
+    passportPicture,
+    passportUrl: passportPicture,
+    avatarUrl: passportPicture,
+    photo: passportPicture,
+  };
+}
 
 // GET /users
 // Supports: ?page=1&limit=50&search=john&role=trainee
@@ -273,8 +291,9 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
         return [];
       });
 
+    const normalized = normalizeUserRow(user);
     return res.json({
-      ...user,
+      ...normalized,
       cohortId: membershipRes?.[0]?.cohortId ?? null,
     });
   } catch (err) {
@@ -563,7 +582,8 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
       blacklistReason: updated.blacklistReason,
     }).catch((e) => console.error("publishEvent user.updated failed:", e));
 
-    return res.json(updated);
+    const normalized = normalizeUserRow(updated);
+    return res.json(normalized);
   } catch (err) {
     console.error(`PATCH /users/${req.params.id} error:`, err);
     return res.status(500).json({ error: "Failed to update user" });
