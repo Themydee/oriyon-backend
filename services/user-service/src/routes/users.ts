@@ -15,16 +15,17 @@ export const cohortRouter = Router();
 
 function normalizeUserRow(user: any) {
   if (!user) return null;
-  const firstName = user.firstName ?? user.first_name ?? "";
-  const lastName = user.lastName ?? user.last_name ?? "";
-  const passportPicture = user.passportPicture ?? user.passport_picture ?? user.passportUrl ?? user.passport_url ?? user.avatarUrl ?? user.avatar_url ?? user.photo ?? null;
-  const idType = user.idType ?? user.id_type ?? null;
-  const idDocument = user.idDocument ?? user.id_document ?? null;
-  const idFilename = user.idFilename ?? user.id_filename ?? null;
-  const idMimeType = user.idMimeType ?? user.id_mime_type ?? null;
-  const idUploadedAt = user.idUploadedAt ?? user.id_uploaded_at ?? null;
-  const kycStatus = user.kycStatus ?? user.kyc_status ?? null;
-  const kycRejectionReason = user.kycRejectionReason ?? user.kyc_rejection_reason ?? null;
+  const firstName = user.firstName || user.first_name || "";
+  const lastName = user.lastName || user.last_name || "";
+  const rawPhoto = user.passportPicture || user.passport_picture || user.passportUrl || user.passport_url || user.avatarUrl || user.avatar_url || user.photo || user.photo_url;
+  const passportPicture = typeof rawPhoto === "string" && rawPhoto.trim() !== "" ? rawPhoto : null;
+  const idType = user.idType || user.id_type || null;
+  const idDocument = user.idDocument || user.id_document || null;
+  const idFilename = user.idFilename || user.id_filename || null;
+  const idMimeType = user.idMimeType || user.id_mime_type || null;
+  const idUploadedAt = user.idUploadedAt || user.id_uploaded_at || null;
+  const kycStatus = user.kycStatus || user.kyc_status || null;
+  const kycRejectionReason = user.kycRejectionReason || user.kyc_rejection_reason || null;
   const rawActive = user.isActive ?? user.is_active;
   const isActive = rawActive === true || rawActive === "true" || rawActive === 1;
 
@@ -36,18 +37,18 @@ function normalizeUserRow(user: any) {
     lastName,
     first_name: firstName,
     last_name: lastName,
-    phone: user.phone ?? null,
-    address: user.address ?? null,
-    role: user.role ?? "trainee",
-    assignedState: user.assignedState ?? user.assigned_state ?? null,
-    assignedLga: user.assignedLga ?? user.assigned_lga ?? null,
-    assignedZone: user.assignedZone ?? user.assigned_zone ?? null,
-    physicalSiteId: user.physicalSiteId ?? user.physical_site_id ?? null,
-    isCooperativeOnly: user.isCooperativeOnly ?? user.is_cooperative_only ?? false,
+    phone: user.phone || null,
+    address: user.address || null,
+    role: user.role || "trainee",
+    assignedState: user.assignedState || user.assigned_state || null,
+    assignedLga: user.assignedLga || user.assigned_lga || null,
+    assignedZone: user.assignedZone || user.assigned_zone || null,
+    physicalSiteId: user.physicalSiteId || user.physical_site_id || null,
+    isCooperativeOnly: user.isCooperativeOnly || user.is_cooperative_only || false,
     isActive,
     is_active: isActive,
-    blacklistReason: user.blacklistReason ?? user.blacklist_reason ?? null,
-    approvedRole: user.approvedRole ?? user.approved_role ?? null,
+    blacklistReason: user.blacklistReason || user.blacklist_reason || null,
+    approvedRole: user.approvedRole || user.approved_role || null,
     idType,
     id_type: idType,
     idDocument,
@@ -67,6 +68,9 @@ function normalizeUserRow(user: any) {
     passportUrl: passportPicture,
     avatarUrl: passportPicture,
     photo: passportPicture,
+    passport_picture: passportPicture,
+    passport_url: passportPicture,
+    avatar_url: passportPicture,
   };
 }
 
