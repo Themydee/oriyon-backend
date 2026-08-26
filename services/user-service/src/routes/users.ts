@@ -18,10 +18,20 @@ function normalizeUserRow(user: any) {
   const firstName = user.firstName ?? user.first_name ?? "";
   const lastName = user.lastName ?? user.last_name ?? "";
   const passportPicture = user.passportPicture ?? user.passport_picture ?? user.passportUrl ?? user.passport_url ?? user.avatarUrl ?? user.avatar_url ?? user.photo ?? null;
+  const idType = user.idType ?? user.id_type ?? null;
+  const idDocument = user.idDocument ?? user.id_document ?? null;
+  const idFilename = user.idFilename ?? user.id_filename ?? null;
+  const idMimeType = user.idMimeType ?? user.id_mime_type ?? null;
+  const idUploadedAt = user.idUploadedAt ?? user.id_uploaded_at ?? null;
+  const kycStatus = user.kycStatus ?? user.kyc_status ?? null;
+  const kycRejectionReason = user.kycRejectionReason ?? user.kyc_rejection_reason ?? null;
+  const rawActive = user.isActive ?? user.is_active;
+  const isActive = rawActive === true || rawActive === "true" || rawActive === 1;
+
   return {
     ...user,
-    id: user.id ?? user.id,
-    email: user.email ?? user.email,
+    id: user.id,
+    email: user.email,
     firstName,
     lastName,
     first_name: firstName,
@@ -34,9 +44,25 @@ function normalizeUserRow(user: any) {
     assignedZone: user.assignedZone ?? user.assigned_zone ?? null,
     physicalSiteId: user.physicalSiteId ?? user.physical_site_id ?? null,
     isCooperativeOnly: user.isCooperativeOnly ?? user.is_cooperative_only ?? false,
-    isActive: user.isActive ?? user.is_active ?? true,
+    isActive,
+    is_active: isActive,
     blacklistReason: user.blacklistReason ?? user.blacklist_reason ?? null,
     approvedRole: user.approvedRole ?? user.approved_role ?? null,
+    idType,
+    id_type: idType,
+    idDocument,
+    id_document: idDocument,
+    idDocumentUrl: idDocument,
+    idFilename,
+    id_filename: idFilename,
+    idMimeType,
+    id_mime_type: idMimeType,
+    idUploadedAt,
+    id_uploaded_at: idUploadedAt,
+    kycStatus,
+    kyc_status: kycStatus,
+    kycRejectionReason,
+    kyc_rejection_reason: kycRejectionReason,
     passportPicture,
     passportUrl: passportPicture,
     avatarUrl: passportPicture,
@@ -171,11 +197,14 @@ userRouter.get("/", async (req: Request, res: Response) => {
       userGroupMap.get(gm.userId)!.push({ id: gm.groupId, name: groupName });
     }
 
-    const usersWithMemberships = allUsers.map((u) => ({
-      ...u,
-      cohorts: userCohortMap.get(u.id) || [],
-      groups: userGroupMap.get(u.id) || [],
-    }));
+    const usersWithMemberships = allUsers.map((u) => {
+      const normalized = normalizeUserRow(u);
+      return {
+        ...normalized,
+        cohorts: userCohortMap.get(u.id) || [],
+        groups: userGroupMap.get(u.id) || [],
+      };
+    });
 
     return res.json({
       data: usersWithMemberships,
