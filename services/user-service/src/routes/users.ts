@@ -528,24 +528,48 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
-    const targetId = req.params.id;
+    const rawTargetId = req.params.id;
+    const headerUserId = req.headers["x-user-id"] as string | undefined;
+    const headerEmail = req.headers["x-user-email"] as string | undefined;
+
+    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    const validTargetId = uuidRegex.test(rawTargetId)
+      ? rawTargetId
+      : (headerUserId && uuidRegex.test(headerUserId) ? headerUserId : null);
+    const escapedEmail = headerEmail ? headerEmail.replace(/'/g, "''") : null;
+
     const updateData: any = { ...parsed.data, updatedAt: new Date() };
     if (parsed.data.isActive === true) {
       updateData.blacklistReason = null;
     }
 
+    // Populate all passport/photo fields if any photo string is provided
+    const photoVal = parsed.data.passportPicture || parsed.data.passportUrl || parsed.data.avatarUrl || parsed.data.photo;
+    if (photoVal) {
+      updateData.passportPicture = photoVal;
+      updateData.passportUrl = photoVal;
+      updateData.avatarUrl = photoVal;
+      updateData.photo = photoVal;
+    }
+
     let updated: any = null;
 
-    try {
-      const [resRow] = await db
-        .update(users)
-        .set(updateData)
-        .where(eq(users.id, targetId))
-        .returning();
-      updated = resRow;
-    } catch (updateErr) {
-      console.error(`Primary Drizzle update for user ${targetId} failed, trying per-column raw SQL fallback:`, updateErr);
+    // Try primary Drizzle update if valid UUID targetId
+    if (validTargetId) {
+      try {
+        const [resRow] = await db
+          .update(users)
+          .set(updateData)
+          .where(eq(users.id, validTargetId))
+          .returning();
+        updated = resRow;
+      } catch (updateErr) {
+        console.error(`Primary Drizzle update for user ${validTargetId} failed, trying per-column raw SQL fallback:`, updateErr);
+      }
+    }
 
+    // Per-column raw SQL fallback if primary update failed or targetId was not UUID
+    if (!updated) {
       const colMap: Record<string, string> = {
         firstName: "first_name",
         lastName: "last_name",
@@ -565,75 +589,60 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
         physicalSiteId: "physical_site_id",
       };
 
-      const headerEmail = (req.headers["x-user-email"] as string | undefined) || "";
-      const escapedEmail = headerEmail.replace(/'/g, "''");
+      const whereConditions: string[] = [];
+      if (validTargetId) whereConditions.push(`id = '${validTargetId}'::uuid`);
+      if (escapedEmail) whereConditions.push(`email = '${escapedEmail}'`);
 
-      for (const [jsKey, sqlCol] of Object.entries(colMap)) {
-        if (updateData[jsKey] !== undefined) {
-          try {
-            const val = updateData[jsKey];
-            let valSql = "NULL";
-            if (val !== null) {
-              if (typeof val === "boolean") {
-                valSql = `${val}`;
-              } else {
-                valSql = `'${String(val).replace(/'/g, "''")}'`;
+      if (whereConditions.length > 0) {
+        const whereSql = whereConditions.join(" OR ");
+
+        for (const [jsKey, sqlCol] of Object.entries(colMap)) {
+          if (updateData[jsKey] !== undefined) {
+            try {
+              const val = updateData[jsKey];
+              let valSql = "NULL";
+              if (val !== null) {
+                if (typeof val === "boolean") {
+                  valSql = `${val}`;
+                } else {
+                  valSql = `'${String(val).replace(/'/g, "''")}'`;
+                }
               }
+              await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = ${valSql} WHERE ${whereSql}`));
+            } catch (colErr) {
+              console.warn(`Column ${sqlCol} update skipped (likely missing on DB):`, colErr);
             }
-            if (escapedEmail) {
-              await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = ${valSql} WHERE id = '${targetId}'::uuid OR email = '${escapedEmail}'`));
-            } else {
-              await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = ${valSql} WHERE id = '${targetId}'::uuid`));
-            }
-          } catch (colErr) {
-            console.warn(`Column ${sqlCol} update skipped (likely column missing on DB):`, colErr);
           }
         }
-      }
 
-      try {
-        if (escapedEmail) {
-          await db.execute(sql.raw(`UPDATE users SET updated_at = NOW() WHERE id = '${targetId}'::uuid OR email = '${escapedEmail}'`));
-          const rawRes = await db.execute(sql.raw(`SELECT * FROM users WHERE id = '${targetId}'::uuid OR email = '${escapedEmail}' LIMIT 1`));
-          updated = (rawRes as any)?.rows?.[0] || (Array.isArray(rawRes) ? rawRes[0] : null);
-        } else {
-          await db.execute(sql.raw(`UPDATE users SET updated_at = NOW() WHERE id = '${targetId}'::uuid`));
-          const rawRes = await db.execute(sql.raw(`SELECT * FROM users WHERE id = '${targetId}'::uuid LIMIT 1`));
-          updated = (rawRes as any)?.rows?.[0] || (Array.isArray(rawRes) ? rawRes[0] : null);
-        }
-      } catch (fetchErr) {
-        console.error(`Fetching updated user row failed:`, fetchErr);
-      }
-    }
-
-    if (!updated) {
-      // If user not found by ID, try email fallback
-      const headerEmail = req.headers["x-user-email"] as string | undefined;
-      if (headerEmail) {
         try {
-          const rawRes = await db.execute(sql.raw(`SELECT * FROM users WHERE email = '${headerEmail.replace(/'/g, "''")}' LIMIT 1`));
+          await db.execute(sql.raw(`UPDATE users SET updated_at = NOW() WHERE ${whereSql}`));
+          const rawRes = await db.execute(sql.raw(`SELECT * FROM users WHERE ${whereSql} LIMIT 1`));
           updated = (rawRes as any)?.rows?.[0] || (Array.isArray(rawRes) ? rawRes[0] : null);
-        } catch { /* ignore */ }
+        } catch (fetchErr) {
+          console.error(`Fetching updated user row failed:`, fetchErr);
+        }
       }
     }
 
     if (!updated) return res.status(404).json({ error: "User not found" });
 
-    await publishEvent("user.updated", {
-      userId: updated.id,
-      role: updated.role,
-      assignedState: updated.assignedState,
-      assignedLga: updated.assignedLga,
-      assignedZone: updated.assignedZone,
-      isActive: updated.isActive,
-      blacklistReason: updated.blacklistReason,
-    }).catch((e) => console.error("publishEvent user.updated failed:", e));
-
     const normalized = normalizeUserRow(updated);
+
+    await publishEvent("user.updated", {
+      userId: normalized.id,
+      role: normalized.role,
+      assignedState: normalized.assignedState,
+      assignedLga: normalized.assignedLga,
+      assignedZone: normalized.assignedZone,
+      isActive: normalized.isActive,
+      blacklistReason: normalized.blacklistReason,
+    });
+
     return res.json(normalized);
   } catch (err) {
-    console.error(`PATCH /users/${req.params.id} error:`, err);
-    return res.status(500).json({ error: "Failed to update user" });
+    console.error("Error updating user:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
