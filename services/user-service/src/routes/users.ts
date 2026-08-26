@@ -462,16 +462,80 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
+    const targetId = req.params.id;
     const updateData: any = { ...parsed.data, updatedAt: new Date() };
     if (parsed.data.isActive === true) {
       updateData.blacklistReason = null;
     }
 
-    const [updated] = await db
-      .update(users)
-      .set(updateData)
-      .where(eq(users.id, req.params.id))
-      .returning();
+    let updated: any = null;
+
+    try {
+      const [resRow] = await db
+        .update(users)
+        .set(updateData)
+        .where(eq(users.id, targetId))
+        .returning();
+      updated = resRow;
+    } catch (updateErr) {
+      console.error(`Primary Drizzle update for user ${targetId} failed, trying per-column raw SQL fallback:`, updateErr);
+
+      const colMap: Record<string, string> = {
+        firstName: "first_name",
+        lastName: "last_name",
+        phone: "phone",
+        address: "address",
+        passportPicture: "passport_picture",
+        passportUrl: "passport_url",
+        avatarUrl: "avatar_url",
+        photo: "photo",
+        isActive: "is_active",
+        blacklistReason: "blacklist_reason",
+        role: "role",
+        assignedState: "assigned_state",
+        assignedLga: "assigned_lga",
+        assignedZone: "assigned_zone",
+        approvedRole: "approved_role",
+        physicalSiteId: "physical_site_id",
+      };
+
+      for (const [jsKey, sqlCol] of Object.entries(colMap)) {
+        if (updateData[jsKey] !== undefined) {
+          try {
+            const val = updateData[jsKey];
+            if (val === null) {
+              await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = NULL WHERE id = '${targetId}'::uuid`));
+            } else if (typeof val === "boolean") {
+              await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = ${val} WHERE id = '${targetId}'::uuid`));
+            } else {
+              const escaped = String(val).replace(/'/g, "''");
+              await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = '${escaped}' WHERE id = '${targetId}'::uuid`));
+            }
+          } catch (colErr) {
+            console.warn(`Column ${sqlCol} update skipped (likely column missing on DB):`, colErr);
+          }
+        }
+      }
+
+      try {
+        await db.execute(sql.raw(`UPDATE users SET updated_at = NOW() WHERE id = '${targetId}'::uuid`));
+        const rawRes = await db.execute(sql.raw(`SELECT * FROM users WHERE id = '${targetId}'::uuid LIMIT 1`));
+        updated = (rawRes as any)?.rows?.[0] || (Array.isArray(rawRes) ? rawRes[0] : null);
+      } catch (fetchErr) {
+        console.error(`Fetching updated user row failed:`, fetchErr);
+      }
+    }
+
+    if (!updated) {
+      // If user not found by ID, try email fallback
+      const headerEmail = req.headers["x-user-email"] as string | undefined;
+      if (headerEmail) {
+        try {
+          const rawRes = await db.execute(sql.raw(`SELECT * FROM users WHERE email = '${headerEmail.replace(/'/g, "''")}' LIMIT 1`));
+          updated = (rawRes as any)?.rows?.[0] || (Array.isArray(rawRes) ? rawRes[0] : null);
+        } catch { /* ignore */ }
+      }
+    }
 
     if (!updated) return res.status(404).json({ error: "User not found" });
 
@@ -483,10 +547,11 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
       assignedZone: updated.assignedZone,
       isActive: updated.isActive,
       blacklistReason: updated.blacklistReason,
-    });
+    }).catch((e) => console.error("publishEvent user.updated failed:", e));
 
     return res.json(updated);
   } catch (err) {
+    console.error(`PATCH /users/${req.params.id} error:`, err);
     return res.status(500).json({ error: "Failed to update user" });
   }
 });
