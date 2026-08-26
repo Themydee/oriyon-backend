@@ -302,6 +302,24 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
   }
 });
 
+const createUserSchema = z.object({
+  id: z.string().uuid().optional(),
+  email: z.string().email("Invalid email address"),
+  firstName: z.string().min(1, "First name is required"),
+  lastName: z.string().min(1, "Last name is required"),
+  phone: z.string().optional().nullable(),
+  role: z.enum(["trainee", "trainer", "coordinator", "lead_trainer", "admin"]).optional().default("trainee"),
+  assignedState: z.string().optional().nullable(),
+  assignedLga: z.string().optional().nullable(),
+  assignedZone: z.string().optional().nullable(),
+  physicalSiteId: z.string().optional().nullable(),
+  isCooperativeOnly: z.boolean().optional().default(false),
+  passportPicture: z.string().optional().nullable(),
+  passportUrl: z.string().optional().nullable(),
+  avatarUrl: z.string().optional().nullable(),
+  photo: z.string().optional().nullable(),
+});
+
 // POST /users
 userRouter.post("/", async (req: Request, res: Response) => {
   const parsed = createUserSchema.safeParse(req.body);
