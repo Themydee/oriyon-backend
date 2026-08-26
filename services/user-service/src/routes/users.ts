@@ -156,8 +156,22 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
       const headerEmail = req.headers["x-user-email"] as string | undefined;
       const headerRole = (req.headers["x-user-role"] as any) || "trainee";
 
-      // If an authenticated user is requesting their own missing profile, auto-provision default profile
-      if (headerUserId && headerUserId === id && headerEmail) {
+      if (headerEmail) {
+        // Fallback: search by email in case user ID differs
+        const [userByEmail] = await db
+          .select()
+          .from(users)
+          .where(eq(users.email, headerEmail))
+          .limit(1)
+          .catch(() => []);
+
+        if (userByEmail) {
+          user = userByEmail;
+        }
+      }
+
+      // If still missing and authenticated user requests their own profile, auto-provision
+      if (!user && headerUserId && headerUserId === id && headerEmail) {
         try {
           const [newUser] = await db
             .insert(users)
@@ -169,12 +183,20 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
               role: ["trainee", "trainer", "coordinator", "lead_trainer", "admin"].includes(headerRole) ? headerRole : "trainee",
               isActive: true,
             })
-            .onConflictDoUpdate({
-              target: users.id,
-              set: { updatedAt: new Date() },
-            })
+            .onConflictDoNothing()
             .returning();
-          user = newUser;
+
+          if (newUser) {
+            user = newUser;
+          } else {
+            // If onConflictDoNothing returned empty because of conflict, refetch by email/ID
+            const [refetched] = await db
+              .select()
+              .from(users)
+              .where(or(eq(users.id, id), eq(users.email, headerEmail)))
+              .limit(1);
+            user = refetched;
+          }
         } catch (provisionErr) {
           console.error(`Auto-provisioning user profile for ${id} failed:`, provisionErr);
         }
