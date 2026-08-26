@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 interface JwtPayload {
   userId: string;
   email: string;
-  role: "trainee" | "trainer" | "lead_trainer" | "coordinator" | "admin";
+  role: "trainee" | "trainer" | "lead_trainer" | "coordinator" | "admin" | "sub_admin";
   assignedState?: string | null;
   assignedLga?: string | null;
   assignedZone?: string | null;
@@ -44,7 +44,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
 }
 
 
-export function requireRole(...roles: Array<"trainee" | "trainer" | "lead_trainer" | "coordinator" | "admin">) {
+export function requireRole(...roles: Array<"trainee" | "trainer" | "lead_trainer" | "coordinator" | "admin" | "sub_admin">) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: "Unauthorized" });

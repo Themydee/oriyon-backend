@@ -173,7 +173,7 @@ app.post(
 app.get(
   "/api/applications",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -183,7 +183,7 @@ app.get(
 app.get(
   "/api/applications/status/:status",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -193,7 +193,7 @@ app.get(
 app.get(
   "/api/applications/:id",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -206,14 +206,14 @@ app.get(
   "/api/applications/admin/analytics",
   strictLimiter,
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({ target: APPLICATIONS_SERVICE_URL, changeOrigin: true }),
 );
 app.patch(
   "/api/applications/:id/rescue",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -223,7 +223,7 @@ app.patch(
 app.post(
   "/api/applications/bulk-email",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -233,7 +233,7 @@ app.post(
 app.post(
   ["/api/applications/:id/email", "/api/applications/:id/send-email", "/api/admin/applications/:id/send-email", "/api/admin/applications/:id/email"],
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -243,7 +243,7 @@ app.post(
 app.patch(
   "/api/applications/:id",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -253,7 +253,7 @@ app.patch(
 app.delete(
   "/api/applications/:id",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -624,14 +624,14 @@ app.post(
 app.post(
   "/api/users/bulk-email",
   authenticate,
-  requireRole("admin", "trainer", "lead_trainer"),
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
 app.post(
   "/api/users/bulk-status",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
@@ -640,7 +640,7 @@ app.post(
 app.get(
   "/api/admin/results",
   authenticate,
-  requireRole("admin", "trainer", "lead_trainer"),
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
   async (req: Request, res: Response) => {
     try {
       const authHeader = req.headers.authorization ?? "";
@@ -713,14 +713,14 @@ app.get(
 app.get(
   "/api/users/:id/id-document",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
 app.post(
   "/api/users/:id/kyc-verify",
   authenticate,
-  requireRole("admin"),
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
@@ -964,7 +964,7 @@ app.get(
 app.get(
   "/api/lms/quizzes/admin/attempts",
   authenticate,
-  requireRole("admin", "trainer", "lead_trainer"),
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
