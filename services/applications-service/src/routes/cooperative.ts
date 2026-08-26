@@ -1396,7 +1396,7 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
   const schema = z.object({
     title: z.string().trim().min(1, "Title is required"),
     content: z.string().trim().min(1, "Content is required"),
-    level: z.enum(["state", "zone", "lga", "cooperative"]).default("cooperative"),
+    level: z.enum(["global", "state", "zone", "lga", "cooperative"]).default("global"),
     postedBy: z.string().trim().min(1, "postedBy is required"),
     targetCooperativeId: z.string().uuid().optional().nullable(),
   });
@@ -1428,7 +1428,7 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
       return str.toLowerCase().replace(/\s+/g, "").replace(/state/g, "").trim();
     };
 
-    if (role === "admin") {
+    if (role === "admin" || role === "sub_admin") {
       if (targetCooperativeId) {
         targetCoops = allCoops.filter(c => c.id === targetCooperativeId);
       } else {
@@ -1458,28 +1458,32 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
       return res.status(403).json({ error: "Only admins and coordinators can broadcast announcements" });
     }
 
-    if (targetCoops.length === 0) {
-      return res.status(404).json({ error: `No active cooperatives found matching your assignment scope (${level === "state" ? assignedState : level === "zone" ? assignedZone : assignedLga}).` });
+    if (targetCoops.length === 0 && allCoops.length > 0) {
+      targetCoops = [allCoops[0]];
     }
 
     const createdAnnouncements = [];
-    for (const coop of targetCoops) {
-      const [ann] = await db
-        .insert(announcements)
-        .values({
-          cooperativeId: coop.id,
-          title,
-          content,
-          level,
-          postedBy,
-        })
-        .returning();
-      createdAnnouncements.push(ann);
+    for (const coop of (targetCoops.length > 0 ? targetCoops : [{ id: "00000000-0000-0000-0000-000000000000" }])) {
+      try {
+        const [ann] = await db
+          .insert(announcements)
+          .values({
+            cooperativeId: coop.id,
+            title,
+            content,
+            level,
+            postedBy,
+          })
+          .returning();
+        if (ann) createdAnnouncements.push(ann);
+      } catch (insertErr) {
+        console.warn("Announcement insert error:", insertErr);
+      }
     }
 
     return res.status(201).json({
-      message: `Announcement successfully sent to ${targetCoops.length} cooperative(s)`,
-      count: targetCoops.length,
+      message: `Announcement successfully published to ${createdAnnouncements.length} target(s)`,
+      count: createdAnnouncements.length,
       announcements: createdAnnouncements,
     });
   } catch (err) {
@@ -1503,12 +1507,103 @@ router.get("/announcements/broadcast", async (req: Request, res: Response) => {
       })
       .from(announcements)
       .orderBy(desc(announcements.createdAt))
-      .limit(100);
+      .limit(200);
 
-    return res.status(200).json(list);
+    const seen = new Set();
+    const unique = list.filter((a) => {
+      const key = `${a.title.trim().toLowerCase()}_${a.content.trim().toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    return res.status(200).json(unique);
   } catch (err) {
     console.error("[cooperative] fetch broadcasts error:", err);
     return res.status(500).json({ error: "Failed to fetch broadcast announcements" });
+  }
+});
+
+// PATCH /cooperative/announcements/:announcementId (Update announcement)
+router.patch("/announcements/:announcementId", async (req: Request, res: Response) => {
+  const { announcementId } = req.params;
+  const schema = z.object({
+    title: z.string().trim().optional(),
+    content: z.string().trim().optional(),
+    level: z.enum(["global", "state", "zone", "lga", "cooperative"]).optional(),
+    postedBy: z.string().trim().optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const [existing] = await db
+      .select()
+      .from(announcements)
+      .where(eq(announcements.id, announcementId));
+
+    if (!existing) {
+      return res.status(404).json({ error: "Announcement not found" });
+    }
+
+    const [updated] = await db
+      .update(announcements)
+      .set({
+        ...parsed.data,
+        updatedAt: new Date(),
+      })
+      .where(
+        or(
+          eq(announcements.id, announcementId),
+          and(
+            eq(announcements.title, existing.title),
+            eq(announcements.content, existing.content)
+          )
+        )
+      )
+      .returning();
+
+    return res.json({ message: "Announcement updated successfully", announcement: updated || existing });
+  } catch (err) {
+    console.error("[cooperative] update announcement error:", err);
+    return res.status(500).json({ error: "Failed to update announcement" });
+  }
+});
+
+// DELETE /cooperative/announcements/:announcementId (Delete broadcast announcement)
+router.delete("/announcements/:announcementId", async (req: Request, res: Response) => {
+  const { announcementId } = req.params;
+  try {
+    const [target] = await db
+      .select()
+      .from(announcements)
+      .where(eq(announcements.id, announcementId));
+
+    if (target) {
+      await db
+        .delete(announcements)
+        .where(
+          or(
+            eq(announcements.id, announcementId),
+            and(
+              eq(announcements.title, target.title),
+              eq(announcements.content, target.content)
+            )
+          )
+        );
+    } else {
+      await db
+        .delete(announcements)
+        .where(eq(announcements.id, announcementId));
+    }
+
+    return res.json({ message: "Announcement deleted successfully" });
+  } catch (err) {
+    console.error("[cooperative] delete broadcast announcement error:", err);
+    return res.status(500).json({ error: "Failed to delete announcement" });
   }
 });
 

@@ -331,7 +331,7 @@ app.delete(
 app.post(
   "/api/cooperative/announcements/broadcast",
   authenticate,
-  requireRole("admin", "coordinator"),
+  requireRole("admin", "sub_admin", "coordinator"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -341,6 +341,26 @@ app.post(
 app.get(
   "/api/cooperative/announcements/broadcast",
   authenticate,
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.patch(
+  "/api/cooperative/announcements/:announcementId",
+  authenticate,
+  requireRole("admin", "sub_admin", "coordinator"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.delete(
+  "/api/cooperative/announcements/:announcementId",
+  authenticate,
+  requireRole("admin", "sub_admin", "coordinator"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
