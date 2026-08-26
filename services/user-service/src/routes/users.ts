@@ -53,22 +53,60 @@ userRouter.get("/", async (req: Request, res: Response) => {
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-    // Paginated users
-    const [allUsers, countRes] = await Promise.all([
-      db
-        .select()
-        .from(users)
-        .where(whereClause)
-        .orderBy(users.createdAt)
-        .limit(limit)
-        .offset(offset),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(users)
-        .where(whereClause),
-    ]);
+    let allUsers: any[] = [];
+    let count = 0;
 
-    const count = Number(countRes?.[0]?.count || 0);
+    // Paginated users with raw SQL fallback for missing columns on live DB
+    try {
+      const [usersRows, countRes] = await Promise.all([
+        db
+          .select()
+          .from(users)
+          .where(whereClause)
+          .orderBy(users.createdAt)
+          .limit(limit)
+          .offset(offset),
+        db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(users)
+          .where(whereClause),
+      ]);
+      allUsers = usersRows || [];
+      count = Number(countRes?.[0]?.count || 0);
+    } catch (drizzleErr) {
+      console.error("Drizzle select /users failed, using raw SQL fallback:", drizzleErr);
+      try {
+        let rawQuery = `SELECT * FROM users`;
+        const rawConditions: string[] = [];
+
+        if (search) {
+          const escapedSearch = search.replace(/'/g, "''");
+          rawConditions.push(`(first_name ILIKE '%${escapedSearch}%' OR last_name ILIKE '%${escapedSearch}%' OR email ILIKE '%${escapedSearch}%')`);
+        }
+        if (roleFilter) {
+          const escapedRole = roleFilter.replace(/'/g, "''");
+          rawConditions.push(`role = '${escapedRole}'`);
+        }
+
+        if (rawConditions.length > 0) {
+          rawQuery += ` WHERE ` + rawConditions.join(" AND ");
+        }
+
+        const countQuery = `SELECT count(*)::int AS count FROM (${rawQuery}) sub`;
+        rawQuery += ` ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+
+        const [rawUsersRes, rawCountRes] = await Promise.all([
+          db.execute(sql.raw(rawQuery)),
+          db.execute(sql.raw(countQuery)),
+        ]);
+
+        allUsers = (rawUsersRes as any)?.rows || (Array.isArray(rawUsersRes) ? rawUsersRes : []);
+        const countRow = (rawCountRes as any)?.rows?.[0] || (Array.isArray(rawCountRes) ? rawCountRes[0] : null);
+        count = Number(countRow?.count || 0);
+      } catch (rawErr) {
+        console.error("Raw SQL /users fallback failed:", rawErr);
+      }
+    }
 
     if (!allUsers || allUsers.length === 0) {
       return res.json({
