@@ -10,17 +10,44 @@ interface SendEmailOptions {
   html: string;
 }
 
-export async function sendEmail({ to, subject, html }: SendEmailOptions) {
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function sendEmail(
+  { to, subject, html }: SendEmailOptions,
+  attempt = 1
+): Promise<any> {
+  const MAX_ATTEMPTS = 4;
+
   try {
     const result = await resend.emails.send({ from: FROM, to, subject, html });
+
     if (result.error) {
+      // Retry on rate limit specifically
+      if (result.error.name === "rate_limit_exceeded" && attempt < MAX_ATTEMPTS) {
+        const backoffMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
+        console.warn(
+          `[notifications] Rate limited sending to ${to}. Retrying in ${backoffMs}ms (attempt ${attempt}/${MAX_ATTEMPTS})`
+        );
+        await sleep(backoffMs);
+        return sendEmail({ to, subject, html }, attempt + 1);
+      }
+
       console.error(`[notifications] Resend API error for ${to}:`, result.error);
       throw new Error(`Resend API Error: ${result.error.message}`);
     }
+
     console.log(`[notifications] Email sent to ${to} — subject: "${subject}"`);
     return result;
   } catch (err) {
-    console.error(`[notifications] Failed to send email to ${to}:`, err);
+    if (attempt < MAX_ATTEMPTS) {
+      const backoffMs = 1000 * 2 ** (attempt - 1);
+      console.warn(
+        `[notifications] Send failed for ${to}, retrying in ${backoffMs}ms (attempt ${attempt}/${MAX_ATTEMPTS})`
+      );
+      await sleep(backoffMs);
+      return sendEmail({ to, subject, html }, attempt + 1);
+    }
+    console.error(`[notifications] Failed to send email to ${to} after ${MAX_ATTEMPTS} attempts:`, err);
     throw err;
   }
 }
