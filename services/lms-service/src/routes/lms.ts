@@ -674,6 +674,38 @@ quizzesRouter.post("/:id/attempt", async (req: Request, res: Response) => {
 
     if (!quiz) return res.status(404).json({ error: "Quiz not found" });
 
+    // Check practical attendance for the week (unless user is staff)
+    const reqRole = (req as any).user?.role;
+    const isStaff = ["admin", "trainer", "lead_trainer"].includes(reqRole);
+
+    if (!isStaff) {
+      const [week] = await db
+        .select()
+        .from(weeks)
+        .where(eq(weeks.id, weekId))
+        .limit(1);
+
+      if (week && week.weekNumber) {
+        const [checkin] = await db
+          .select()
+          .from(practicalCheckins)
+          .where(
+            and(
+              eq(practicalCheckins.userId, userId),
+              eq(practicalCheckins.cohortId, cohortId),
+              eq(practicalCheckins.weekNumber, week.weekNumber)
+            )
+          )
+          .limit(1);
+
+        if (!checkin) {
+          return res.status(403).json({
+            error: `Practical attendance required: You must be marked present for Week ${week.weekNumber} practical session before taking this quiz.`,
+          });
+        }
+      }
+    }
+
     // Calculate score
     const questions = quiz.questions as any[];
     let correct = 0;
@@ -935,6 +967,9 @@ practicalRouter.post("/checkins", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "Missing required checkin fields" });
   }
 
+  const isUuid = (str: any) => typeof str === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+  const validVerifiedBy = isUuid(verifiedBy) ? verifiedBy : null;
+
   try {
     const [existing] = await db
       .select()
@@ -959,7 +994,7 @@ practicalRouter.post("/checkins", async (req: Request, res: Response) => {
         groupId: groupId || null,
         weekNumber: Number(weekNumber),
         codeSubmitted: codeSubmitted || "VERIFIED",
-        verifiedBy: verifiedBy || null,
+        verifiedBy: validVerifiedBy,
       })
       .returning();
 
