@@ -42,14 +42,33 @@ queryClient`
   DO $$
   BEGIN
     IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'role') THEN
-      ALTER TYPE role ADD VALUE IF NOT EXISTS 'sub_admin';
-      ALTER TYPE role ADD VALUE IF NOT EXISTS 'cooperative';
-      ALTER TYPE role ADD VALUE IF NOT EXISTS 'state_coordinator';
-      ALTER TYPE role ADD VALUE IF NOT EXISTS 'zonal_coordinator';
-      ALTER TYPE role ADD VALUE IF NOT EXISTS 'lga_coordinator';
+      BEGIN
+        ALTER TYPE role ADD VALUE IF NOT EXISTS 'sub_admin';
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END;
+      BEGIN
+        ALTER TYPE role ADD VALUE IF NOT EXISTS 'cooperative';
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END;
+      BEGIN
+        ALTER TYPE role ADD VALUE IF NOT EXISTS 'state_coordinator';
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END;
+      BEGIN
+        ALTER TYPE role ADD VALUE IF NOT EXISTS 'zonal_coordinator';
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END;
+      BEGIN
+        ALTER TYPE role ADD VALUE IF NOT EXISTS 'lga_coordinator';
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END;
     END IF;
+
+    BEGIN
+      ALTER TABLE users ALTER COLUMN role TYPE varchar(50) USING role::text;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
   END $$;
-  ALTER TABLE users ALTER COLUMN role TYPE varchar(50);
 `.catch((err) =>
   console.error("[user-service] Role migration warning:", err)
 );
