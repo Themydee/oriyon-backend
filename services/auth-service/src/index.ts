@@ -17,6 +17,9 @@ const PORT = process.env.PORT || 3001;
 // ─────────────────────────────────────────────
 // DATABASE
 // ─────────────────────────────────────────────
+const queryClient = postgres(process.env.DATABASE_URL!);
+export const db = drizzle(queryClient);
+
 queryClient`
   DO $$
   BEGIN
@@ -48,7 +51,7 @@ queryClient`
     EXCEPTION WHEN OTHERS THEN NULL;
     END;
   END $$;
-`.catch((err) =>
+`.catch((err: any) =>
   console.error("[auth-service] Role migration warning:", err)
 );
 
