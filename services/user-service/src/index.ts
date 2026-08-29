@@ -38,6 +38,21 @@ queryClient`
 `.catch((err) =>
   console.error("[user-service] group_trainers table migration warning:", err)
 );
+queryClient`
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'role') THEN
+      ALTER TYPE role ADD VALUE IF NOT EXISTS 'sub_admin';
+      ALTER TYPE role ADD VALUE IF NOT EXISTS 'cooperative';
+      ALTER TYPE role ADD VALUE IF NOT EXISTS 'state_coordinator';
+      ALTER TYPE role ADD VALUE IF NOT EXISTS 'zonal_coordinator';
+      ALTER TYPE role ADD VALUE IF NOT EXISTS 'lga_coordinator';
+    END IF;
+  END $$;
+  ALTER TABLE users ALTER COLUMN role TYPE varchar(50);
+`.catch((err) =>
+  console.error("[user-service] Role migration warning:", err)
+);
 
 // ─────────────────────────────────────────────
 // MIDDLEWARE

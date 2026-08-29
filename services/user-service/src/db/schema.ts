@@ -17,7 +17,7 @@ export const users = pgTable("users", {
   lastName:  varchar("last_name", { length: 100 }).notNull(),
   phone:     varchar("phone", { length: 20 }),
   address:   text("address"),
-  role:      roleEnum("role").notNull().default("trainee"),
+  role:      varchar("role", { length: 50 }).notNull().default("trainee"),
   assignedState: varchar("assigned_state", { length: 100 }),
   assignedLga: varchar("assigned_lga", { length: 100 }),
   assignedZone: varchar("assigned_zone", { length: 150 }),
