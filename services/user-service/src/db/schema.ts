@@ -25,6 +25,7 @@ export const users = pgTable("users", {
   isActive:  boolean("is_active").notNull().default(true),
   blacklistReason: text("blacklist_reason"),
   approvedRole: varchar("approved_role", { length: 255 }),
+  specialization: text("specialization"),
 
   
   idType:       varchar("id_type", { length: 60 }),       

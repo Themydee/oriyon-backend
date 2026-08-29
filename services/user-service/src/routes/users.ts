@@ -49,6 +49,7 @@ function normalizeUserRow(user: any) {
     is_active: isActive,
     blacklistReason: user.blacklistReason || user.blacklist_reason || null,
     approvedRole: user.approvedRole || user.approved_role || null,
+    specialization: user.specialization || null,
     idType,
     id_type: idType,
     idDocument,
@@ -347,6 +348,7 @@ const createUserSchema = z.object({
   assignedZone: z.string().optional().nullable(),
   physicalSiteId: z.string().optional().nullable(),
   isCooperativeOnly: z.boolean().optional().default(false),
+  specialization: z.string().optional().nullable(),
   passportPicture: z.string().optional().nullable(),
   passportUrl: z.string().optional().nullable(),
   avatarUrl: z.string().optional().nullable(),
@@ -526,6 +528,7 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
     assignedZone: z.string().optional().nullable(),
     approvedRole: z.string().optional().nullable(),
     physicalSiteId: z.string().optional().nullable(),
+    specialization: z.string().optional().nullable(),
   });
 
   const parsed = allowedFields.safeParse(req.body);

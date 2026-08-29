@@ -21,6 +21,11 @@ const PORT = process.env.PORT || 3002;
 const queryClient = postgres(process.env.DATABASE_URL!);
 export const db = drizzle(queryClient);
 
+// Auto-migrate schema updates
+queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS specialization text;`.catch((err) =>
+  console.error("[user-service] Migration warning:", err)
+);
+
 // ─────────────────────────────────────────────
 // MIDDLEWARE
 // ─────────────────────────────────────────────
