@@ -23,7 +23,20 @@ export const db = drizzle(queryClient);
 
 // Auto-migrate schema updates
 queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS specialization text;`.catch((err) =>
-  console.error("[user-service] Migration warning:", err)
+  console.error("[user-service] Specialization migration warning:", err)
+);
+queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS address text;`.catch((err) =>
+  console.error("[user-service] Address migration warning:", err)
+);
+queryClient`
+  CREATE TABLE IF NOT EXISTS group_trainers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    trainer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    assigned_at TIMESTAMP DEFAULT NOW() NOT NULL
+  );
+`.catch((err) =>
+  console.error("[user-service] group_trainers table migration warning:", err)
 );
 
 // ─────────────────────────────────────────────

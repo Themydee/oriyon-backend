@@ -3,7 +3,7 @@ import { eq, and, isNull, sql, ilike, or, inArray, desc } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
 import { db } from "../index";
-import { users, cohorts, cohortMembers, groups, groupMembers } from "../db/schema";
+import { users, cohorts, cohortMembers, groups, groupMembers, groupTrainers } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 
 export const userRouter = Router();
@@ -342,6 +342,7 @@ const createUserSchema = z.object({
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
   phone: z.string().optional().nullable(),
+  address: z.string().optional().nullable(),
   role: z.enum(["trainee", "trainer", "coordinator", "lead_trainer", "admin", "sub_admin"]).optional().default("trainee"),
   assignedState: z.string().optional().nullable(),
   assignedLga: z.string().optional().nullable(),
@@ -361,21 +362,30 @@ userRouter.post("/", async (req: Request, res: Response) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
+    const cleanEmail = parsed.data.email.toLowerCase().trim();
     const [existing] = await db
       .select()
       .from(users)
-      .where(eq(users.email, parsed.data.email))
+      .where(eq(users.email, cleanEmail))
       .limit(1);
-    if (existing) return res.status(409).json({ error: "User already exists" });
+    if (existing) return res.status(409).json({ error: "User already exists with this email address" });
 
     const userId = parsed.data.id || crypto.randomUUID();
     const insertData = {
-      ...parsed.data,
       id: userId,
+      email: cleanEmail,
+      firstName: parsed.data.firstName.trim(),
+      lastName: parsed.data.lastName.trim(),
       phone: parsed.data.phone || null,
+      address: parsed.data.address || null,
+      role: (parsed.data.role as any) || "trainee",
       assignedState: parsed.data.assignedState || null,
       assignedLga: parsed.data.assignedLga || null,
       assignedZone: parsed.data.assignedZone || null,
+      physicalSiteId: parsed.data.physicalSiteId || null,
+      isCooperativeOnly: parsed.data.isCooperativeOnly || false,
+      specialization: parsed.data.specialization || null,
+      passportPicture: parsed.data.passportPicture || parsed.data.passportUrl || parsed.data.avatarUrl || parsed.data.photo || null,
       isActive: false,
     };
 
@@ -390,12 +400,12 @@ userRouter.post("/", async (req: Request, res: Response) => {
       assignedState: newUser.assignedState,
       assignedLga: newUser.assignedLga,
       assignedZone: newUser.assignedZone,
-    });
+    }).catch((e) => console.warn("[user-service] Failed to publish user.created event:", e));
 
     return res.status(201).json(newUser);
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to create user" });
+  } catch (err: any) {
+    console.error("[user-service] POST /users error:", err);
+    return res.status(500).json({ error: err.message || "Failed to create user" });
   }
 });
 
@@ -876,12 +886,28 @@ cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
           .innerJoin(users, eq(users.id, groupMembers.userId))
           .where(eq(groupMembers.groupId, group.id));
 
-        return { ...group, memberCount: members.length, members };
+        const trainers = await db
+          .select({
+            id: users.id,
+            firstName: users.firstName,
+            lastName: users.lastName,
+            email: users.email,
+            phone: users.phone,
+            specialization: users.specialization,
+            passportPicture: users.passportPicture,
+            assignedAt: groupTrainers.assignedAt,
+          })
+          .from(groupTrainers)
+          .innerJoin(users, eq(users.id, groupTrainers.trainerId))
+          .where(eq(groupTrainers.groupId, group.id));
+
+        return { ...group, memberCount: members.length, members, trainers };
       })
     );
 
     return res.json(groupsWithMembers);
-  } catch {
+  } catch (err) {
+    console.error("GET /cohorts/:id/groups error:", err);
     return res.status(500).json({ error: "Failed to fetch groups" });
   }
 });
@@ -949,5 +975,136 @@ cohortRouter.delete("/:cohortId/groups/:groupId/members/:userId", async (req: Re
     return res.json({ message: "Member removed from group" });
   } catch {
     return res.status(500).json({ error: "Failed to remove member from group" });
+  }
+});
+
+// POST /cohorts/:cohortId/groups/:groupId/trainers
+cohortRouter.post("/:cohortId/groups/:groupId/trainers", async (req: Request, res: Response) => {
+  const schema = z.object({ trainerId: z.string().uuid() });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const { cohortId, groupId } = req.params;
+  const { trainerId } = parsed.data;
+
+  try {
+    const [trainerUser] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, trainerId))
+      .limit(1);
+
+    if (!trainerUser || (trainerUser.role !== "trainer" && trainerUser.role !== "lead_trainer")) {
+      return res.status(400).json({ error: "User must be a Trainer or Lead Trainer" });
+    }
+
+    const [group] = await db
+      .select()
+      .from(groups)
+      .where(eq(groups.id, groupId))
+      .limit(1);
+
+    if (!group || group.cohortId !== cohortId) {
+      return res.status(400).json({ error: "Group does not belong to this cohort" });
+    }
+
+    const [alreadyAssigned] = await db
+      .select()
+      .from(groupTrainers)
+      .where(and(eq(groupTrainers.groupId, groupId), eq(groupTrainers.trainerId, trainerId)))
+      .limit(1);
+
+    if (alreadyAssigned) {
+      return res.status(409).json({ error: "Trainer is already assigned to this practical group" });
+    }
+
+    const [assignment] = await db
+      .insert(groupTrainers)
+      .values({ groupId, trainerId })
+      .returning();
+
+    // Fetch cohort details for notification
+    const [cohort] = await db.select().from(cohorts).where(eq(cohorts.id, cohortId)).limit(1);
+
+    await publishEvent("application.custom_email_requested", {
+      email: trainerUser.email,
+      firstName: trainerUser.firstName,
+      lastName: trainerUser.lastName,
+      subject: `📅 Practical Teaching Assignment: ${group.name} (${group.practicalDay || "Practical Day"})`,
+      body: `Dear Trainer ${trainerUser.firstName},\n\nYou have been selected by Oriyon Administration to teach ${cohort?.name || "EEWYLA Cohort"} - ${group.name} on ${group.practicalDay || "Practical Day"}.\n\nPlease log into your Trainer Portal to review your teaching schedule and practical details.\n\nBest regards,\nOriyon International Ecosystem Management`,
+    }).catch((e) => console.warn("Failed to publish trainer assignment email event", e));
+
+    return res.status(201).json(assignment);
+  } catch (err) {
+    console.error("POST /groups/:groupId/trainers error:", err);
+    return res.status(500).json({ error: "Failed to assign trainer to group" });
+  }
+});
+
+// DELETE /cohorts/:cohortId/groups/:groupId/trainers/:trainerId
+cohortRouter.delete("/:cohortId/groups/:groupId/trainers/:trainerId", async (req: Request, res: Response) => {
+  const { groupId, trainerId } = req.params;
+  if (!groupId || !trainerId) {
+    return res.status(400).json({ error: "Missing required parameters" });
+  }
+  try {
+    await db
+      .delete(groupTrainers)
+      .where(and(eq(groupTrainers.groupId, groupId), eq(groupTrainers.trainerId, trainerId)));
+    return res.json({ message: "Trainer removed from group" });
+  } catch {
+    return res.status(500).json({ error: "Failed to remove trainer from group" });
+  }
+});
+
+// GET /users/trainers/my-schedules
+userRouter.get("/trainers/my-schedules", async (req: Request, res: Response) => {
+  try {
+    const rawHeaderUserId = req.headers["x-user-id"] as string | undefined;
+    const rawHeaderEmail = req.headers["x-user-email"] as string | undefined;
+
+    let trainerId = rawHeaderUserId || null;
+
+    if (!trainerId && rawHeaderEmail) {
+      const [userMatch] = await db.select().from(users).where(eq(users.email, rawHeaderEmail)).limit(1);
+      if (userMatch) trainerId = userMatch.id;
+    }
+
+    if (!trainerId) {
+      return res.status(400).json({ error: "Missing trainer user session" });
+    }
+
+    const assignments = await db
+      .select({
+        groupId: groups.id,
+        groupName: groups.name,
+        practicalDay: groups.practicalDay,
+        cohortId: groups.cohortId,
+        cohortName: cohorts.name,
+        cohortState: cohorts.state,
+        assignedAt: groupTrainers.assignedAt,
+      })
+      .from(groupTrainers)
+      .innerJoin(groups, eq(groups.id, groupTrainers.groupId))
+      .leftJoin(cohorts, eq(cohorts.id, groups.cohortId))
+      .where(eq(groupTrainers.trainerId, trainerId));
+
+    const schedulesWithCounts = await Promise.all(
+      assignments.map(async (item) => {
+        const members = await db
+          .select({ id: groupMembers.id })
+          .from(groupMembers)
+          .where(eq(groupMembers.groupId, item.groupId));
+        return {
+          ...item,
+          studentCount: members.length,
+        };
+      })
+    );
+
+    return res.json(schedulesWithCounts);
+  } catch (err) {
+    console.error("GET /trainers/my-schedules error:", err);
+    return res.status(500).json({ error: "Failed to fetch trainer schedules" });
   }
 });

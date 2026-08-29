@@ -331,7 +331,7 @@ app.delete(
 app.post(
   "/api/cooperative/announcements/broadcast",
   authenticate,
-  requireRole("admin", "sub_admin", "coordinator"),
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer", "coordinator"),
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -861,6 +861,36 @@ app.delete(
 app.get(
   "/api/groups/:id/members",
   authenticate,
+  keepPath,
+  createProxyMiddleware({
+    target: USER_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.post(
+  "/api/cohorts/:cohortId/groups/:groupId/trainers",
+  authenticate,
+  requireRole("admin", "sub_admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: USER_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.delete(
+  "/api/cohorts/:cohortId/groups/:groupId/trainers/:trainerId",
+  authenticate,
+  requireRole("admin", "sub_admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: USER_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.get(
+  ["/api/trainers/my-schedules", "/api/users/trainers/my-schedules"],
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
   keepPath,
   createProxyMiddleware({
     target: USER_SERVICE_URL,

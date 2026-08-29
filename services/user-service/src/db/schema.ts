@@ -8,7 +8,7 @@ import {
   pgEnum,
 } from "drizzle-orm/pg-core";
 
-export const roleEnum = pgEnum("role", ["trainee", "trainer", "coordinator", "lead_trainer", "admin", "sub_admin"]);
+export const roleEnum = pgEnum("role", ["trainee", "trainer", "coordinator", "lead_trainer", "admin", "sub_admin", "cooperative"]);
 
 export const users = pgTable("users", {
   id:        uuid("id").primaryKey(), 
@@ -16,6 +16,7 @@ export const users = pgTable("users", {
   firstName: varchar("first_name", { length: 100 }).notNull(),
   lastName:  varchar("last_name", { length: 100 }).notNull(),
   phone:     varchar("phone", { length: 20 }),
+  address:   text("address"),
   role:      roleEnum("role").notNull().default("trainee"),
   assignedState: varchar("assigned_state", { length: 100 }),
   assignedLga: varchar("assigned_lga", { length: 100 }),
@@ -93,4 +94,18 @@ export const groupMembers = pgTable("group_members", {
     .references(() => users.id, { onDelete: "cascade" }),
 
   joinedAt: timestamp("joined_at").notNull().defaultNow(),
+});
+
+export const groupTrainers = pgTable("group_trainers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+
+  groupId: uuid("group_id")
+    .notNull()
+    .references(() => groups.id, { onDelete: "cascade" }),
+
+  trainerId: uuid("trainer_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+
+  assignedAt: timestamp("assigned_at").notNull().defaultNow(),
 });
