@@ -407,4 +407,31 @@ export const templates = {
       ${signature()}
     `, "We've received your message and will respond within 2 business days."),
   }),
+
+  // ── Cohort & Group Notifications ─────────────────────────────────
+
+  cohortGroupNotification: (
+    firstName: string,
+    cohortName: string,
+    groupName: string,
+    location: string = "LAUTECH Ogbomoso",
+    timeRange: string = "9:00 AM – 5:00 PM",
+    practicalDay?: string
+  ) => ({
+    subject: `Physical Training Schedule & Group Allocation — ${cohortName || "Cohort 1"}`,
+    html: base(`
+      ${heading(`Hi ${firstName},`)}
+      ${para(`We are pleased to inform you of your official group assignment, physical training location, and daily schedule for <strong>${cohortName || "Cohort 1"}</strong> of the EEWYLA Training Programme.`)}
+      ${infoBox([
+        { label: "Programme / Cohort", value: cohortName || "Cohort 1" },
+        { label: "Assigned Group", value: practicalDay ? `${groupName} (${practicalDay}s)` : groupName },
+        { label: "Training Location", value: location },
+        { label: "Physical Training Time", value: timeRange },
+      ])}
+      ${notice(`<strong>Important Notice:</strong> Physical practical sessions run strictly from <strong>${timeRange}</strong> at <strong>${location}</strong>. Please arrive promptly and bring appropriate training attire.`)}
+      ${para("You can view your detailed timetable and track your attendance on your LMS portal.")}
+      ${ctaButton("Access LMS Dashboard", `${BASE_URL}/learn/lms/dashboard`)}
+      ${signature()}
+    `, `Your group allocation: ${groupName} | Location: ${location} | Time: ${timeRange}`),
+  }),
 };

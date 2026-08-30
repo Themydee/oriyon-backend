@@ -8,7 +8,8 @@
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "migrate": "ts-node src/db/migrate.ts"
+    "migrate": "ts-node src/db/migrate.ts",
+    "notify:cohort1": "ts-node src/scripts/notify-cohort1-groups.ts"
   },
   "dependencies": {
     "express": "^4.19.2",

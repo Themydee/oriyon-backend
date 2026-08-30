@@ -1057,6 +1057,120 @@ cohortRouter.delete("/:cohortId/groups/:groupId/trainers/:trainerId", async (req
   }
 });
 
+cohortRouter.post("/:id/notify-group-assignment", async (req: Request, res: Response) => {
+  const schema = z.object({
+    location: z.string().optional().default("LAUTECH Ogbomoso"),
+    timeRange: z.string().optional().default("9:00 AM - 5:00 PM"),
+    dryRun: z.boolean().optional().default(false),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const cohortId = req.params.id;
+  const { location, timeRange, dryRun } = parsed.data;
+
+  try {
+    const [cohort] = await db
+      .select()
+      .from(cohorts)
+      .where(eq(cohorts.id, cohortId))
+      .limit(1);
+
+    if (!cohort) {
+      return res.status(404).json({ error: "Cohort not found" });
+    }
+
+    // Fetch all members enrolled in this cohort
+    const enrolledUsers = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        role: users.role,
+      })
+      .from(cohortMembers)
+      .innerJoin(users, eq(users.id, cohortMembers.userId))
+      .where(eq(cohortMembers.cohortId, cohortId));
+
+    // Fetch groups in cohort
+    const cohortGroups = await db
+      .select()
+      .from(groups)
+      .where(eq(groups.cohortId, cohortId));
+
+    const groupMap = new Map<string, { name: string; practicalDay?: string | null }>(
+      cohortGroups.map((g) => [g.id, { name: g.name, practicalDay: g.practicalDay }])
+    );
+
+    // Fetch group memberships
+    const allGroupMembers = await db
+      .select({
+        userId: groupMembers.userId,
+        groupId: groupMembers.groupId,
+      })
+      .from(groupMembers);
+
+    const userGroupMap = new Map<string, { name: string; practicalDay?: string | null }>();
+    for (const gm of allGroupMembers) {
+      if (groupMap.has(gm.groupId)) {
+        userGroupMap.set(gm.userId, groupMap.get(gm.groupId)!);
+      }
+    }
+
+    const recipients = enrolledUsers.map((u) => {
+      const assignedGroup = userGroupMap.get(u.id);
+      return {
+        id: u.id,
+        email: u.email,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        cohortName: cohort.name,
+        groupName: assignedGroup?.name || "Group Unassigned",
+        practicalDay: assignedGroup?.practicalDay || undefined,
+        location,
+        timeRange,
+      };
+    });
+
+    if (!dryRun) {
+      for (const recipient of recipients) {
+        await publishEvent("cohort.group_notification_requested", {
+          email: recipient.email,
+          firstName: recipient.firstName,
+          lastName: recipient.lastName,
+          cohortName: recipient.cohortName,
+          groupName: recipient.groupName,
+          practicalDay: recipient.practicalDay,
+          location: recipient.location,
+          timeRange: recipient.timeRange,
+        });
+      }
+    }
+
+    return res.json({
+      message: dryRun
+        ? `Dry run: Ready to notify ${recipients.length} trainees in ${cohort.name}`
+        : `Dispatched group & physical training notifications to ${recipients.length} trainees in ${cohort.name}`,
+      count: recipients.length,
+      cohortName: cohort.name,
+      location,
+      timeRange,
+      dryRun,
+      recipients: recipients.map((r) => ({
+        email: r.email,
+        name: `${r.firstName} ${r.lastName}`,
+        group: r.groupName,
+        practicalDay: r.practicalDay || "N/A",
+      })),
+    });
+  } catch (err) {
+    console.error("POST /cohorts/:id/notify-group-assignment error:", err);
+    return res.status(500).json({ error: "Failed to dispatch group notifications" });
+  }
+});
+
 // GET /users/trainers/my-schedules
 userRouter.get("/trainers/my-schedules", async (req: Request, res: Response) => {
   try {

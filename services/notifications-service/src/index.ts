@@ -198,6 +198,28 @@ async function setupConsumers() {
       await sendEmail({ to: email, ...tpl });
     },
   );
+
+  // Cohort group & physical training notification
+  await consumeEvent(
+    "cohort.group_notification_requested",
+    "notifications.cohort.group_notification",
+    async (payload) => {
+      const { email, firstName, cohortName, groupName, location, timeRange, practicalDay } = payload as any;
+      if (!email || !firstName) {
+        console.warn("[notifications] cohort.group_notification_requested missing email/firstName — skipping");
+        return;
+      }
+      const tpl = templates.cohortGroupNotification(
+        firstName,
+        cohortName || "Cohort 1",
+        groupName || "Group Unassigned",
+        location || "LAUTECH Ogbomoso",
+        timeRange || "9:00 AM – 5:00 PM",
+        practicalDay
+      );
+      await sendEmail({ to: email, ...tpl });
+    },
+  );
 }
 
 async function bootstrap() {
