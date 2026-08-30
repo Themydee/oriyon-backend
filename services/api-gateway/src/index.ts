@@ -799,6 +799,13 @@ app.post(
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
 app.post(
+  "/api/cohorts/:id/notify-group-assignment",
+  authenticate,
+  requireRole("admin", "sub_admin"),
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+app.post(
   "/api/cohorts/:id/groups",
   authenticate,
   keepPath,
