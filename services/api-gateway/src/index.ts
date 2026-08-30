@@ -1018,8 +1018,21 @@ app.get(
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
+app.delete(
+  "/api/lms/quizzes/admin/attempts",
+  authenticate,
+  requireRole("admin", "sub_admin"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
 app.get(
   "/api/lms/quizzes/week/:weekId",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
+  "/api/lms/quizzes/user/:userId/passed",
   authenticate,
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),

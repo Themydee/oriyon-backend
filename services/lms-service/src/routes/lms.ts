@@ -756,6 +756,32 @@ quizzesRouter.get("/:id/attempts/:userId", async (req: Request, res: Response) =
   }
 });
 
+// GET /lms/quizzes/user/:userId/passed — get all passed quiz and week IDs for a user
+quizzesRouter.get("/user/:userId/passed", async (req: Request, res: Response) => {
+  try {
+    const passedAttempts = await db
+      .select({
+        quizId: quizAttempts.quizId,
+        weekId: quizAttempts.weekId,
+      })
+      .from(quizAttempts)
+      .where(
+        and(
+          eq(quizAttempts.userId, req.params.userId),
+          eq(quizAttempts.passed, true)
+        )
+      );
+
+    const passedWeekIds = Array.from(new Set(passedAttempts.map((a) => a.weekId)));
+    const passedQuizIds = Array.from(new Set(passedAttempts.map((a) => a.quizId)));
+
+    return res.json({ passedWeekIds, passedQuizIds });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to fetch user passed quizzes" });
+  }
+});
+
 // ADMIN — list all quiz attempts with quiz title
 // GET /lms/quizzes/admin/attempts
 quizzesRouter.get("/admin/attempts", async (req: Request, res: Response) => {
@@ -780,6 +806,18 @@ quizzesRouter.get("/admin/attempts", async (req: Request, res: Response) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Failed to fetch admin quiz attempts" });
+  }
+});
+
+// ADMIN — clear all quiz attempts
+// DELETE /lms/quizzes/admin/attempts
+quizzesRouter.delete("/admin/attempts", async (req: Request, res: Response) => {
+  try {
+    await db.delete(quizAttempts);
+    return res.json({ message: "All quiz attempts cleared successfully" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to clear quiz attempts" });
   }
 });
 
