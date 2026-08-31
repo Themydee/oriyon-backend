@@ -1334,6 +1334,8 @@ router.patch("/:id", async (req: Request, res: Response) => {
 // GET /cooperative/announcements/broadcast (Fetch all broadcast announcements)
 router.get("/announcements/broadcast", async (req: Request, res: Response) => {
   try {
+    await db.execute(sql`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_audience varchar(50) DEFAULT 'all';`).catch(() => {});
+
     const list = await db
       .select({
         id: announcements.id,
@@ -1363,8 +1365,40 @@ router.get("/announcements/broadcast", async (req: Request, res: Response) => {
 
     return res.status(200).json(unique);
   } catch (err: any) {
-    console.error("[cooperative] fetch broadcasts error:", err);
-    return res.status(500).json({ error: err?.message || "Failed to fetch broadcast announcements" });
+    console.warn("[cooperative] Primary fetch broadcast failed, attempting fallback query:", err?.message);
+    try {
+      const fallbackList = await db
+        .select({
+          id: announcements.id,
+          cooperativeId: announcements.cooperativeId,
+          title: announcements.title,
+          content: announcements.content,
+          level: announcements.level,
+          imageUrl: announcements.imageUrl,
+          isPinned: announcements.isPinned,
+          postedBy: announcements.postedBy,
+          createdAt: announcements.createdAt,
+        })
+        .from(announcements)
+        .orderBy(desc(announcements.createdAt))
+        .limit(500);
+
+      const mapped = fallbackList.map((a) => ({ ...a, targetAudience: "all" }));
+      const seen = new Set();
+      const unique = mapped.filter((a) => {
+        const titleStr = (a.title || "").trim().toLowerCase();
+        const contentStr = (a.content || "").trim().toLowerCase();
+        const key = a.id ? a.id : `${titleStr}_${contentStr}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      return res.status(200).json(unique);
+    } catch (fallbackErr: any) {
+      console.error("[cooperative] fetch broadcasts fallback error:", fallbackErr);
+      return res.status(500).json({ error: fallbackErr?.message || "Failed to fetch broadcast announcements" });
+    }
   }
 });
 
@@ -1394,6 +1428,8 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
   const { title, content, level, targetAudience, imageUrl, isPinned, postedBy, targetCooperativeId } = parsed.data;
 
   try {
+    await db.execute(sql`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_audience varchar(50) DEFAULT 'all';`).catch(() => {});
+
     const allCoops = await db
       .select({
         id: cooperatives.id,
@@ -1454,25 +1490,47 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "No active cooperative available to attach announcement to" });
     }
 
-    const [ann] = await db
-      .insert(announcements)
-      .values({
-        cooperativeId: primaryCoopId,
-        title,
-        content,
-        level,
-        targetAudience: targetAudience || "all",
-        imageUrl: imageUrl || null,
-        isPinned: isPinned || false,
-        postedBy,
-      })
-      .returning();
+    try {
+      const [ann] = await db
+        .insert(announcements)
+        .values({
+          cooperativeId: primaryCoopId,
+          title,
+          content,
+          level,
+          targetAudience: targetAudience || "all",
+          imageUrl: imageUrl || null,
+          isPinned: isPinned || false,
+          postedBy,
+        })
+        .returning();
 
-    return res.status(201).json({
-      message: "Announcement successfully published",
-      count: 1,
-      announcements: [ann],
-    });
+      return res.status(201).json({
+        message: "Announcement successfully published",
+        count: 1,
+        announcements: [ann],
+      });
+    } catch (insertErr) {
+      console.warn("[cooperative] Insert with targetAudience failed, falling back to legacy schema insert:", insertErr);
+      const [ann] = await db
+        .insert(announcements)
+        .values({
+          cooperativeId: primaryCoopId,
+          title,
+          content,
+          level,
+          imageUrl: imageUrl || null,
+          isPinned: isPinned || false,
+          postedBy,
+        })
+        .returning();
+
+      return res.status(201).json({
+        message: "Announcement successfully published",
+        count: 1,
+        announcements: [{ ...ann, targetAudience: targetAudience || "all" }],
+      });
+    }
   } catch (err) {
     console.error("[cooperative] broadcast error:", err);
     return res.status(500).json({ error: "Failed to broadcast announcement" });
