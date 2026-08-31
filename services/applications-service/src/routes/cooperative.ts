@@ -1393,7 +1393,8 @@ router.get("/announcements/broadcast", async (req: Request, res: Response) => {
         LIMIT 500
       `);
 
-      const rows = (rawRes.rows || rawRes || []) as any[];
+      const rawData: any = rawRes;
+      const rows = (rawData?.rows || rawData || []) as any[];
       const mapped = rows.map((a: any) => ({
         id: a.id,
         cooperativeId: a.cooperativeId,
@@ -1541,7 +1542,8 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
         RETURNING id, cooperative_id as "cooperativeId", title, content, level, posted_by as "postedBy", created_at as "createdAt"
       `);
 
-      const [ann] = (rawRes.rows || rawRes || []) as any[];
+      const rawData: any = rawRes;
+      const [ann] = (rawData?.rows || rawData || []) as any[];
       return res.status(201).json({
         message: "Announcement successfully published",
         count: 1,
