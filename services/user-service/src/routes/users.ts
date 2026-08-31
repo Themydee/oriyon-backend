@@ -868,7 +868,11 @@ cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
       .select()
       .from(groups)
       .where(eq(groups.cohortId, req.params.id))
-      .orderBy(groups.createdAt);
+      .orderBy(groups.createdAt)
+      .catch((e) => {
+        console.error("[GET /cohorts/:id/groups] Error fetching groups:", e);
+        return [];
+      });
 
     const groupsWithMembers = await Promise.all(
       allGroups.map(async (group) => {
@@ -884,7 +888,11 @@ cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
           })
           .from(groupMembers)
           .innerJoin(users, eq(users.id, groupMembers.userId))
-          .where(eq(groupMembers.groupId, group.id));
+          .where(eq(groupMembers.groupId, group.id))
+          .catch((e) => {
+            console.error("[GET /cohorts/:id/groups] Error fetching members:", e);
+            return [];
+          });
 
         const trainers = await db
           .select({
@@ -901,16 +909,20 @@ cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
           })
           .from(groupTrainers)
           .innerJoin(users, eq(users.id, groupTrainers.trainerId))
-          .where(eq(groupTrainers.groupId, group.id));
+          .where(eq(groupTrainers.groupId, group.id))
+          .catch((e) => {
+            console.error("[GET /cohorts/:id/groups] Error fetching trainers:", e);
+            return [];
+          });
 
         return { ...group, memberCount: members.length, members, trainers };
       })
     );
 
     return res.json(groupsWithMembers);
-  } catch (err) {
+  } catch (err: any) {
     console.error("GET /cohorts/:id/groups error:", err);
-    return res.status(500).json({ error: "Failed to fetch groups" });
+    return res.status(500).json({ error: err?.message || "Failed to fetch groups" });
   }
 });
 

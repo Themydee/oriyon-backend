@@ -1337,11 +1337,11 @@ router.get("/:id/announcements", async (req: Request, res: Response) => {
       .select()
       .from(announcements)
       .where(eq(announcements.cooperativeId, id))
-      .orderBy(sql`${announcements.createdAt} DESC`);
+      .orderBy(desc(announcements.createdAt));
     return res.json(list);
-  } catch (err) {
+  } catch (err: any) {
     console.error("[cooperative] fetch announcements error:", err);
-    return res.status(500).json({ error: "Failed to fetch announcements" });
+    return res.status(500).json({ error: err?.message || "Failed to fetch announcements" });
   }
 });
 
