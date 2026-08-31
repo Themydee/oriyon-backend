@@ -1331,11 +1331,23 @@ router.patch("/:id", async (req: Request, res: Response) => {
 // ANNOUNCEMENTS & BROADCAST ROUTES (Static routes must be above dynamic :id routes)
 // ─────────────────────────────────────────────
 
+async function ensureAnnouncementsColumnsExist() {
+  try {
+    await db.execute(sql`
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_audience varchar(50) DEFAULT 'all';
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS image_url text;
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS is_pinned boolean DEFAULT false;
+    `);
+  } catch (err) {
+    console.warn("[cooperative] Auto-migration column check warning:", err);
+  }
+}
+
 // GET /cooperative/announcements/broadcast (Fetch all broadcast announcements)
 router.get("/announcements/broadcast", async (req: Request, res: Response) => {
-  try {
-    await db.execute(sql`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_audience varchar(50) DEFAULT 'all';`).catch(() => {});
+  await ensureAnnouncementsColumnsExist();
 
+  try {
     const list = await db
       .select({
         id: announcements.id,
@@ -1365,25 +1377,36 @@ router.get("/announcements/broadcast", async (req: Request, res: Response) => {
 
     return res.status(200).json(unique);
   } catch (err: any) {
-    console.warn("[cooperative] Primary fetch broadcast failed, attempting fallback query:", err?.message);
+    console.warn("[cooperative] Primary fetch broadcast failed, attempting raw core column query:", err?.message);
     try {
-      const fallbackList = await db
-        .select({
-          id: announcements.id,
-          cooperativeId: announcements.cooperativeId,
-          title: announcements.title,
-          content: announcements.content,
-          level: announcements.level,
-          imageUrl: announcements.imageUrl,
-          isPinned: announcements.isPinned,
-          postedBy: announcements.postedBy,
-          createdAt: announcements.createdAt,
-        })
-        .from(announcements)
-        .orderBy(desc(announcements.createdAt))
-        .limit(500);
+      const rawRes = await db.execute(sql`
+        SELECT 
+          id, 
+          cooperative_id as "cooperativeId", 
+          title, 
+          content, 
+          level, 
+          posted_by as "postedBy", 
+          created_at as "createdAt"
+        FROM announcements 
+        ORDER BY created_at DESC 
+        LIMIT 500
+      `);
 
-      const mapped = fallbackList.map((a) => ({ ...a, targetAudience: "all" }));
+      const rows = (rawRes.rows || rawRes || []) as any[];
+      const mapped = rows.map((a: any) => ({
+        id: a.id,
+        cooperativeId: a.cooperativeId,
+        title: a.title,
+        content: a.content,
+        level: a.level || "global",
+        targetAudience: a.targetAudience || "all",
+        imageUrl: a.imageUrl || a.image_url || null,
+        isPinned: Boolean(a.isPinned || a.is_pinned || false),
+        postedBy: a.postedBy || a.posted_by || "Admin",
+        createdAt: a.createdAt || a.created_at,
+      }));
+
       const seen = new Set();
       const unique = mapped.filter((a) => {
         const titleStr = (a.title || "").trim().toLowerCase();
@@ -1396,7 +1419,7 @@ router.get("/announcements/broadcast", async (req: Request, res: Response) => {
 
       return res.status(200).json(unique);
     } catch (fallbackErr: any) {
-      console.error("[cooperative] fetch broadcasts fallback error:", fallbackErr);
+      console.error("[cooperative] fetch broadcasts raw fallback error:", fallbackErr);
       return res.status(500).json({ error: fallbackErr?.message || "Failed to fetch broadcast announcements" });
     }
   }
@@ -1404,6 +1427,8 @@ router.get("/announcements/broadcast", async (req: Request, res: Response) => {
 
 // POST /cooperative/announcements/broadcast
 router.post("/announcements/broadcast", async (req: Request, res: Response) => {
+  await ensureAnnouncementsColumnsExist();
+
   const role = req.headers["x-user-role"] as string;
   const assignedLga = req.headers["x-user-assigned-lga"] as string;
   const assignedState = req.headers["x-user-assigned-state"] as string;
@@ -1428,8 +1453,6 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
   const { title, content, level, targetAudience, imageUrl, isPinned, postedBy, targetCooperativeId } = parsed.data;
 
   try {
-    await db.execute(sql`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_audience varchar(50) DEFAULT 'all';`).catch(() => {});
-
     const allCoops = await db
       .select({
         id: cooperatives.id,
@@ -1511,24 +1534,23 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
         announcements: [ann],
       });
     } catch (insertErr) {
-      console.warn("[cooperative] Insert with targetAudience failed, falling back to legacy schema insert:", insertErr);
-      const [ann] = await db
-        .insert(announcements)
-        .values({
-          cooperativeId: primaryCoopId,
-          title,
-          content,
-          level,
-          imageUrl: imageUrl || null,
-          isPinned: isPinned || false,
-          postedBy,
-        })
-        .returning();
+      console.warn("[cooperative] Primary insert failed, falling back to core column raw SQL insert:", insertErr);
+      const rawRes = await db.execute(sql`
+        INSERT INTO announcements (cooperative_id, title, content, level, posted_by)
+        VALUES (${primaryCoopId}, ${title}, ${content}, ${level}, ${postedBy})
+        RETURNING id, cooperative_id as "cooperativeId", title, content, level, posted_by as "postedBy", created_at as "createdAt"
+      `);
 
+      const [ann] = (rawRes.rows || rawRes || []) as any[];
       return res.status(201).json({
         message: "Announcement successfully published",
         count: 1,
-        announcements: [{ ...ann, targetAudience: targetAudience || "all" }],
+        announcements: [{
+          ...ann,
+          targetAudience: targetAudience || "all",
+          imageUrl: imageUrl || null,
+          isPinned: isPinned || false,
+        }],
       });
     }
   } catch (err) {
