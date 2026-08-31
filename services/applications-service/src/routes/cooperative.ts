@@ -1519,16 +1519,18 @@ router.get("/announcements/broadcast", async (req: Request, res: Response) => {
 
     const seen = new Set();
     const unique = list.filter((a) => {
-      const key = `${a.title.trim().toLowerCase()}_${a.content.trim().toLowerCase()}`;
+      const titleStr = (a.title || "").trim().toLowerCase();
+      const contentStr = (a.content || "").trim().toLowerCase();
+      const key = a.id ? a.id : `${titleStr}_${contentStr}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
 
     return res.status(200).json(unique);
-  } catch (err) {
+  } catch (err: any) {
     console.error("[cooperative] fetch broadcasts error:", err);
-    return res.status(500).json({ error: "Failed to fetch broadcast announcements" });
+    return res.status(500).json({ error: err?.message || "Failed to fetch broadcast announcements" });
   }
 });
 
