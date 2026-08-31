@@ -50,7 +50,7 @@ app.use(
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-user-id"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cache-Control", "Pragma", "x-user-id", "x-user-email", "x-user-role"],
   }),
 );
 app.use(morgan("combined"));
