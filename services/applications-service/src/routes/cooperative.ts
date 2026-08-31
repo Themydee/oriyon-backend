@@ -1529,9 +1529,8 @@ router.get("/announcements/broadcast", async (req: Request, res: Response) => {
 
     const seen = new Set();
     const unique = list.filter((a) => {
-      const key = `${a.title.trim().toLowerCase()}_${a.content.trim().toLowerCase()}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
+      if (seen.has(a.id)) return false;
+      seen.add(a.id);
       return true;
     });
 
