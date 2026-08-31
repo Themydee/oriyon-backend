@@ -1461,45 +1461,35 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
       return res.status(403).json({ error: "Only admins, corpers, and coordinators can broadcast announcements" });
     }
 
-    if (targetCoops.length === 0 && allCoops.length > 0) {
-      targetCoops = [allCoops[0]];
-    }
-
-    // Fallback cooperative lookup if allCoops is empty
-    let fallbackCoopId: string | null = targetCoops[0]?.id || allCoops[0]?.id || null;
-    if (!fallbackCoopId) {
+    // Determine primary cooperative ID reference to satisfy foreign key requirement
+    let primaryCoopId: string | null = targetCooperativeId || targetCoops[0]?.id || allCoops[0]?.id || null;
+    if (!primaryCoopId) {
       const [anyCoop] = await db.select({ id: cooperatives.id }).from(cooperatives).limit(1);
-      if (anyCoop) fallbackCoopId = anyCoop.id;
+      if (anyCoop) primaryCoopId = anyCoop.id;
     }
 
-    const createdAnnouncements = [];
-    const coopsToInsert = targetCoops.length > 0 ? targetCoops : fallbackCoopId ? [{ id: fallbackCoopId }] : [];
-
-    for (const coop of coopsToInsert) {
-      try {
-        const [ann] = await db
-          .insert(announcements)
-          .values({
-            cooperativeId: coop.id,
-            title,
-            content,
-            level,
-            targetAudience: targetAudience || "all",
-            imageUrl: imageUrl || null,
-            isPinned: isPinned || false,
-            postedBy,
-          })
-          .returning();
-        if (ann) createdAnnouncements.push(ann);
-      } catch (insertErr) {
-        console.warn("Announcement insert error:", insertErr);
-      }
+    if (!primaryCoopId) {
+      return res.status(400).json({ error: "No active cooperative available to attach announcement to" });
     }
+
+    const [ann] = await db
+      .insert(announcements)
+      .values({
+        cooperativeId: primaryCoopId,
+        title,
+        content,
+        level,
+        targetAudience: targetAudience || "all",
+        imageUrl: imageUrl || null,
+        isPinned: isPinned || false,
+        postedBy,
+      })
+      .returning();
 
     return res.status(201).json({
-      message: `Announcement successfully published to ${createdAnnouncements.length} target(s)`,
-      count: createdAnnouncements.length,
-      announcements: createdAnnouncements,
+      message: "Announcement successfully published",
+      count: 1,
+      announcements: [ann],
     });
   } catch (err) {
     console.error("[cooperative] broadcast error:", err);
@@ -1525,12 +1515,13 @@ router.get("/announcements/broadcast", async (req: Request, res: Response) => {
       })
       .from(announcements)
       .orderBy(desc(announcements.createdAt))
-      .limit(200);
+      .limit(500);
 
     const seen = new Set();
     const unique = list.filter((a) => {
-      if (seen.has(a.id)) return false;
-      seen.add(a.id);
+      const key = `${a.title.trim().toLowerCase()}_${a.content.trim().toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
 
