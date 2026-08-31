@@ -1396,7 +1396,10 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
   const schema = z.object({
     title: z.string().trim().min(1, "Title is required"),
     content: z.string().trim().min(1, "Content is required"),
-    level: z.enum(["global", "state", "zone", "lga", "cooperative"]).default("global"),
+    level: z.string().default("global"),
+    targetAudience: z.string().optional().default("all"),
+    imageUrl: z.string().optional().nullable(),
+    isPinned: z.boolean().optional().default(false),
     postedBy: z.string().trim().min(1, "postedBy is required"),
     targetCooperativeId: z.string().uuid().optional().nullable(),
   });
@@ -1406,7 +1409,7 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
 
-  const { title, content, level, postedBy, targetCooperativeId } = parsed.data;
+  const { title, content, level, targetAudience, imageUrl, isPinned, postedBy, targetCooperativeId } = parsed.data;
 
   try {
     const allCoops = await db
@@ -1472,6 +1475,9 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
             title,
             content,
             level,
+            targetAudience: targetAudience || "all",
+            imageUrl: imageUrl || null,
+            isPinned: isPinned || false,
             postedBy,
           })
           .returning();
@@ -1502,6 +1508,9 @@ router.get("/announcements/broadcast", async (req: Request, res: Response) => {
         title: announcements.title,
         content: announcements.content,
         level: announcements.level,
+        targetAudience: announcements.targetAudience,
+        imageUrl: announcements.imageUrl,
+        isPinned: announcements.isPinned,
         postedBy: announcements.postedBy,
         createdAt: announcements.createdAt,
       })

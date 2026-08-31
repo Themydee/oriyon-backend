@@ -889,6 +889,8 @@ cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
         const trainers = await db
           .select({
             id: users.id,
+            assignmentId: groupTrainers.id,
+            assignedDay: groupTrainers.assignedDay,
             firstName: users.firstName,
             lastName: users.lastName,
             email: users.email,
@@ -980,12 +982,15 @@ cohortRouter.delete("/:cohortId/groups/:groupId/members/:userId", async (req: Re
 
 // POST /cohorts/:cohortId/groups/:groupId/trainers
 cohortRouter.post("/:cohortId/groups/:groupId/trainers", async (req: Request, res: Response) => {
-  const schema = z.object({ trainerId: z.string().uuid() });
+  const schema = z.object({
+    trainerId: z.string().uuid(),
+    assignedDay: z.string().optional(),
+  });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const { cohortId, groupId } = req.params;
-  const { trainerId } = parsed.data;
+  const { trainerId, assignedDay } = parsed.data;
 
   try {
     const [trainerUser] = await db
@@ -1008,33 +1013,43 @@ cohortRouter.post("/:cohortId/groups/:groupId/trainers", async (req: Request, re
       return res.status(400).json({ error: "Group does not belong to this cohort" });
     }
 
+    const effectiveDay = assignedDay?.trim() || group.practicalDay || "Practical Day";
+
     const [alreadyAssigned] = await db
       .select()
       .from(groupTrainers)
-      .where(and(eq(groupTrainers.groupId, groupId), eq(groupTrainers.trainerId, trainerId)))
+      .where(
+        and(
+          eq(groupTrainers.groupId, groupId),
+          eq(groupTrainers.trainerId, trainerId),
+          eq(groupTrainers.assignedDay, effectiveDay)
+        )
+      )
       .limit(1);
 
     if (alreadyAssigned) {
-      return res.status(409).json({ error: "Trainer is already assigned to this practical group" });
+      return res.status(409).json({ error: `Trainer is already assigned to this group on ${effectiveDay}` });
     }
 
     const [assignment] = await db
       .insert(groupTrainers)
-      .values({ groupId, trainerId })
+      .values({ groupId, trainerId, assignedDay: effectiveDay })
       .returning();
 
     // Fetch cohort details for notification
     const [cohort] = await db.select().from(cohorts).where(eq(cohorts.id, cohortId)).limit(1);
 
+    const specText = trainerUser.specialization ? ` (Specialization: ${trainerUser.specialization})` : "";
+
     await publishEvent("application.custom_email_requested", {
       email: trainerUser.email,
       firstName: trainerUser.firstName,
       lastName: trainerUser.lastName,
-      subject: `📅 Practical Teaching Assignment: ${group.name} (${group.practicalDay || "Practical Day"})`,
-      body: `Dear Trainer ${trainerUser.firstName},\n\nYou have been selected by Oriyon Administration to teach ${cohort?.name || "EEWYLA Cohort"} - ${group.name} on ${group.practicalDay || "Practical Day"}.\n\nPlease log into your Trainer Portal to review your teaching schedule and practical details.\n\nBest regards,\nOriyon International Ecosystem Management`,
+      subject: `📅 Practical Teaching Assignment: ${group.name} (${effectiveDay})`,
+      body: `Dear Trainer ${trainerUser.firstName},\n\nYou have been selected by Oriyon Administration to teach ${cohort?.name || "EEWYLA Cohort"} - ${group.name} on ${effectiveDay}${specText}.\n\nPlease log into your Trainer Portal to review your teaching schedule and practical details.\n\nBest regards,\nOriyon International Ecosystem Management`,
     }).catch((e) => console.warn("Failed to publish trainer assignment email event", e));
 
-    return res.status(201).json(assignment);
+    return res.status(201).json({ ...assignment, specialization: trainerUser.specialization });
   } catch (err) {
     console.error("POST /groups/:groupId/trainers error:", err);
     return res.status(500).json({ error: "Failed to assign trainer to group" });
@@ -1044,13 +1059,23 @@ cohortRouter.post("/:cohortId/groups/:groupId/trainers", async (req: Request, re
 // DELETE /cohorts/:cohortId/groups/:groupId/trainers/:trainerId
 cohortRouter.delete("/:cohortId/groups/:groupId/trainers/:trainerId", async (req: Request, res: Response) => {
   const { groupId, trainerId } = req.params;
+  const assignedDay = req.query.assignedDay as string | undefined;
+  const assignmentId = req.query.assignmentId as string | undefined;
+
   if (!groupId || !trainerId) {
     return res.status(400).json({ error: "Missing required parameters" });
   }
   try {
+    const conditions = [eq(groupTrainers.groupId, groupId), eq(groupTrainers.trainerId, trainerId)];
+    if (assignmentId) {
+      conditions.push(eq(groupTrainers.id, assignmentId));
+    } else if (assignedDay) {
+      conditions.push(eq(groupTrainers.assignedDay, assignedDay));
+    }
+
     await db
       .delete(groupTrainers)
-      .where(and(eq(groupTrainers.groupId, groupId), eq(groupTrainers.trainerId, trainerId)));
+      .where(and(...conditions));
     return res.json({ message: "Trainer removed from group" });
   } catch {
     return res.status(500).json({ error: "Failed to remove trainer from group" });
@@ -1193,6 +1218,8 @@ userRouter.get("/trainers/my-schedules", async (req: Request, res: Response) => 
         groupId: groups.id,
         groupName: groups.name,
         practicalDay: groups.practicalDay,
+        assignedDay: groupTrainers.assignedDay,
+        assignmentId: groupTrainers.id,
         cohortId: groups.cohortId,
         cohortName: cohorts.name,
         cohortState: cohorts.state,

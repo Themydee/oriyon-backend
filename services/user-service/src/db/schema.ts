@@ -107,5 +107,7 @@ export const groupTrainers = pgTable("group_trainers", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
 
+  assignedDay: varchar("assigned_day", { length: 100 }),
+
   assignedAt: timestamp("assigned_at").notNull().defaultNow(),
 });

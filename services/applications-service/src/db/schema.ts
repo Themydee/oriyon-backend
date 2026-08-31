@@ -225,7 +225,10 @@ export const announcements = pgTable("announcements", {
   cooperativeId: uuid("cooperative_id").references(() => cooperatives.id).notNull(),
   title: varchar("title", { length: 255 }).notNull(),
   content: text("content").notNull(),
-  level: varchar("level", { length: 50 }).notNull().default("cooperative"), // "state", "zone", "lga", "cooperative"
+  level: varchar("level", { length: 50 }).notNull().default("cooperative"), // "global", "state", "zone", "lga", "cooperative"
+  targetAudience: varchar("target_audience", { length: 50 }).default("all"), // "all", "trainers", "trainees"
+  imageUrl: text("image_url"),
+  isPinned: boolean("is_pinned").default(false),
   postedBy: varchar("posted_by", { length: 150 }).notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
