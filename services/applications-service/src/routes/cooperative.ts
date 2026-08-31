@@ -1328,61 +1328,43 @@ router.patch("/:id", async (req: Request, res: Response) => {
 // ─────────────────────────────────────────────
 // ANNOUNCEMENTS
 // ─────────────────────────────────────────────
+// ANNOUNCEMENTS & BROADCAST ROUTES (Static routes must be above dynamic :id routes)
+// ─────────────────────────────────────────────
 
-// GET /cooperative/:id/announcements
-router.get("/:id/announcements", async (req: Request, res: Response) => {
-  const { id } = req.params;
+// GET /cooperative/announcements/broadcast (Fetch all broadcast announcements)
+router.get("/announcements/broadcast", async (req: Request, res: Response) => {
   try {
     const list = await db
-      .select()
-      .from(announcements)
-      .where(eq(announcements.cooperativeId, id))
-      .orderBy(desc(announcements.createdAt));
-    return res.json(list);
-  } catch (err: any) {
-    console.error("[cooperative] fetch announcements error:", err);
-    return res.status(500).json({ error: err?.message || "Failed to fetch announcements" });
-  }
-});
-
-// POST /cooperative/:id/announcements
-router.post("/:id/announcements", async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const schema = z.object({
-    title: z.string().trim().min(1, "Title is required"),
-    content: z.string().trim().min(1, "Content is required"),
-    level: z.enum(["state", "zone", "lga", "cooperative"]).default("cooperative"),
-    postedBy: z.string().trim().min(1, "postedBy is required"),
-  });
-
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
-  }
-
-  try {
-    const [coop] = await db
-      .select({ id: cooperatives.id })
-      .from(cooperatives)
-      .where(eq(cooperatives.id, id))
-      .limit(1);
-
-    if (!coop) {
-      return res.status(404).json({ error: "Cooperative not found" });
-    }
-
-    const [newAnnouncement] = await db
-      .insert(announcements)
-      .values({
-        cooperativeId: id,
-        ...parsed.data,
+      .select({
+        id: announcements.id,
+        cooperativeId: announcements.cooperativeId,
+        title: announcements.title,
+        content: announcements.content,
+        level: announcements.level,
+        targetAudience: announcements.targetAudience,
+        imageUrl: announcements.imageUrl,
+        isPinned: announcements.isPinned,
+        postedBy: announcements.postedBy,
+        createdAt: announcements.createdAt,
       })
-      .returning();
+      .from(announcements)
+      .orderBy(desc(announcements.createdAt))
+      .limit(500);
 
-    return res.status(201).json(newAnnouncement);
-  } catch (err) {
-    console.error("[cooperative] create announcement error:", err);
-    return res.status(500).json({ error: "Failed to create announcement" });
+    const seen = new Set();
+    const unique = list.filter((a) => {
+      const titleStr = (a.title || "").trim().toLowerCase();
+      const contentStr = (a.content || "").trim().toLowerCase();
+      const key = a.id ? a.id : `${titleStr}_${contentStr}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    return res.status(200).json(unique);
+  } catch (err: any) {
+    console.error("[cooperative] fetch broadcasts error:", err);
+    return res.status(500).json({ error: err?.message || "Failed to fetch broadcast announcements" });
   }
 });
 
@@ -1497,40 +1479,62 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
   }
 });
 
-// GET /cooperative/announcements/broadcast (Fetch all broadcast announcements)
-router.get("/announcements/broadcast", async (req: Request, res: Response) => {
+// GET /cooperative/:id/announcements
+router.get("/:id/announcements", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (id === "announcements") return res.status(400).json({ error: "Invalid cooperative ID" });
   try {
     const list = await db
-      .select({
-        id: announcements.id,
-        cooperativeId: announcements.cooperativeId,
-        title: announcements.title,
-        content: announcements.content,
-        level: announcements.level,
-        targetAudience: announcements.targetAudience,
-        imageUrl: announcements.imageUrl,
-        isPinned: announcements.isPinned,
-        postedBy: announcements.postedBy,
-        createdAt: announcements.createdAt,
-      })
+      .select()
       .from(announcements)
-      .orderBy(desc(announcements.createdAt))
-      .limit(500);
-
-    const seen = new Set();
-    const unique = list.filter((a) => {
-      const titleStr = (a.title || "").trim().toLowerCase();
-      const contentStr = (a.content || "").trim().toLowerCase();
-      const key = a.id ? a.id : `${titleStr}_${contentStr}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-
-    return res.status(200).json(unique);
+      .where(eq(announcements.cooperativeId, id))
+      .orderBy(desc(announcements.createdAt));
+    return res.json(list);
   } catch (err: any) {
-    console.error("[cooperative] fetch broadcasts error:", err);
-    return res.status(500).json({ error: err?.message || "Failed to fetch broadcast announcements" });
+    console.error("[cooperative] fetch announcements error:", err);
+    return res.status(500).json({ error: err?.message || "Failed to fetch announcements" });
+  }
+});
+
+// POST /cooperative/:id/announcements
+router.post("/:id/announcements", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (id === "announcements") return res.status(400).json({ error: "Invalid cooperative ID" });
+  const schema = z.object({
+    title: z.string().trim().min(1, "Title is required"),
+    content: z.string().trim().min(1, "Content is required"),
+    level: z.enum(["state", "zone", "lga", "cooperative"]).default("cooperative"),
+    postedBy: z.string().trim().min(1, "postedBy is required"),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const [coop] = await db
+      .select({ id: cooperatives.id })
+      .from(cooperatives)
+      .where(eq(cooperatives.id, id))
+      .limit(1);
+
+    if (!coop) {
+      return res.status(404).json({ error: "Cooperative not found" });
+    }
+
+    const [newAnnouncement] = await db
+      .insert(announcements)
+      .values({
+        cooperativeId: id,
+        ...parsed.data,
+      })
+      .returning();
+
+    return res.status(201).json(newAnnouncement);
+  } catch (err) {
+    console.error("[cooperative] create announcement error:", err);
+    return res.status(500).json({ error: "Failed to create announcement" });
   }
 });
 
