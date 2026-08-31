@@ -625,9 +625,9 @@ router.patch("/:id/rescue", async (req: Request, res: Response) => {
     if (!current)
       return res.status(404).json({ error: "Application not found" });
 
-    if (current.status !== "rejection_review") {
+    if (current.status !== "rejection_review" && current.status !== "rejected") {
       return res.status(400).json({
-        error: `Only applications in "rejection_review" can be rescued. Current status: "${current.status}"`,
+        error: `Only applications in "rejection_review" or "rejected" status can be rescued. Current status: "${current.status}"`,
       });
     }
 
@@ -643,18 +643,22 @@ router.patch("/:id/rescue", async (req: Request, res: Response) => {
       .where(eq(applications.id, req.params.id))
       .returning();
 
-    await publishEvent("application.shortlisted", {
-      applicationId: updated.id,
-      email: updated.email,
-      firstName: updated.firstName,
-      lastName: updated.lastName,
-      rescued: true,
-    });
+    try {
+      await publishEvent("application.shortlisted", {
+        applicationId: updated.id,
+        email: updated.email,
+        firstName: updated.firstName,
+        lastName: updated.lastName,
+        rescued: true,
+      });
+    } catch (pubErr) {
+      console.error("[applications-service][rescue] Non-fatal publish error:", pubErr);
+    }
 
     return res.json(parseArrayFields(updated));
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to rescue application" });
+  } catch (err: any) {
+    console.error("[applications-service][rescue] Error:", err);
+    return res.status(500).json({ error: err?.message || "Failed to rescue application" });
   }
 });
 

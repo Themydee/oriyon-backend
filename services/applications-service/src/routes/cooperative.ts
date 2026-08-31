@@ -1431,7 +1431,7 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
       return str.toLowerCase().replace(/\s+/g, "").replace(/state/g, "").trim();
     };
 
-    if (role === "admin" || role === "sub_admin") {
+    if (role === "admin" || role === "sub_admin" || role === "corper") {
       if (targetCooperativeId) {
         targetCoops = allCoops.filter(c => c.id === targetCooperativeId);
       } else {
@@ -1458,15 +1458,24 @@ router.post("/announcements/broadcast", async (req: Request, res: Response) => {
         targetCoops = allCoops.filter(c => normalize(c.lga).includes(normLga) || normLga.includes(normalize(c.lga)) || normalize(c.name).includes(normLga));
       }
     } else {
-      return res.status(403).json({ error: "Only admins and coordinators can broadcast announcements" });
+      return res.status(403).json({ error: "Only admins, corpers, and coordinators can broadcast announcements" });
     }
 
     if (targetCoops.length === 0 && allCoops.length > 0) {
       targetCoops = [allCoops[0]];
     }
 
+    // Fallback cooperative lookup if allCoops is empty
+    let fallbackCoopId: string | null = targetCoops[0]?.id || allCoops[0]?.id || null;
+    if (!fallbackCoopId) {
+      const [anyCoop] = await db.select({ id: cooperatives.id }).from(cooperatives).limit(1);
+      if (anyCoop) fallbackCoopId = anyCoop.id;
+    }
+
     const createdAnnouncements = [];
-    for (const coop of (targetCoops.length > 0 ? targetCoops : [{ id: "00000000-0000-0000-0000-000000000000" }])) {
+    const coopsToInsert = targetCoops.length > 0 ? targetCoops : fallbackCoopId ? [{ id: fallbackCoopId }] : [];
+
+    for (const coop of coopsToInsert) {
       try {
         const [ann] = await db
           .insert(announcements)

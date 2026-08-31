@@ -28,12 +28,19 @@ export async function connectRabbitMQ(url: string) {
 }
 
 export async function publishEvent(routingKey: string, payload: Record<string, unknown>) {
-  if (!channel) throw new Error("RabbitMQ channel not ready");
-  channel.publish(EXCHANGE, routingKey, Buffer.from(JSON.stringify(payload)), {
-    persistent: true,
-    contentType: "application/json",
-  });
-  console.log(`[applications-service][RabbitMQ] Published → ${routingKey}`);
+  if (!channel) {
+    console.warn(`[applications-service][RabbitMQ] Channel not ready. Skipping event ${routingKey}`);
+    return;
+  }
+  try {
+    channel.publish(EXCHANGE, routingKey, Buffer.from(JSON.stringify(payload)), {
+      persistent: true,
+      contentType: "application/json",
+    });
+    console.log(`[applications-service][RabbitMQ] Published → ${routingKey}`);
+  } catch (err) {
+    console.error(`[applications-service][RabbitMQ] Failed to publish ${routingKey}:`, err);
+  }
 }
 
 export async function consumeEvent(
