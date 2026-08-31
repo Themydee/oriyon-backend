@@ -353,9 +353,8 @@ router.get("/", async (_req: Request, res: Response) => {
   } catch (err) {
     console.error("[GET /applications] Drizzle query error, using raw fallback:", err);
     try {
-      const client = postgres(process.env.DATABASE_URL!);
-      const rows = await client`SELECT * FROM applications WHERE is_deleted = false ORDER BY submitted_at ASC`;
-      await client.end();
+      const rawRes: any = await db.execute(sql`SELECT * FROM applications WHERE is_deleted = false ORDER BY submitted_at ASC`);
+      const rows = (rawRes?.rows || rawRes || []) as any[];
       return res.json(rows.map(parseArrayFields));
     } catch (fallbackErr) {
       console.error("[GET /applications] fallback error:", fallbackErr);
@@ -433,9 +432,8 @@ router.get("/status/:status", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("[GET /applications/status] error, running fallback:", err);
     try {
-      const client = postgres(process.env.DATABASE_URL!);
-      const rows = await client`SELECT * FROM applications WHERE status = ${req.params.status} AND is_deleted = false ORDER BY submitted_at ASC`;
-      await client.end();
+      const rawRes: any = await db.execute(sql`SELECT * FROM applications WHERE status = ${req.params.status} AND is_deleted = false ORDER BY submitted_at ASC`);
+      const rows = (rawRes?.rows || rawRes || []) as any[];
       return res.json(rows.map(parseArrayFields));
     } catch {
       return res.status(500).json({ error: "Failed to fetch applications" });
@@ -466,9 +464,8 @@ router.get("/:id", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("[GET /applications/:id] error, running fallback:", err);
     try {
-      const client = postgres(process.env.DATABASE_URL!);
-      const rows = await client`SELECT * FROM applications WHERE id = ${req.params.id} AND is_deleted = false LIMIT 1`;
-      await client.end();
+      const rawRes: any = await db.execute(sql`SELECT * FROM applications WHERE id = ${req.params.id} AND is_deleted = false LIMIT 1`);
+      const rows = (rawRes?.rows || rawRes || []) as any[];
       if (!rows || rows.length === 0) return res.status(404).json({ error: "Application not found" });
       return res.json(parseArrayFields(rows[0]));
     } catch {
@@ -570,9 +567,8 @@ const handleSendEmailRequest = async (req: Request, res: Response) => {
       application = appRecord;
     } catch (dbErr) {
       console.error("[POST /applications/:id/email] Drizzle query failed, using raw fallback:", dbErr);
-      const client = postgres(process.env.DATABASE_URL!);
-      const rows = await client`SELECT * FROM applications WHERE id = ${req.params.id} AND is_deleted = false LIMIT 1`;
-      await client.end();
+      const rawRes: any = await db.execute(sql`SELECT * FROM applications WHERE id = ${req.params.id} AND is_deleted = false LIMIT 1`);
+      const rows = (rawRes?.rows || rawRes || []) as any[];
       if (rows && rows.length > 0) {
         application = {
           id: rows[0].id,

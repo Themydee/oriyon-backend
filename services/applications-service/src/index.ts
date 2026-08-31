@@ -31,8 +31,8 @@ app.use("/complaints", complaintsRouter);
 app.use("/api/complaints", complaintsRouter);
 
 async function ensureDbColumnsExist() {
+  const client = postgres(process.env.DATABASE_URL!);
   try {
-    const client = postgres(process.env.DATABASE_URL!);
     await client`
       ALTER TABLE applications ADD COLUMN IF NOT EXISTS id_type VARCHAR(100);
       ALTER TABLE applications ADD COLUMN IF NOT EXISTS id_document_url TEXT;
@@ -43,9 +43,10 @@ async function ensureDbColumnsExist() {
       ALTER TABLE applications ADD COLUMN IF NOT EXISTS kyc_rejection_reason TEXT;
     `;
     console.log("[applications-service] Database columns verified.");
-    await client.end();
   } catch (err) {
     console.error("[applications-service] Migration error:", err);
+  } finally {
+    await client.end();
   }
 }
 
