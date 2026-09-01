@@ -409,8 +409,8 @@ userRouter.post("/", async (req: Request, res: Response) => {
   }
 });
 
-// POST /users/bulk-email
-userRouter.post("/bulk-email", async (req: Request, res: Response) => {
+// POST /users/trainers/email
+userRouter.post("/trainers/email", async (req: Request, res: Response) => {
   const schema = z.object({
     subject: z.string().min(1, "Subject is required"),
     body: z.string().min(1, "Body is required"),
@@ -432,7 +432,112 @@ userRouter.post("/bulk-email", async (req: Request, res: Response) => {
           lastName: users.lastName,
         })
         .from(users)
+        .where(
+          and(
+            inArray(users.id, parsed.data.targetUserIds),
+            or(eq(users.role, "trainer"), eq(users.role, "lead_trainer"))
+          )
+        );
+    } else {
+      recipients = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
+        })
+        .from(users)
+        .where(
+          and(
+            or(eq(users.role, "trainer"), eq(users.role, "lead_trainer")),
+            eq(users.isActive, true)
+          )
+        );
+    }
+
+    if (recipients.length === 0) {
+      return res.status(404).json({ error: "No active trainers found to receive the email." });
+    }
+
+    let dispatched = 0;
+    for (const u of recipients) {
+      if (!u.email) continue;
+      const personalizedBody = parsed.data.body
+        .replace(/\{\{firstName\}\}/g, u.firstName || "Trainer")
+        .replace(/\{\{lastName\}\}/g, u.lastName || "")
+        .replace(/\{\{email\}\}/g, u.email);
+
+      await publishEvent("application.custom_email_requested", {
+        email: u.email,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        subject: parsed.data.subject,
+        body: personalizedBody,
+      }).catch((e) => console.warn(`[trainers/email] Failed to publish for ${u.email}:`, e));
+      dispatched++;
+    }
+
+    return res.json({
+      message: `Successfully dispatched customized email to ${dispatched} trainer(s)`,
+      count: dispatched,
+      trainers: recipients.map((r) => ({ id: r.id, email: r.email, name: `${r.firstName} ${r.lastName}`.trim() })),
+    });
+  } catch (err: any) {
+    console.error("[trainers/email] error:", err);
+    return res.status(500).json({ error: err.message || "Failed to send email to trainers" });
+  }
+});
+
+// POST /users/bulk-email
+userRouter.post("/bulk-email", async (req: Request, res: Response) => {
+  const schema = z.object({
+    subject: z.string().min(1, "Subject is required"),
+    body: z.string().min(1, "Body is required"),
+    targetUserIds: z.array(z.string().uuid()).optional(),
+    targetRole: z.enum(["trainee", "trainer", "lead_trainer", "trainers", "all"]).optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    let recipients: { id: string; email: string; firstName: string; lastName: string }[] = [];
+
+    if (parsed.data.targetUserIds && parsed.data.targetUserIds.length > 0) {
+      recipients = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
+        })
+        .from(users)
         .where(inArray(users.id, parsed.data.targetUserIds));
+    } else if (parsed.data.targetRole === "trainers" || parsed.data.targetRole === "trainer" || parsed.data.targetRole === "lead_trainer") {
+      recipients = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
+        })
+        .from(users)
+        .where(
+          and(
+            or(eq(users.role, "trainer"), eq(users.role, "lead_trainer")),
+            eq(users.isActive, true)
+          )
+        );
+    } else if (parsed.data.targetRole === "all") {
+      recipients = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
+        })
+        .from(users)
+        .where(eq(users.isActive, true));
     } else {
       recipients = await db
         .select({
@@ -453,17 +558,23 @@ userRouter.post("/bulk-email", async (req: Request, res: Response) => {
     }
 
     for (const u of recipients) {
+      if (!u.email) continue;
+      const personalizedBody = parsed.data.body
+        .replace(/\{\{firstName\}\}/g, u.firstName || "there")
+        .replace(/\{\{lastName\}\}/g, u.lastName || "")
+        .replace(/\{\{email\}\}/g, u.email);
+
       await publishEvent("application.custom_email_requested", {
         email: u.email,
         firstName: u.firstName,
         lastName: u.lastName,
         subject: parsed.data.subject,
-        body: parsed.data.body,
+        body: personalizedBody,
       });
     }
 
     return res.json({
-      message: `Dispatched bulk email to ${recipients.length} trainees`,
+      message: `Dispatched bulk email to ${recipients.length} recipients`,
       count: recipients.length,
     });
   } catch (err) {
@@ -471,6 +582,7 @@ userRouter.post("/bulk-email", async (req: Request, res: Response) => {
     return res.status(500).json({ error: "Failed to send bulk email" });
   }
 });
+
 
 // POST /users/bulk-status
 userRouter.post("/bulk-status", async (req: Request, res: Response) => {

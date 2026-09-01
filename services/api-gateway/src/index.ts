@@ -649,6 +649,13 @@ app.post(
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
 app.post(
+  "/api/users/trainers/email",
+  authenticate,
+  requireRole("admin", "sub_admin", "lead_trainer", "coordinator"),
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+app.post(
   "/api/users/bulk-status",
   authenticate,
   requireRole("admin", "sub_admin"),
