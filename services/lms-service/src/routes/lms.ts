@@ -1065,6 +1065,64 @@ practicalRouter.get("/checkins/user/:userId", async (req: Request, res: Response
   }
 });
 
+// DELETE /lms/practical/checkins/:cohortId
+practicalRouter.delete("/checkins/:cohortId", async (req: Request, res: Response) => {
+  const { cohortId } = req.params;
+  const { week, userId } = req.query;
+
+  try {
+    const conditions = [eq(practicalCheckins.cohortId, cohortId)];
+    if (week) {
+      conditions.push(eq(practicalCheckins.weekNumber, Number(week)));
+    }
+    if (userId && typeof userId === "string") {
+      conditions.push(eq(practicalCheckins.userId, userId));
+    }
+
+    const deleted = await db
+      .delete(practicalCheckins)
+      .where(and(...conditions))
+      .returning();
+
+    return res.json({
+      message: `Successfully deleted ${deleted.length} practical check-in record(s)`,
+      deletedCount: deleted.length,
+      deleted,
+    });
+  } catch (err) {
+    console.error("DELETE practical checkins error:", err);
+    return res.status(500).json({ error: "Failed to delete practical checkins" });
+  }
+});
+
+// DELETE /lms/practical/checkins/user/:userId
+practicalRouter.delete("/checkins/user/:userId", async (req: Request, res: Response) => {
+  const { userId } = req.params;
+  const { week } = req.query;
+
+  try {
+    const conditions = [eq(practicalCheckins.userId, userId)];
+    if (week) {
+      conditions.push(eq(practicalCheckins.weekNumber, Number(week)));
+    }
+
+    const deleted = await db
+      .delete(practicalCheckins)
+      .where(and(...conditions))
+      .returning();
+
+    return res.json({
+      message: `Successfully deleted ${deleted.length} check-in record(s) for user`,
+      deletedCount: deleted.length,
+      deleted,
+    });
+  } catch (err) {
+    console.error("DELETE user practical checkins error:", err);
+    return res.status(500).json({ error: "Failed to delete user practical checkins" });
+  }
+});
+
+
 // ─────────────────────────────────────────────
 // HELPER — recalculate and sync exam totalMarks
 // Called after any question create/update/delete

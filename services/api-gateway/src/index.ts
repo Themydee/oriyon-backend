@@ -1239,6 +1239,20 @@ app.get(
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
+app.delete(
+  "/api/lms/practical/checkins/:cohortId",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer", "corper", "coordinator"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.delete(
+  "/api/lms/practical/checkins/user/:userId",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer", "corper", "coordinator"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
 
 // ─────────────────────────────────────────────
 // PLATFORM VIDEO TUTORIALS
