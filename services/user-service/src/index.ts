@@ -109,7 +109,7 @@ async function setupConsumers() {
     "application.approved",
     "user-service.application.approved",
     async (payload) => {
-      const { userId, email, firstName, lastName, phone, cohortId, approvedRole } = payload as any;
+      const { userId, email, firstName, lastName, phone, cohortId, approvedRole, groupId } = payload as any;
 
       // Idempotency guard — check if user already exists
       const [existing] = await db
@@ -131,6 +131,21 @@ async function setupConsumers() {
           })
           .where(eq(users.id, existing.id))
           .returning();
+
+        if (cohortId) {
+          try {
+            await db.insert(cohortMembers).values({ cohortId, userId: reactivatedUser.id });
+          } catch (e) {
+            console.error(`[user-service] Failed to auto-enroll existing user in cohort ${cohortId}:`, e);
+          }
+        }
+        if (groupId) {
+          try {
+            await db.insert(groupMembers).values({ groupId, userId: reactivatedUser.id });
+          } catch (e) {
+            console.error(`[user-service] Failed to auto-enroll existing user in group ${groupId}:`, e);
+          }
+        }
 
         // Publish user.created with existing userId so auth-service can reactivate it
         await publishEvent("user.created", {
@@ -158,6 +173,21 @@ async function setupConsumers() {
           isActive: false,
         })
         .returning();
+
+      if (cohortId) {
+        try {
+          await db.insert(cohortMembers).values({ cohortId, userId: newUser.id });
+        } catch (e) {
+          console.error(`[user-service] Failed to auto-enroll user in cohort ${cohortId}:`, e);
+        }
+      }
+      if (groupId) {
+        try {
+          await db.insert(groupMembers).values({ groupId, userId: newUser.id });
+        } catch (e) {
+          console.error(`[user-service] Failed to auto-enroll user in group ${groupId}:`, e);
+        }
+      }
 
       console.log(`[user-service] Created user from approved application: ${email}`);
 

@@ -7,6 +7,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { connectRabbitMQ, consumeEvent } from "./rabbitmq";
 import { contactRouter, newsletterRouter } from "./routes/notifications";
+import { blogRouter } from "./routes/blog";
 import { sendEmail, templates } from "./email";
 
 const app = express();
@@ -26,8 +27,10 @@ app.get("/health", (_req, res) => {
 
 app.use("/contact", contactRouter);
 app.use("/newsletter", newsletterRouter);
+app.use("/blog", blogRouter);
 app.use("/api/contact", contactRouter); // add this
 app.use("/api/newsletter", newsletterRouter); // add this
+app.use("/api/blog", blogRouter);
 
 // ─────────────────────────────────────────────
 // RABBITMQ CONSUMERS

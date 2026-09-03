@@ -624,6 +624,48 @@ app.delete(
 );
 
 // ─────────────────────────────────────────────
+// BLOG POSTS (Public GET, Protected POST/PATCH/DELETE)
+// ─────────────────────────────────────────────
+app.get(
+  "/api/blog*",
+  keepPath,
+  createProxyMiddleware({
+    target: NOTIFICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.post(
+  "/api/blog*",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({
+    target: NOTIFICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.patch(
+  "/api/blog*",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({
+    target: NOTIFICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.delete(
+  "/api/blog*",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({
+    target: NOTIFICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
+// ─────────────────────────────────────────────
 // USERS
 // IMPORTANT: sub-path routes (/id-document/meta,
 // /id-document) must come BEFORE /:id so Express

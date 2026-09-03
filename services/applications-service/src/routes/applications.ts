@@ -73,14 +73,16 @@ const submitSchema = z.object({
 type ApplicationStatus = "pending" | "shortlisted" | "approved" | "rejection_review" | "rejected" | "archived";
 
 const updateSchema = z.object({
-  status: z.enum([
-    "pending",
-    "shortlisted",
-    "approved",
-    "rejection_review",
-    "rejected",
-    "archived",
-  ]),
+  status: z
+    .enum([
+      "pending",
+      "shortlisted",
+      "approved",
+      "rejection_review",
+      "rejected",
+      "archived",
+    ])
+    .optional(),
   cohortId: z.string().uuid().optional().nullable().or(z.literal("")),
   groupId: z.string().uuid().optional().nullable().or(z.literal("")),
   reviewedBy: z.string().uuid().optional().nullable().or(z.literal("")),
@@ -658,6 +660,23 @@ router.patch("/:id/rescue", async (req: Request, res: Response) => {
   }
 });
 
+const validApplicationColumns = new Set([
+  "firstName", "lastName", "email", "phone", "age", "gender", "address",
+  "hasID", "idType", "idDocumentUrl", "idFilename", "idMimeType", "idUploadedAt",
+  "kycStatus", "kycRejectionReason", "businessName", "isCoop", "isCommunityMember",
+  "joinCoop", "educationLevel", "fieldOfStudy", "graduationYear", "institution",
+  "hasGoatExperience", "goatExperienceRating", "ownsGoatFarm", "yearsOperated",
+  "highestAnimals", "isDigitallyLiterate", "digitalLiteracyRating", "internetUsage",
+  "devices", "onlineTraining", "platformExperience", "toolConfidence", "isBreadwinner",
+  "hasDependants", "dependantsDetail", "dependantsSchoolAge", "hasDisabledInHousehold",
+  "disabledDetail", "benefitedBefore", "benefitedDetail", "biggestChallenge", "whyJoin",
+  "hopesToAchieve", "willingTraceability", "hasAccess", "willingChampion", "willingDonate",
+  "committedFullTraining", "reference1", "reference2", "understandsCredit",
+  "declarationConfirmed", "desiredRoleOption1", "desiredRoleOption2", "approvedRole",
+  "status", "cohortId", "reviewedBy", "reviewNotes", "rejectionReason", "rejectedAt",
+  "archivedAt", "isDeleted", "deletedAt", "submittedAt", "updatedAt"
+]);
+
 // ─────────────────────────────────────────────
 // PATCH /applications/:id — Manual Administrative Updates
 // ─────────────────────────────────────────────
@@ -685,29 +704,43 @@ router.patch("/:id", async (req: Request, res: Response) => {
     if (!current)
       return res.status(404).json({ error: "Application not found" });
 
-    const allowed = allowedTransitions[current.status] ?? [];
-    if (!allowed.includes(parsed.data.status)) {
-      return res.status(400).json({
-        error: `Cannot transition from "${current.status}" to "${parsed.data.status}"`,
-        allowedTransitions: allowed,
-      });
+    if (parsed.data.status) {
+      const allowed = allowedTransitions[current.status] ?? [];
+      if (!allowed.includes(parsed.data.status)) {
+        return res.status(400).json({
+          error: `Cannot transition from "${current.status}" to "${parsed.data.status}"`,
+          allowedTransitions: allowed,
+        });
+      }
     }
 
+    const targetStatus = parsed.data.status || current.status;
     const wasApproved = current.status === "approved";
+    const groupId = parsed.data.groupId;
+
     const updatePayload: Record<string, any> = {
-      ...parsed.data,
       updatedAt: new Date(),
     };
 
-    if (wasApproved && parsed.data.status === "rejection_review") {
+    for (const [key, value] of Object.entries(parsed.data)) {
+      if (validApplicationColumns.has(key) && value !== undefined) {
+        if ((key === "cohortId" || key === "reviewedBy") && value === "") {
+          updatePayload[key] = null;
+        } else {
+          updatePayload[key] = value;
+        }
+      }
+    }
+
+    if (wasApproved && targetStatus === "rejection_review") {
       updatePayload.approvedRole = null;
       updatePayload.cohortId = null;
     }
 
-    if (parsed.data.status === "rejected") {
+    if (targetStatus === "rejected") {
       updatePayload.rejectedAt = new Date();
     }
-    if (parsed.data.status === "archived") {
+    if (targetStatus === "archived") {
       updatePayload.archivedAt = new Date();
     }
 
@@ -720,7 +753,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
     if (!updated)
       return res.status(404).json({ error: "Application not found" });
 
-    if (updated.status === "shortlisted") {
+    if (parsed.data.status && updated.status === "shortlisted") {
       await publishEvent("application.shortlisted", {
         applicationId: updated.id,
         email: updated.email,
@@ -729,7 +762,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
       });
     }
 
-    if (updated.status === "approved") {
+    if (parsed.data.status && updated.status === "approved") {
       const userId = uuidv4();
       await publishEvent("application.approved", {
         applicationId: updated.id,
@@ -740,10 +773,11 @@ router.patch("/:id", async (req: Request, res: Response) => {
         phone: updated.phone,
         cohortId: updated.cohortId,
         approvedRole: updated.approvedRole,
+        groupId: groupId || undefined,
       });
     }
 
-    if (updated.status === "rejection_review") {
+    if (parsed.data.status && updated.status === "rejection_review") {
       if (wasApproved) {
         await publishEvent("application.revoked", {
           applicationId: updated.id,
@@ -758,7 +792,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
       });
     }
 
-    if (updated.status === "rejected") {
+    if (parsed.data.status && updated.status === "rejected") {
       await publishEvent("application.rejected", {
         applicationId: updated.id,
         email: updated.email,
@@ -768,9 +802,9 @@ router.patch("/:id", async (req: Request, res: Response) => {
     }
 
     return res.json(parseArrayFields(updated));
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to update application" });
+  } catch (err: any) {
+    console.error("[applications-service][PATCH] Error updating application:", err);
+    return res.status(500).json({ error: err?.message || "Failed to update application" });
   }
 });
 
