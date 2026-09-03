@@ -19,6 +19,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 30m
           script: |
             set -e
             
@@ -38,7 +39,7 @@ jobs:
             echo "================================================="
             for dir in services/*/; do
               echo "Installing $dir..."
-              (cd "$dir" && npm install) || { echo "❌ Install failed in $dir"; exit 1; }
+              (cd "$dir" && (npm ci --prefer-offline --no-audit --progress=false || npm install --prefer-offline --no-audit --progress=false)) || { echo "❌ Install failed in $dir"; exit 1; }
             done
 
             echo "================================================="
