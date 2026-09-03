@@ -288,3 +288,66 @@ export const platformTutorials = pgTable("platform_tutorials", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+// ─── LMS Community Q&A & Live Chat ──────────────────────────────────────────
+
+export const communityQuestions = pgTable("community_questions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  authorId: uuid("author_id").notNull(),
+  authorName: varchar("author_name", { length: 255 }).notNull(),
+  authorRole: varchar("author_role", { length: 50 }).notNull().default("trainee"),
+  authorAvatar: text("author_avatar"),
+  channelId: varchar("channel_id", { length: 100 }).notNull().default("general"),
+  channelName: varchar("channel_name", { length: 255 }).notNull().default("General Discussion"),
+  tags: jsonb("tags").$type<string[]>().default([]),
+  upvotes: integer("upvotes").notNull().default(0),
+  upvotedBy: jsonb("upvoted_by").$type<string[]>().default([]),
+  isSolved: boolean("is_solved").notNull().default(false),
+  solvedAnswerId: uuid("solved_answer_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const communityAnswers = pgTable("community_answers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  questionId: uuid("question_id")
+    .notNull()
+    .references(() => communityQuestions.id, { onDelete: "cascade" }),
+  content: text("content").notNull(),
+  authorId: uuid("author_id").notNull(),
+  authorName: varchar("author_name", { length: 255 }).notNull(),
+  authorRole: varchar("author_role", { length: 50 }).notNull().default("trainee"),
+  authorAvatar: text("author_avatar"),
+  isVerified: boolean("is_verified").notNull().default(false),
+  upvotes: integer("upvotes").notNull().default(0),
+  upvotedBy: jsonb("upvoted_by").$type<string[]>().default([]),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const communityReplies = pgTable("community_replies", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  answerId: uuid("answer_id")
+    .notNull()
+    .references(() => communityAnswers.id, { onDelete: "cascade" }),
+  content: text("content").notNull(),
+  authorId: uuid("author_id").notNull(),
+  authorName: varchar("author_name", { length: 255 }).notNull(),
+  authorRole: varchar("author_role", { length: 50 }).notNull().default("trainee"),
+  authorAvatar: text("author_avatar"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const communityChatMessages = pgTable("community_chat_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  channelId: varchar("channel_id", { length: 100 }).notNull().default("general"),
+  text: text("text").notNull(),
+  authorId: uuid("author_id").notNull(),
+  authorName: varchar("author_name", { length: 255 }).notNull(),
+  authorRole: varchar("author_role", { length: 50 }).notNull().default("trainee"),
+  authorAvatar: text("author_avatar"),
+  isPinned: boolean("is_pinned").default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});

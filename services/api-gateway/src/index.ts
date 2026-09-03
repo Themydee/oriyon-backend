@@ -1327,6 +1327,16 @@ app.delete(
 );
 
 // ─────────────────────────────────────────────
+// LMS COMMUNITY Q&A & REAL-TIME CHAT
+// ─────────────────────────────────────────────
+app.use(
+  "/api/lms/community",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+
+// ─────────────────────────────────────────────
 // 404
 // ─────────────────────────────────────────────
 app.use((_req, res) => {

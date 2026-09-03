@@ -18,6 +18,7 @@ import {
   practicalRouter,
 } from "./routes/lms";
 import statsRouter from "./routes/stats";
+import communityRouter from "./routes/community";
 import { progress, lessons, weeks } from "./db/schema";
 import { eq } from "drizzle-orm";
 
@@ -46,6 +47,7 @@ app.use("/lms/exams", examsRouter);
 app.use("/lms/week12", week12Router);
 app.use("/lms/tutorials", tutorialsRouter);
 app.use("/lms/practical", practicalRouter);
+app.use("/lms/community", communityRouter);
 app.use("/api/lms/quizzes", quizzesRouter);
 app.use("/api/lms/exams", examsRouter);
 app.use("/api/lms/week12", week12Router);
@@ -56,6 +58,7 @@ app.use("/api/lms/sessions", sessionsRouter);
 app.use("/api/lms/stats", statsRouter);    
 app.use("/api/lms/tutorials", tutorialsRouter);    
 app.use("/api/lms/practical", practicalRouter);    
+app.use("/api/lms/community", communityRouter);    
 
 async function setupConsumers() {
   // When a user is enrolled → seed empty progress records for all published lessons in that cohort
@@ -84,8 +87,9 @@ async function setupConsumers() {
 
 async function ensureDbColumns() {
   try {
-    await queryClient`ALTER TABLE lessons ADD COLUMN IF NOT EXISTS audio_url text;`;
-    await queryClient`
+    await queryClient.unsafe(`
+      ALTER TABLE lessons ADD COLUMN IF NOT EXISTS audio_url text;
+      
       CREATE TABLE IF NOT EXISTS practical_checkins (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id uuid NOT NULL,
@@ -96,8 +100,65 @@ async function ensureDbColumns() {
         verified_by uuid,
         checked_in_at timestamp NOT NULL DEFAULT now()
       );
-    `;
-    console.log("[lms-service] Auto-migration: ensured lessons.audio_url & practical_checkins table exist.");
+
+      CREATE TABLE IF NOT EXISTS community_questions (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        title text NOT NULL,
+        content text NOT NULL,
+        author_id uuid NOT NULL,
+        author_name varchar(255) NOT NULL,
+        author_role varchar(50) NOT NULL DEFAULT 'trainee',
+        author_avatar text,
+        channel_id varchar(100) NOT NULL DEFAULT 'general',
+        channel_name varchar(255) NOT NULL DEFAULT 'General Discussion',
+        tags jsonb DEFAULT '[]'::jsonb,
+        upvotes integer NOT NULL DEFAULT 0,
+        upvoted_by jsonb DEFAULT '[]'::jsonb,
+        is_solved boolean NOT NULL DEFAULT false,
+        solved_answer_id uuid,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS community_answers (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        question_id uuid NOT NULL REFERENCES community_questions(id) ON DELETE CASCADE,
+        content text NOT NULL,
+        author_id uuid NOT NULL,
+        author_name varchar(255) NOT NULL,
+        author_role varchar(50) NOT NULL DEFAULT 'trainee',
+        author_avatar text,
+        is_verified boolean NOT NULL DEFAULT false,
+        upvotes integer NOT NULL DEFAULT 0,
+        upvoted_by jsonb DEFAULT '[]'::jsonb,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS community_replies (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        answer_id uuid NOT NULL REFERENCES community_answers(id) ON DELETE CASCADE,
+        content text NOT NULL,
+        author_id uuid NOT NULL,
+        author_name varchar(255) NOT NULL,
+        author_role varchar(50) NOT NULL DEFAULT 'trainee',
+        author_avatar text,
+        created_at timestamp NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS community_chat_messages (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        channel_id varchar(100) NOT NULL DEFAULT 'general',
+        text text NOT NULL,
+        author_id uuid NOT NULL,
+        author_name varchar(255) NOT NULL,
+        author_role varchar(50) NOT NULL DEFAULT 'trainee',
+        author_avatar text,
+        is_pinned boolean DEFAULT false,
+        created_at timestamp NOT NULL DEFAULT now()
+      );
+    `);
+    console.log("[lms-service] Auto-migration: ensured community tables & columns exist.");
   } catch (err) {
     console.error("[lms-service] Failed to ensure DB schema:", err);
   }

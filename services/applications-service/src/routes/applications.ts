@@ -343,12 +343,80 @@ router.post("/auto-shortlist-existing", async (_req: Request, res: Response) => 
 // ─────────────────────────────────────────────
 // GET /applications — Admin Only View List
 // ─────────────────────────────────────────────
-router.get("/", async (_req: Request, res: Response) => {
+router.get("/", async (req: Request, res: Response) => {
   try {
+    const { page, limit, status, search, cohortId } = req.query;
+
+    const pageNum = page ? Math.max(1, parseInt(String(page), 10) || 1) : null;
+    const limitNum = limit ? Math.min(1000, Math.max(1, parseInt(String(limit), 10) || 50)) : null;
+
+    const conditions = [eq(applications.isDeleted, false)];
+
+    if (status && status !== "all") {
+      conditions.push(eq(applications.status, String(status) as any));
+    }
+
+    if (cohortId && cohortId !== "all") {
+      conditions.push(eq(applications.cohortId, String(cohortId)));
+    }
+
+    if (search) {
+      const q = `%${String(search).trim().toLowerCase()}%`;
+      conditions.push(
+        sql`(
+          LOWER(${applications.firstName}) LIKE ${q} OR
+          LOWER(${applications.lastName}) LIKE ${q} OR
+          LOWER(${applications.email}) LIKE ${q} OR
+          LOWER(${applications.phone}) LIKE ${q} OR
+          LOWER(COALESCE(${applications.businessName}, '')) LIKE ${q}
+        )`
+      );
+    }
+
+    const whereClause = and(...conditions);
+
+    // If explicit pagination requested
+    if (pageNum !== null || limitNum !== null) {
+      const p = pageNum || 1;
+      const l = limitNum || 50;
+      const offset = (p - 1) * l;
+
+      const [countRes] = await db
+        .select({ total: count() })
+        .from(applications)
+        .where(whereClause);
+
+      const total = Number(countRes?.total || 0);
+
+      const pageRows = await db
+        .select()
+        .from(applications)
+        .where(whereClause)
+        .orderBy(applications.submittedAt)
+        .limit(l)
+        .offset(offset);
+
+      const parsedRows = pageRows.map(parseArrayFields);
+
+      // Return paginated response structure if page query was explicitly provided
+      if (page) {
+        return res.json({
+          applications: parsedRows,
+          data: parsedRows,
+          total,
+          page: p,
+          limit: l,
+          totalPages: Math.ceil(total / l),
+        });
+      }
+
+      return res.json(parsedRows);
+    }
+
     const all = await db
       .select()
       .from(applications)
-      .where(eq(applications.isDeleted, false))
+      .where(whereClause)
       .orderBy(applications.submittedAt);
 
     return res.json(all.map(parseArrayFields));

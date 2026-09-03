@@ -50,8 +50,13 @@ async function ensureDbColumnsExist() {
       ALTER TABLE applications ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP;
       ALTER TABLE applications ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false;
       ALTER TABLE applications ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;
+
+      CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status, is_deleted);
+      CREATE INDEX IF NOT EXISTS idx_applications_submitted_at ON applications(submitted_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_applications_email ON applications(email);
+      CREATE INDEX IF NOT EXISTS idx_applications_cohort_id ON applications(cohort_id);
     `);
-    console.log("[applications-service] Database columns verified successfully.");
+    console.log("[applications-service] Database columns and performance indexes verified successfully.");
   } catch (err) {
     console.error("[applications-service] Migration error:", err);
   } finally {
