@@ -1333,11 +1333,9 @@ router.patch("/:id", async (req: Request, res: Response) => {
 
 async function ensureAnnouncementsColumnsExist() {
   try {
-    await db.execute(sql`
-      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_audience varchar(50) DEFAULT 'all';
-      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS image_url text;
-      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS is_pinned boolean DEFAULT false;
-    `);
+    await db.execute(sql`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_audience varchar(50) DEFAULT 'all'`);
+    await db.execute(sql`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS image_url text`);
+    await db.execute(sql`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS is_pinned boolean DEFAULT false`);
   } catch (err) {
     console.warn("[cooperative] Auto-migration column check warning:", err);
   }

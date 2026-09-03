@@ -33,7 +33,7 @@ app.use("/api/complaints", complaintsRouter);
 async function ensureDbColumnsExist() {
   const client = postgres(process.env.DATABASE_URL!);
   try {
-    await client`
+    await client.unsafe(`
       ALTER TABLE applications ADD COLUMN IF NOT EXISTS id_type VARCHAR(100);
       ALTER TABLE applications ADD COLUMN IF NOT EXISTS id_document_url TEXT;
       ALTER TABLE applications ADD COLUMN IF NOT EXISTS id_filename VARCHAR(255);
@@ -41,8 +41,17 @@ async function ensureDbColumnsExist() {
       ALTER TABLE applications ADD COLUMN IF NOT EXISTS id_uploaded_at TIMESTAMP;
       ALTER TABLE applications ADD COLUMN IF NOT EXISTS kyc_status VARCHAR(50) DEFAULT 'pending';
       ALTER TABLE applications ADD COLUMN IF NOT EXISTS kyc_rejection_reason TEXT;
-    `;
-    console.log("[applications-service] Database columns verified.");
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS approved_role VARCHAR(255);
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS cohort_id UUID;
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS reviewed_by UUID;
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS review_notes TEXT;
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP;
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP;
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false;
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;
+    `);
+    console.log("[applications-service] Database columns verified successfully.");
   } catch (err) {
     console.error("[applications-service] Migration error:", err);
   } finally {
