@@ -341,14 +341,15 @@ router.post("/auto-shortlist-existing", async (_req: Request, res: Response) => 
 });
 
 // ─────────────────────────────────────────────
-// GET /applications — Admin Only View List
+// GET /applications — Admin Only View List (Paginated)
 // ─────────────────────────────────────────────
 router.get("/", async (req: Request, res: Response) => {
   try {
     const { page, limit, status, search, cohortId } = req.query;
 
-    const pageNum = page ? Math.max(1, parseInt(String(page), 10) || 1) : null;
-    const limitNum = limit ? Math.min(1000, Math.max(1, parseInt(String(limit), 10) || 50)) : null;
+    const p = Math.max(1, parseInt(String(page || 1), 10) || 1);
+    const l = Math.min(200, Math.max(1, parseInt(String(limit || 50), 10) || 50));
+    const offset = (p - 1) * l;
 
     const conditions = [eq(applications.isDeleted, false)];
 
@@ -375,57 +376,45 @@ router.get("/", async (req: Request, res: Response) => {
 
     const whereClause = and(...conditions);
 
-    // If explicit pagination requested
-    if (pageNum !== null || limitNum !== null) {
-      const p = pageNum || 1;
-      const l = limitNum || 50;
-      const offset = (p - 1) * l;
+    const [countRes] = await db
+      .select({ total: count() })
+      .from(applications)
+      .where(whereClause);
 
-      const [countRes] = await db
-        .select({ total: count() })
-        .from(applications)
-        .where(whereClause);
+    const total = Number(countRes?.total || 0);
 
-      const total = Number(countRes?.total || 0);
-
-      const pageRows = await db
-        .select()
-        .from(applications)
-        .where(whereClause)
-        .orderBy(applications.submittedAt)
-        .limit(l)
-        .offset(offset);
-
-      const parsedRows = pageRows.map(parseArrayFields);
-
-      // Return paginated response structure if page query was explicitly provided
-      if (page) {
-        return res.json({
-          applications: parsedRows,
-          data: parsedRows,
-          total,
-          page: p,
-          limit: l,
-          totalPages: Math.ceil(total / l),
-        });
-      }
-
-      return res.json(parsedRows);
-    }
-
-    const all = await db
+    const pageRows = await db
       .select()
       .from(applications)
       .where(whereClause)
-      .orderBy(applications.submittedAt);
+      .orderBy(applications.submittedAt)
+      .limit(l)
+      .offset(offset);
 
-    return res.json(all.map(parseArrayFields));
+    const parsedRows = pageRows.map(parseArrayFields);
+
+    return res.json({
+      applications: parsedRows,
+      data: parsedRows,
+      total,
+      page: p,
+      limit: l,
+      totalPages: Math.ceil(total / l),
+    });
   } catch (err) {
     console.error("[GET /applications] Drizzle query error, using raw fallback:", err);
     try {
-      const rawRes: any = await db.execute(sql`SELECT * FROM applications WHERE is_deleted = false ORDER BY submitted_at ASC`);
+      const rawRes: any = await db.execute(sql`SELECT * FROM applications WHERE is_deleted = false ORDER BY submitted_at ASC LIMIT 50`);
       const rows = (rawRes?.rows || rawRes || []) as any[];
-      return res.json(rows.map(parseArrayFields));
+      const parsedRows = rows.map(parseArrayFields);
+      return res.json({
+        applications: parsedRows,
+        data: parsedRows,
+        total: parsedRows.length,
+        page: 1,
+        limit: 50,
+        totalPages: 1,
+      });
     } catch (fallbackErr) {
       console.error("[GET /applications] fallback error:", fallbackErr);
       return res.status(500).json({ error: "Failed to fetch applications" });

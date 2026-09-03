@@ -55,17 +55,59 @@ app.use(
 );
 app.use(morgan("combined"));
 
-const limiter = rateLimit({
+// ─────────────────────────────────────────────
+// SECURED RATE LIMITERS
+// ─────────────────────────────────────────────
+// 1. General Baseline Limiter — 1,000 requests per 15 minutes per IP
+const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10000, // Increased to support 1000+ concurrent users
-  message: { error: "Too many requests from this IP, please try again after 15 minutes." }
+  max: 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests from this IP address. Please try again in 15 minutes." },
 });
-const strictLimiter = rateLimit({
+
+// 2. Strict Auth & Credentials Limiter — 15 requests per 15 minutes per IP
+const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10000, // Increased to support high volume of concurrent auth requests
-  message: { error: "Too many authentication attempts from this IP, please try again after 15 minutes." }
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many authentication attempts from this IP. Please try again after 15 minutes." },
 });
-app.use(limiter);
+
+// 3. Public Form / Submission Limiter — 30 submissions per 15 minutes per IP
+const submissionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Submission rate limit exceeded. Please wait a few minutes before trying again." },
+});
+
+// 4. Real-Time Chat & Polling Limiter — 60 requests per 1 minute per IP
+const chatLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "You are sending chat messages too rapidly. Please slow down." },
+});
+
+// 5. Administrative & Bulk Operations Limiter — 60 requests per 15 minutes per IP
+const bulkActionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Rate limit exceeded for administrative batch operations. Please try again later." },
+});
+
+// Backward-compatibility aliases
+const limiter = generalLimiter;
+const strictLimiter = authLimiter;
+
+app.use(generalLimiter);
 
 function keepPath(req: Request, _res: Response, next: NextFunction) {
   req.url = req.originalUrl;
@@ -164,6 +206,7 @@ app.patch(
 // ─────────────────────────────────────────────
 app.post(
   "/api/applications",
+  submissionLimiter,
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -204,7 +247,6 @@ app.get(
 // ADMIN — applications analytics
 app.get(
   "/api/applications/admin/analytics",
-  strictLimiter,
   authenticate,
   requireRole("admin", "sub_admin"),
   keepPath,
@@ -222,6 +264,7 @@ app.patch(
 );
 app.post(
   "/api/applications/bulk-email",
+  bulkActionLimiter,
   authenticate,
   requireRole("admin", "sub_admin"),
   keepPath,
@@ -1329,6 +1372,20 @@ app.delete(
 // ─────────────────────────────────────────────
 // LMS COMMUNITY Q&A & REAL-TIME CHAT
 // ─────────────────────────────────────────────
+app.post(
+  "/api/lms/community/chat/:channelId",
+  chatLimiter,
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.post(
+  "/api/lms/community/questions",
+  submissionLimiter,
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
 app.use(
   "/api/lms/community",
   authenticate,

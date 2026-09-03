@@ -27,7 +27,10 @@ function getAuthorInfo(req: Request) {
 // GET /questions — List questions with filters & nested answers
 router.get("/questions", async (req: Request, res: Response) => {
   try {
-    const { channel, solved, search, tag, sort } = req.query;
+    const { channel, solved, search, tag, sort, page, limit } = req.query;
+
+    const pageNum = page ? Math.max(1, parseInt(String(page), 10) || 1) : null;
+    const limitNum = limit ? Math.min(100, Math.max(1, parseInt(String(limit), 10) || 20)) : 50;
 
     const conditions = [];
 
@@ -73,7 +76,13 @@ router.get("/questions", async (req: Request, res: Response) => {
       questionsList.sort((a, b) => (b.upvotes || 0) - (a.upvotes || 0));
     }
 
-    const questionIds = questionsList.map((q) => q.id);
+    const totalQuestions = questionsList.length;
+    const p = pageNum || 1;
+    const l = limitNum;
+    const startIndex = (p - 1) * l;
+    const paginatedQuestions = questionsList.slice(startIndex, startIndex + l);
+
+    const questionIds = paginatedQuestions.map((q) => q.id);
 
     let answersList: any[] = [];
     let repliesList: any[] = [];
@@ -105,7 +114,7 @@ router.get("/questions", async (req: Request, res: Response) => {
     });
 
     // Map answers to questions
-    const fullQuestions = questionsList.map((q) => {
+    const fullQuestions = paginatedQuestions.map((q) => {
       const qAnswers = answersList
         .filter((a) => a.questionId === q.id)
         .map((a) => answersWithRepliesMap.get(a.id));
@@ -114,6 +123,16 @@ router.get("/questions", async (req: Request, res: Response) => {
         answers: qAnswers,
       };
     });
+
+    if (pageNum !== null) {
+      return res.json({
+        questions: fullQuestions,
+        total: totalQuestions,
+        page: p,
+        limit: l,
+        totalPages: Math.ceil(totalQuestions / l),
+      });
+    }
 
     return res.json(fullQuestions);
   } catch (err: any) {
@@ -346,15 +365,18 @@ router.patch("/questions/:id/solve", async (req: Request, res: Response) => {
 // GET /chat/:channelId — Fetch chat messages for a channel
 router.get("/chat/:channelId", async (req: Request, res: Response) => {
   const { channelId } = req.params;
+  const limit = req.query.limit ? Math.min(200, Math.max(1, parseInt(String(req.query.limit), 10) || 50)) : 50;
+
   try {
     const messages = await db
       .select()
       .from(communityChatMessages)
       .where(eq(communityChatMessages.channelId, channelId))
-      .orderBy(communityChatMessages.createdAt)
-      .limit(200);
+      .orderBy(desc(communityChatMessages.createdAt))
+      .limit(limit);
 
-    return res.json(messages);
+    // Return in ascending chronological order for client convenience
+    return res.json(messages.reverse());
   } catch (err: any) {
     console.error("[community][GET /chat/:channelId] Error:", err);
     return res.status(500).json({ error: "Failed to fetch chat messages" });
