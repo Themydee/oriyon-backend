@@ -80,7 +80,7 @@ function normalizeUserRow(user: any) {
 userRouter.get("/", async (req: Request, res: Response) => {
   try {
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string) || 20));
     const offset = (page - 1) * limit;
     const search = (req.query.search as string) || "";
     const roleFilter = req.query.role as string | undefined;
@@ -88,19 +88,76 @@ userRouter.get("/", async (req: Request, res: Response) => {
     // Build where conditions
     const conditions = [];
     if (search) {
-      conditions.push(
-        or(
-          ilike(users.firstName, `%${search}%`),
-          ilike(users.lastName, `%${search}%`),
-          ilike(users.email, `%${search}%`)
-        )
-      );
+      const rawSearch = search.trim().toLowerCase();
+      const terms = rawSearch.split(/\s+/).filter(Boolean);
+      if (terms.length > 0) {
+        const termConds = terms.map((t) =>
+          or(
+            ilike(users.firstName, `%${t}%`),
+            ilike(users.lastName, `%${t}%`),
+            ilike(users.email, `%${t}%`),
+            ilike(users.phone, `%${t}%`),
+            ilike(users.specialization, `%${t}%`)
+          )
+        );
+        const fullQ = `%${rawSearch}%`;
+        const combinedCond = or(
+          sql`LOWER(CONCAT(${users.firstName}, ' ', ${users.lastName})) LIKE ${fullQ}`,
+          sql`LOWER(CONCAT(${users.lastName}, ' ', ${users.firstName})) LIKE ${fullQ}`
+        );
+        conditions.push(or(and(...termConds), combinedCond));
+      }
     }
-    if (roleFilter) {
-      conditions.push(eq(users.role, roleFilter as any));
+
+    if (roleFilter && roleFilter !== "all") {
+      if (roleFilter === "cooperative") {
+        conditions.push(and(eq(users.role, "trainee" as any), eq(users.isCooperativeOnly, true)));
+      } else if (roleFilter === "trainee") {
+        conditions.push(and(eq(users.role, "trainee" as any), or(eq(users.isCooperativeOnly, false), sql`${users.isCooperativeOnly} IS NULL`)));
+      } else {
+        conditions.push(eq(users.role, roleFilter as any));
+      }
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    // Calculate role breakdown counts
+    const roleCounts: Record<string, number> = {
+      all: 0,
+      trainee: 0,
+      cooperative: 0,
+      trainer: 0,
+      lead_trainer: 0,
+      corper: 0,
+      sub_admin: 0,
+      admin: 0,
+    };
+
+    try {
+      const countsRes: any[] = await db
+        .select({
+          role: users.role,
+          isCoop: users.isCooperativeOnly,
+          cnt: sql<number>`count(*)::int`,
+        })
+        .from(users)
+        .groupBy(users.role, users.isCooperativeOnly);
+
+      let grandTotal = 0;
+      countsRes.forEach((r) => {
+        const c = Number(r.cnt || 0);
+        grandTotal += c;
+        if (r.role === "trainee") {
+          if (r.isCoop) roleCounts.cooperative += c;
+          else roleCounts.trainee += c;
+        } else if (r.role) {
+          roleCounts[r.role] = (roleCounts[r.role] || 0) + c;
+        }
+      });
+      roleCounts.all = grandTotal;
+    } catch {
+      // Non-fatal if role counts query fails
+    }
 
     let allUsers: any[] = [];
     let count = 0;
@@ -132,7 +189,7 @@ userRouter.get("/", async (req: Request, res: Response) => {
           const escapedSearch = search.replace(/'/g, "''");
           rawConditions.push(`(first_name ILIKE '%${escapedSearch}%' OR last_name ILIKE '%${escapedSearch}%' OR email ILIKE '%${escapedSearch}%')`);
         }
-        if (roleFilter) {
+        if (roleFilter && roleFilter !== "all") {
           const escapedRole = roleFilter.replace(/'/g, "''");
           rawConditions.push(`role = '${escapedRole}'`);
         }
@@ -160,6 +217,9 @@ userRouter.get("/", async (req: Request, res: Response) => {
     if (!allUsers || allUsers.length === 0) {
       return res.json({
         data: [],
+        users: [],
+        total: count,
+        roleCounts,
         pagination: { page, limit, total: count, totalPages: Math.ceil(count / limit) || 1 },
       });
     }
@@ -213,6 +273,9 @@ userRouter.get("/", async (req: Request, res: Response) => {
 
     return res.json({
       data: usersWithMemberships,
+      users: usersWithMemberships,
+      total: count,
+      roleCounts,
       pagination: {
         page,
         limit,
