@@ -174,8 +174,14 @@ function evaluateAutoShortlist(app: z.infer<typeof submitSchema>): boolean {
 
 router.post("/", async (req: Request, res: Response) => {
   const parsed = submitSchema.safeParse(req.body);
-  if (!parsed.success)
-    return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success) {
+    const flattened = parsed.error.flatten();
+    const fieldErrs = Object.entries(flattened.fieldErrors)
+      .map(([field, errs]) => `${field}: ${Array.isArray(errs) ? errs.join(", ") : errs}`)
+      .join("; ");
+    const errorMsg = fieldErrs ? `Validation error on form (${fieldErrs})` : "Invalid application details.";
+    return res.status(400).json({ error: errorMsg, details: flattened });
+  }
 
   try {
     // Duplicate email check
@@ -185,7 +191,7 @@ router.post("/", async (req: Request, res: Response) => {
       .where(eq(sql`LOWER(${applications.email})`, parsed.data.email.toLowerCase()))
       .limit(1);
     if (dupEmail) {
-      return res.status(409).json({ error: "An application with this email already exists." });
+      return res.status(409).json({ error: "An application with this email address already exists." });
     }
 
     // Duplicate phone check
@@ -210,20 +216,22 @@ router.post("/", async (req: Request, res: Response) => {
       )
       .limit(1);
     if (dupName) {
-      return res.status(409).json({ error: "An application with this name already exists." });
+      return res.status(409).json({ error: "An application with this applicant name already exists." });
     }
 
     const passesAutoShortlist = evaluateAutoShortlist(parsed.data);
     const calculatedStatus: ApplicationStatus = passesAutoShortlist ? "shortlisted" : "pending";
 
-    const hasDocFile = Boolean(parsed.data.idDocument || parsed.data.idDocumentUrl);
+    const { idDocument, ...cleanParsedData } = parsed.data;
+    const hasDocFile = Boolean(idDocument || parsed.data.idDocumentUrl);
+
     const data = {
-      ...parsed.data,
+      ...cleanParsedData,
       status: calculatedStatus,
       devices: parsed.data.devices ? JSON.stringify(parsed.data.devices) : undefined,
       biggestChallenge: parsed.data.biggestChallenge ? JSON.stringify(parsed.data.biggestChallenge) : undefined,
       hasAccess: parsed.data.hasAccess ? JSON.stringify(parsed.data.hasAccess) : undefined,
-      idDocumentUrl: parsed.data.idDocumentUrl || parsed.data.idDocument || undefined,
+      idDocumentUrl: parsed.data.idDocumentUrl || idDocument || undefined,
       idType: parsed.data.idType || (parsed.data.hasID && parsed.data.hasID !== "No" ? parsed.data.hasID : undefined),
       idFilename: parsed.data.idFilename || (hasDocFile ? `${parsed.data.firstName}_${parsed.data.lastName}_ID` : undefined),
       idMimeType: parsed.data.idMimeType || (hasDocFile ? "image/jpeg" : undefined),
@@ -235,23 +243,27 @@ router.post("/", async (req: Request, res: Response) => {
       .values(data)
       .returning();
 
-    await publishEvent("application.submitted", {
-      applicationId: application.id,
-      email: application.email,
-      firstName: application.firstName,
-      lastName: application.lastName,
-      phone: application.phone,
-      submittedAt: application.submittedAt.toISOString(),
-    });
-
-    if (calculatedStatus === "shortlisted") {
-      await publishEvent("application.shortlisted", {
+    try {
+      await publishEvent("application.submitted", {
         applicationId: application.id,
         email: application.email,
         firstName: application.firstName,
         lastName: application.lastName,
-        isAutomated: true,
+        phone: application.phone,
+        submittedAt: application.submittedAt.toISOString(),
       });
+
+      if (calculatedStatus === "shortlisted") {
+        await publishEvent("application.shortlisted", {
+          applicationId: application.id,
+          email: application.email,
+          firstName: application.firstName,
+          lastName: application.lastName,
+          isAutomated: true,
+        });
+      }
+    } catch (eventErr) {
+      console.error("[POST /applications] Non-fatal event publishing error:", eventErr);
     }
 
     return res.status(201).json({
@@ -261,9 +273,9 @@ router.post("/", async (req: Request, res: Response) => {
       id: application.id,
       status: application.status,
     });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to submit application" });
+  } catch (err: any) {
+    console.error("[POST /applications Error]:", err);
+    return res.status(500).json({ error: err?.message || "Failed to submit application" });
   }
 });
 
