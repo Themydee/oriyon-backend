@@ -351,30 +351,46 @@ router.get("/", async (req: Request, res: Response) => {
     const l = Math.min(200, Math.max(1, parseInt(String(limit || 50), 10) || 50));
     const offset = (p - 1) * l;
 
-    const conditions = [eq(applications.isDeleted, false)];
+    const conditionsBase = [eq(applications.isDeleted, false)];
 
+    if (cohortId && cohortId !== "all") {
+      conditionsBase.push(eq(applications.cohortId, String(cohortId)));
+    }
+
+    if (search) {
+      const rawSearch = String(search).trim().toLowerCase();
+      const searchTerms = rawSearch.split(/\s+/).filter(Boolean);
+
+      if (searchTerms.length > 0) {
+        const termConditions = searchTerms.map((term) => {
+          const q = `%${term}%`;
+          return sql`(
+            LOWER(${applications.firstName}) LIKE ${q} OR
+            LOWER(${applications.lastName}) LIKE ${q} OR
+            LOWER(${applications.email}) LIKE ${q} OR
+            LOWER(${applications.phone}) LIKE ${q} OR
+            LOWER(COALESCE(${applications.businessName}, '')) LIKE ${q} OR
+            LOWER(COALESCE(${applications.institution}, '')) LIKE ${q}
+          )`;
+        });
+
+        const fullQ = `%${rawSearch}%`;
+        const combinedNameCondition = sql`(
+          LOWER(CONCAT(${applications.firstName}, ' ', ${applications.lastName})) LIKE ${fullQ} OR
+          LOWER(CONCAT(${applications.lastName}, ' ', ${applications.firstName})) LIKE ${fullQ}
+        )`;
+
+        conditionsBase.push(sql`(${and(...termConditions)} OR ${combinedNameCondition})`);
+      }
+    }
+
+    const conditions = [...conditionsBase];
     if (status && status !== "all") {
       conditions.push(eq(applications.status, String(status) as any));
     }
 
-    if (cohortId && cohortId !== "all") {
-      conditions.push(eq(applications.cohortId, String(cohortId)));
-    }
-
-    if (search) {
-      const q = `%${String(search).trim().toLowerCase()}%`;
-      conditions.push(
-        sql`(
-          LOWER(${applications.firstName}) LIKE ${q} OR
-          LOWER(${applications.lastName}) LIKE ${q} OR
-          LOWER(${applications.email}) LIKE ${q} OR
-          LOWER(${applications.phone}) LIKE ${q} OR
-          LOWER(COALESCE(${applications.businessName}, '')) LIKE ${q}
-        )`
-      );
-    }
-
     const whereClause = and(...conditions);
+    const baseWhereClause = and(...conditionsBase);
 
     const [countRes] = await db
       .select({ total: count() })
@@ -382,6 +398,24 @@ router.get("/", async (req: Request, res: Response) => {
       .where(whereClause);
 
     const total = Number(countRes?.total || 0);
+
+    // Grouped status counts for tabs (matching active search filters)
+    const statusCountRows = await db
+      .select({ status: applications.status, count: count() })
+      .from(applications)
+      .where(baseWhereClause)
+      .groupBy(applications.status);
+
+    const statusCounts: Record<string, number> = { all: 0 };
+    let grandTotal = 0;
+    statusCountRows.forEach((r) => {
+      const c = Number(r.count || 0);
+      if (r.status) {
+        statusCounts[r.status] = c;
+      }
+      grandTotal += c;
+    });
+    statusCounts.all = grandTotal;
 
     const pageRows = await db
       .select()
@@ -400,6 +434,7 @@ router.get("/", async (req: Request, res: Response) => {
       page: p,
       limit: l,
       totalPages: Math.ceil(total / l),
+      statusCounts,
     });
   } catch (err) {
     console.error("[GET /applications] Drizzle query error, using raw fallback:", err);
