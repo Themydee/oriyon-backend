@@ -794,8 +794,11 @@ quizzesRouter.get("/user/:userId/passed", async (req: Request, res: Response) =>
 // ADMIN — list all quiz attempts with quiz title
 // GET /lms/quizzes/admin/attempts
 quizzesRouter.get("/admin/attempts", async (req: Request, res: Response) => {
+  const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+
   try {
-    const all = await db
+    const baseQuery = db
       .select({
         attemptId: quizAttempts.id,
         userId: quizAttempts.userId,
@@ -811,6 +814,44 @@ quizzesRouter.get("/admin/attempts", async (req: Request, res: Response) => {
       .innerJoin(quizzes, eq(quizAttempts.quizId, quizzes.id))
       .orderBy(quizAttempts.attemptedAt);
 
+    if (page || limit) {
+      const pageNum = page && page > 0 ? page : 1;
+      const limitNum = limit && limit > 0 ? limit : 25;
+      const offsetNum = (pageNum - 1) * limitNum;
+
+      const [allMatched, paginated] = await Promise.all([
+        baseQuery,
+        db
+          .select({
+            attemptId: quizAttempts.id,
+            userId: quizAttempts.userId,
+            quizId: quizAttempts.quizId,
+            weekId: quizAttempts.weekId,
+            cohortId: quizAttempts.cohortId,
+            score: quizAttempts.score,
+            passed: quizAttempts.passed,
+            attemptedAt: quizAttempts.attemptedAt,
+            quizTitle: quizzes.title,
+          })
+          .from(quizAttempts)
+          .innerJoin(quizzes, eq(quizAttempts.quizId, quizzes.id))
+          .orderBy(quizAttempts.attemptedAt)
+          .limit(limitNum)
+          .offset(offsetNum),
+      ]);
+
+      const total = allMatched.length;
+      return res.json({
+        data: paginated,
+        attempts: paginated,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+      });
+    }
+
+    const all = await baseQuery;
     return res.json(all);
   } catch (err) {
     console.error(err);
@@ -1268,8 +1309,11 @@ examsRouter.get("/:id", async (req: Request, res: Response) => {
 // ADMIN — list all exam sessions with exam title
 // GET /lms/exams/admin/sessions
 examsRouter.get("/admin/sessions", async (req: Request, res: Response) => {
+  const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+
   try {
-    const all = await db
+    const baseQuery = db
       .select({
         sessionId: examSessions.id,
         userId: examSessions.userId,
@@ -1286,6 +1330,45 @@ examsRouter.get("/admin/sessions", async (req: Request, res: Response) => {
       .innerJoin(exams, eq(examSessions.examId, exams.id))
       .orderBy(examSessions.createdAt);
 
+    if (page || limit) {
+      const pageNum = page && page > 0 ? page : 1;
+      const limitNum = limit && limit > 0 ? limit : 25;
+      const offsetNum = (pageNum - 1) * limitNum;
+
+      const [allMatched, paginated] = await Promise.all([
+        baseQuery,
+        db
+          .select({
+            sessionId: examSessions.id,
+            userId: examSessions.userId,
+            examId: examSessions.examId,
+            status: examSessions.status,
+            mcqScore: examSessions.mcqScore,
+            score: examSessions.score,
+            submittedAt: examSessions.submittedAt,
+            startedAt: examSessions.startedAt,
+            isFullyMarked: examSessions.isFullyMarked,
+            examTitle: exams.title,
+          })
+          .from(examSessions)
+          .innerJoin(exams, eq(examSessions.examId, exams.id))
+          .orderBy(examSessions.createdAt)
+          .limit(limitNum)
+          .offset(offsetNum),
+      ]);
+
+      const total = allMatched.length;
+      return res.json({
+        data: paginated,
+        sessions: paginated,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+      });
+    }
+
+    const all = await baseQuery;
     return res.json(all);
   } catch (err) {
     console.error(err);

@@ -742,6 +742,10 @@ router.get("/members", async (req: Request, res: Response) => {
   const assignedState = req.headers["x-user-assigned-state"] as string;
   const assignedZone = req.headers["x-user-assigned-zone"] as string;
 
+  const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+  const search = req.query.search ? (req.query.search as string).trim() : undefined;
+
   try {
     const query = db
       .select({
@@ -787,23 +791,61 @@ router.get("/members", async (req: Request, res: Response) => {
       .from(cooperativeMembers)
       .leftJoin(cooperatives, eq(cooperativeMembers.cooperativeId, cooperatives.id));
 
-    let finalQuery = query;
+    let finalQuery = query as any;
+    const conditions: any[] = [];
+
     if (role === "coordinator") {
-      const conds = [];
       if (assignedLga) {
-        conds.push(eq(cooperativeMembers.lga, assignedLga));
+        conditions.push(eq(cooperativeMembers.lga, assignedLga));
       } else if (assignedState) {
-        conds.push(eq(cooperatives.state, assignedState));
+        conditions.push(eq(cooperatives.state, assignedState));
       } else if (assignedZone) {
-        conds.push(eq(cooperatives.zone, assignedZone));
-      }
-      if (conds.length > 0) {
-        finalQuery = finalQuery.where(and(...conds)) as any;
+        conditions.push(eq(cooperatives.zone, assignedZone));
       }
     }
 
-    const members = await finalQuery.orderBy(cooperativeMembers.joinedAt);
+    if (search) {
+      conditions.push(
+        or(
+          ilike(cooperativeMembers.firstName, `%${search}%`),
+          ilike(cooperativeMembers.lastName, `%${search}%`),
+          ilike(cooperativeMembers.email, `%${search}%`),
+          ilike(cooperativeMembers.phone, `%${search}%`),
+          ilike(cooperativeMembers.memberId, `%${search}%`)
+        )
+      );
+    }
 
+    if (conditions.length > 0) {
+      finalQuery = finalQuery.where(and(...conditions));
+    }
+
+    const orderedQuery = finalQuery.orderBy(cooperativeMembers.joinedAt);
+
+    if (page || limit) {
+      const pageNum = page && page > 0 ? page : 1;
+      const limitNum = limit && limit > 0 ? limit : 25;
+      const offsetNum = (pageNum - 1) * limitNum;
+
+      const [allMatched, paginatedMembers] = await Promise.all([
+        finalQuery,
+        orderedQuery.limit(limitNum).offset(offsetNum),
+      ]);
+
+      const total = allMatched.length;
+      const totalPages = Math.ceil(total / limitNum);
+
+      return res.json({
+        data: paginatedMembers,
+        members: paginatedMembers,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages,
+      });
+    }
+
+    const members = await orderedQuery;
     return res.json(members);
   } catch (err) {
     console.error("[cooperative] fetch members error:", err);
