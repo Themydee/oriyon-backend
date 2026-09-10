@@ -682,8 +682,24 @@ quizzesRouter.post("/:id/attempt", async (req: Request, res: Response) => {
 
     if (!quiz) return res.status(404).json({ error: "Quiz not found" });
 
+    // Check quiz attempt limit (max 3 attempts per quiz)
+    const existingAttempts = await db
+      .select()
+      .from(quizAttempts)
+      .where(
+        and(
+          eq(quizAttempts.quizId, quiz.id),
+          eq(quizAttempts.userId, userId)
+        )
+      );
 
-    // Calculate score
+    if (existingAttempts.length >= 3) {
+      return res.status(403).json({
+        error: "Attempt limit reached: You can only take a quiz a maximum of 3 times.",
+        attemptsCount: existingAttempts.length,
+        maxAttempts: 3,
+      });
+    }
     const questions = quiz.questions as any[];
     let correct = 0;
     questions.forEach((q: any) => {
