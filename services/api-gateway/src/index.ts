@@ -760,12 +760,13 @@ app.get(
       const [quizResp, examResp, usersResp] = await Promise.all([
         fetchFn(`${LMS_SERVICE_URL}/api/lms/quizzes/admin/attempts`, { headers: { Authorization: authHeader } }),
         fetchFn(`${LMS_SERVICE_URL}/api/lms/exams/admin/sessions`, { headers: { Authorization: authHeader } }),
-        fetchFn(`${USER_SERVICE_URL}/api/users`, { headers: { Authorization: authHeader } }),
+        fetchFn(`${USER_SERVICE_URL}/api/users?limit=1000`, { headers: { Authorization: authHeader } }),
       ]);
 
       const quizAttempts = quizResp && quizResp.ok ? await quizResp.json() : [];
       const examSessions = examResp && examResp.ok ? await examResp.json() : [];
-      const users = usersResp && usersResp.ok ? await usersResp.json() : [];
+      const rawUsersData = usersResp && usersResp.ok ? await usersResp.json() : [];
+      const users = Array.isArray(rawUsersData) ? rawUsersData : Array.isArray(rawUsersData?.data) ? rawUsersData.data : Array.isArray(rawUsersData?.users) ? rawUsersData.users : [];
 
       const userMap = new Map((users || []).map((u: any) => [u.id, u]));
 
