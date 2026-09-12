@@ -172,8 +172,111 @@ function evaluateAutoShortlist(app: z.infer<typeof submitSchema>): boolean {
 
 
 
-router.post("/", async (_req: Request, res: Response) => {
-  return res.status(403).json({ error: "Applications are currently closed." });
+router.post("/", async (req: Request, res: Response) => {
+  const parsed = submitSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const flattened = parsed.error.flatten();
+    const fieldErrs = Object.entries(flattened.fieldErrors)
+      .map(([field, errs]) => `${field}: ${Array.isArray(errs) ? errs.join(", ") : errs}`)
+      .join("; ");
+    const errorMsg = fieldErrs ? `Validation error on form (${fieldErrs})` : "Invalid application details.";
+    return res.status(400).json({ error: errorMsg, details: flattened });
+  }
+
+  try {
+    // Duplicate email check
+    const [dupEmail] = await db
+      .select({ id: applications.id })
+      .from(applications)
+      .where(eq(sql`LOWER(${applications.email})`, parsed.data.email.toLowerCase()))
+      .limit(1);
+    if (dupEmail) {
+      return res.status(409).json({ error: "An application with this email address already exists." });
+    }
+
+    // Duplicate phone check
+    const [dupPhone] = await db
+      .select({ id: applications.id })
+      .from(applications)
+      .where(eq(applications.phone, parsed.data.phone))
+      .limit(1);
+    if (dupPhone) {
+      return res.status(409).json({ error: "An application with this phone number already exists." });
+    }
+
+    // Duplicate name check (regular & inversed, case-insensitive)
+    const fNameLower = parsed.data.firstName.toLowerCase();
+    const lNameLower = parsed.data.lastName.toLowerCase();
+    const [dupName] = await db
+      .select({ id: applications.id })
+      .from(applications)
+      .where(
+        sql`(LOWER(${applications.firstName}) = ${fNameLower} AND LOWER(${applications.lastName}) = ${lNameLower}) OR 
+            (LOWER(${applications.firstName}) = ${lNameLower} AND LOWER(${applications.lastName}) = ${fNameLower})`
+      )
+      .limit(1);
+    if (dupName) {
+      return res.status(409).json({ error: "An application with this applicant name already exists." });
+    }
+
+    const passesAutoShortlist = evaluateAutoShortlist(parsed.data);
+    const calculatedStatus: ApplicationStatus = passesAutoShortlist ? "shortlisted" : "pending";
+
+    const { idDocument, ...cleanParsedData } = parsed.data;
+    const hasDocFile = Boolean(idDocument || parsed.data.idDocumentUrl);
+
+    const data = {
+      ...cleanParsedData,
+      status: calculatedStatus,
+      devices: parsed.data.devices ? JSON.stringify(parsed.data.devices) : undefined,
+      biggestChallenge: parsed.data.biggestChallenge ? JSON.stringify(parsed.data.biggestChallenge) : undefined,
+      hasAccess: parsed.data.hasAccess ? JSON.stringify(parsed.data.hasAccess) : undefined,
+      idDocumentUrl: parsed.data.idDocumentUrl || idDocument || undefined,
+      idType: parsed.data.idType || (parsed.data.hasID && parsed.data.hasID !== "No" ? parsed.data.hasID : undefined),
+      idFilename: parsed.data.idFilename || (hasDocFile ? `${parsed.data.firstName}_${parsed.data.lastName}_ID` : undefined),
+      idMimeType: parsed.data.idMimeType || (hasDocFile ? "image/jpeg" : undefined),
+      idUploadedAt: hasDocFile ? new Date() : undefined,
+    };
+
+    const [application] = await db
+      .insert(applications)
+      .values(data)
+      .returning();
+
+    try {
+      await publishEvent("application.submitted", {
+        applicationId: application.id,
+        email: application.email,
+        firstName: application.firstName,
+        lastName: application.lastName,
+        phone: application.phone,
+        submittedAt: application.submittedAt.toISOString(),
+      });
+
+      if (calculatedStatus === "shortlisted") {
+        await publishEvent("application.shortlisted", {
+          applicationId: application.id,
+          email: application.email,
+          firstName: application.firstName,
+          lastName: application.lastName,
+          isAutomated: true,
+        });
+      }
+    } catch (eventErr) {
+      console.error("[POST /applications] Non-fatal event publishing error:", eventErr);
+    }
+
+    return res.status(201).json({
+      message: passesAutoShortlist
+        ? "Application submitted and automatically shortlisted based on criteria."
+        : "Application submitted successfully and is currently under review.",
+      id: application.id,
+      status: application.status,
+    });
+  } catch (err: any) {
+    console.error("[POST /applications Error]:", err);
+    return res.status(500).json({ error: err?.message || "Failed to submit application" });
+  }
 });
 
 // ─────────────────────────────────────────────
