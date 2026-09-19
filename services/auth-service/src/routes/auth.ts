@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql, ilike } from "drizzle-orm";
 import { db } from "../index";
 import { authUsers, refreshTokens, setupTokens } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
@@ -69,8 +69,12 @@ function generateRefreshToken(userId: string) {
 }
 
 async function saveRefreshToken(userId: string, token: string) {
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
-  await db.insert(refreshTokens).values({ userId, token, expiresAt });
+  try {
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    await db.insert(refreshTokens).values({ userId, token, expiresAt });
+  } catch (err) {
+    console.warn("[auth] saveRefreshToken warning:", err);
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -82,13 +86,13 @@ router.post("/login", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "Invalid input", details: parsed.error.flatten() });
   }
 
-  const { email, password } = parsed.data;
-
   try {
+    const { email, password } = parsed.data;
+    const cleanEmail = email.trim().toLowerCase();
     const [user] = await db
       .select()
       .from(authUsers)
-      .where(eq(authUsers.email, email))
+      .where(sql`LOWER(TRIM(${authUsers.email})) = ${cleanEmail}`)
       .limit(1);
 
     if (!user) {
@@ -116,10 +120,14 @@ router.post("/login", async (req: Request, res: Response) => {
     const refreshToken = generateRefreshToken(user.id);
     await saveRefreshToken(user.id, refreshToken);
 
-    await db
-      .update(authUsers)
-      .set({ lastLoginAt: new Date() })
-      .where(eq(authUsers.id, user.id));
+    try {
+      await db
+        .update(authUsers)
+        .set({ lastLoginAt: new Date() })
+        .where(eq(authUsers.id, user.id));
+    } catch (updateErr) {
+      console.warn("[auth] Failed to update lastLoginAt:", updateErr);
+    }
 
     try {
       await publishEvent(EVENTS.USER_LOGGED_IN, {
@@ -132,9 +140,9 @@ router.post("/login", async (req: Request, res: Response) => {
     }
 
     return res.json({ accessToken, refreshToken, role: user.role });
-  } catch (err) {
+  } catch (err: any) {
     console.error("[auth] login error:", err);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ error: "Internal server error", message: err?.message || String(err) });
   }
 });
 

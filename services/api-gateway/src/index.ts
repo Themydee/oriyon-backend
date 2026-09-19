@@ -33,6 +33,10 @@ const allowedOrigins = [
   "https://oriyoninternational.com",
   "https://shop.oriyoninternational.com",
   "https://www.shop.oriyoninternational.com",
+  "http://oriyon.themydee.com",
+  "https://oriyon.themydee.com",
+  "http://themydee.com",
+  "https://themydee.com",
 ];
 
 // Configure helmet with CSP disabled to allow Swagger UI's inline scripts/styles to render successfully
@@ -44,7 +48,12 @@ app.use(
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || origin.endsWith(".vercel.app"))
+      if (
+        !origin ||
+        allowedOrigins.includes(origin) ||
+        origin.endsWith(".vercel.app") ||
+        origin.includes("themydee.com")
+      )
         return callback(null, true);
       return callback(new Error("Not allowed by CORS"));
     },
