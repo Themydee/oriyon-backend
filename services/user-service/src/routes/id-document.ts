@@ -21,23 +21,42 @@ const MAX_BASE64_LENGTH = 25_000_000; // ~18 MB raw
 // Body: { idType, idDocument, idFilename, idMimeType }
 // idDocument = full base64 data URI
 // ─────────────────────────────────────────────
-router.patch("/:id/id-document", async (req: Request, res: Response) => {
-  const schema = z.object({
-    idType: z.enum(ID_TYPES),
-    idDocument: z
-      .string()
-      .startsWith("data:", { message: "Must be a base64 data URI" })
-      .max(MAX_BASE64_LENGTH, { message: "File too large (max 18 MB)" }),
-    idFilename: z.string().max(255),
-    idMimeType: z.string().min(1).max(100),
-  });
+function normalizeIdType(raw: string): string {
+  if (!raw) return "National ID (NIN)";
+  const lower = raw.toLowerCase().trim();
+  if (lower.includes("nin") || lower.includes("national")) return "National ID (NIN)";
+  if (lower.includes("voter")) return "Voters Card";
+  if (lower.includes("driver") || lower.includes("licence") || lower.includes("license")) return "Drivers Licence";
+  if (lower.includes("passport")) return "International Passport";
+  return raw;
+}
 
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
+// ─────────────────────────────────────────────
+// PATCH /users/:id/id-document
+// Trainee uploads their ID document.
+// Body: { idType, idDocument, idDocumentUrl, idFilename, idMimeType }
+// idDocument = base64 data URI or raw base64 string
+// ─────────────────────────────────────────────
+router.patch("/:id/id-document", async (req: Request, res: Response) => {
+  const docPayload = req.body.idDocument || req.body.idDocumentUrl;
+  const rawIdType = req.body.idType || req.body.id_type || "National ID (NIN)";
+  const idType = normalizeIdType(rawIdType);
+  const idFilename = req.body.idFilename || req.body.id_filename || "id-document";
+  const idMimeType = req.body.idMimeType || req.body.id_mime_type || "image/jpeg";
+
+  if (!docPayload || typeof docPayload !== "string") {
+    return res.status(400).json({ error: "Missing or invalid ID document data" });
   }
 
-  const { idType, idDocument, idFilename, idMimeType } = parsed.data;
+  // Ensure data URI prefix if raw base64 string was sent
+  let idDocument = docPayload;
+  if (!idDocument.startsWith("data:") && !idDocument.startsWith("http")) {
+    idDocument = `data:${idMimeType};base64,${idDocument}`;
+  }
+
+  if (idDocument.length > MAX_BASE64_LENGTH) {
+    return res.status(400).json({ error: "File too large (max 18 MB)" });
+  }
 
   try {
     const [user] = await db
@@ -105,7 +124,7 @@ router.get("/:id/id-document/meta", async (req: Request, res: Response) => {
     if (!user) return res.status(404).json({ error: "User not found" });
 
     return res.json({
-      hasDocument:  !!user.idType,
+      hasDocument:  !!(user.idType || user.idUploadedAt || user.idFilename),
       idType:       user.idType,
       idFilename:   user.idFilename,
       idMimeType:   user.idMimeType,

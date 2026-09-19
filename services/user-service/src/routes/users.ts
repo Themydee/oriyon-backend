@@ -714,6 +714,11 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
     approvedRole: z.string().optional().nullable(),
     physicalSiteId: z.string().optional().nullable(),
     specialization: z.string().optional().nullable(),
+    idType: z.string().optional().nullable(),
+    idDocument: z.string().optional().nullable(),
+    idDocumentUrl: z.string().optional().nullable(),
+    idFilename: z.string().optional().nullable(),
+    idMimeType: z.string().optional().nullable(),
   });
 
   const parsed = allowedFields.safeParse(req.body);
@@ -742,6 +747,17 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
       updateData.passportUrl = photoVal;
       updateData.avatarUrl = photoVal;
       updateData.photo = photoVal;
+    }
+
+    // Populate ID document fields if ID document string or type is provided
+    const docVal = parsed.data.idDocument || parsed.data.idDocumentUrl;
+    if (docVal || parsed.data.idType) {
+      if (docVal) updateData.idDocument = docVal;
+      if (parsed.data.idType) updateData.idType = parsed.data.idType;
+      if (parsed.data.idFilename) updateData.idFilename = parsed.data.idFilename;
+      if (parsed.data.idMimeType) updateData.idMimeType = parsed.data.idMimeType;
+      updateData.idUploadedAt = new Date();
+      updateData.kycStatus = "pending";
     }
 
     let updated: any = null;
