@@ -795,6 +795,13 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
         assignedZone: "assigned_zone",
         approvedRole: "approved_role",
         physicalSiteId: "physical_site_id",
+        idType: "id_type",
+        idDocument: "id_document",
+        idFilename: "id_filename",
+        idMimeType: "id_mime_type",
+        idUploadedAt: "id_uploaded_at",
+        kycStatus: "kyc_status",
+        kycRejectionReason: "kyc_rejection_reason",
       };
 
       const whereConditions: string[] = [];
