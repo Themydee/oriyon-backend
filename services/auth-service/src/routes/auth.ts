@@ -9,6 +9,7 @@ import { db } from "../index";
 import { authUsers, refreshTokens, setupTokens } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 import { EVENTS } from "../types";
+import { getClientFrontendUrl } from "../utils/urlHelper";
 
 const router = Router();
 
@@ -319,11 +320,14 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
 
     await db.insert(setupTokens).values({ userId: user.id, token, expiresAt });
 
+    const baseUrl = getClientFrontendUrl(req);
     await publishEvent(EVENTS.PASSWORD_RESET_REQUESTED, {
       userId: user.id,
       email: user.email,
       token,
       expiresAt: expiresAt.toISOString(),
+      baseUrl,
+      resetLink: `${baseUrl}/auth/reset-password?token=${token}`,
     });
 
     return res.json(genericResponse);
@@ -377,11 +381,14 @@ router.post("/resend-setup", async (req: Request, res: Response) => {
 
     await db.insert(setupTokens).values({ userId: user.id, token, expiresAt });
 
+    const baseUrl = getClientFrontendUrl(req);
     await publishEvent(EVENTS.USER_SETUP_REQUESTED, {
       userId: user.id,
       email: user.email,
       token,
       expiresAt: expiresAt.toISOString(),
+      baseUrl,
+      setupLink: `${baseUrl}/auth/setup?token=${token}`,
     });
 
     return res.json({ message: `Account setup email successfully sent to ${email}.` });

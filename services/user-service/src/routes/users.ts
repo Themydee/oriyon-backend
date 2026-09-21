@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { db } from "../index";
 import { users, cohorts, cohortMembers, groups, groupMembers, groupTrainers } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
+import { getClientFrontendUrl } from "../utils/urlHelper";
 
 export const userRouter = Router();
 export const cohortRouter = Router();
@@ -454,6 +455,7 @@ userRouter.post("/", async (req: Request, res: Response) => {
 
     const [newUser] = await db.insert(users).values(insertData).returning();
 
+    const baseUrl = getClientFrontendUrl(req);
     await publishEvent("user.created", {
       userId: newUser.id,
       email: newUser.email,
@@ -463,6 +465,7 @@ userRouter.post("/", async (req: Request, res: Response) => {
       assignedState: newUser.assignedState,
       assignedLga: newUser.assignedLga,
       assignedZone: newUser.assignedZone,
+      baseUrl,
     }).catch((e) => console.warn("[user-service] Failed to publish user.created event:", e));
 
     return res.status(201).json(newUser);

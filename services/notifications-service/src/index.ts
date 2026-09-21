@@ -109,20 +109,20 @@ async function setupConsumers() {
   // ── Account Setup ─────────────────────────────
 
   // New user created by admin → send set-password link
-  // New user created by admin → send set-password link
   // Triggered by auth-service after it creates the auth record + setup token
   await consumeEvent(
     "user.setup_requested",
     "notifications.user.setup_requested",
     async (payload) => {
-      const { email, firstName, setupLink, token } = payload as any;
+      const { email, firstName, setupLink, token, baseUrl: payloadBaseUrl } = payload as any;
+      const frontendUrl = (payloadBaseUrl || process.env.FRONTEND_URL || "https://oriyon.themydee.com").replace(/\/$/, "");
 
       // If token is provided instead of setupLink, build the link
       const effectiveLink =
         setupLink ||
-        `${process.env.FRONTEND_URL}/auth/setup?token=${token}`;
+        `${frontendUrl}/auth/setup?token=${token}`;
 
-      const tpl = templates.accountSetup(firstName || "there", effectiveLink);
+      const tpl = templates.accountSetup(firstName || "there", effectiveLink, frontendUrl);
       await sendEmail({ to: email, ...tpl });
     },
   );
@@ -134,9 +134,10 @@ async function setupConsumers() {
     "auth.password_reset_requested",
     "notifications.auth.password_reset_requested",
     async (payload) => {
-      const { email, firstName, token } = payload as any;
-      const resetLink = `${process.env.FRONTEND_URL}/auth/reset-password?token=${token}`;
-      const tpl = templates.passwordReset(firstName || "there", resetLink);
+      const { email, firstName, token, resetLink: payloadResetLink, baseUrl: payloadBaseUrl } = payload as any;
+      const frontendUrl = (payloadBaseUrl || process.env.FRONTEND_URL || "https://oriyon.themydee.com").replace(/\/$/, "");
+      const resetLink = payloadResetLink || `${frontendUrl}/auth/reset-password?token=${token}`;
+      const tpl = templates.passwordReset(firstName || "there", resetLink, frontendUrl);
       await sendEmail({ to: email, ...tpl });
     },
   );
@@ -149,14 +150,14 @@ async function setupConsumers() {
     "lesson.completed",
     "notifications.lesson.completed",
     async (payload) => {
-      const { email, firstName, lessonTitle } = payload as any;
+      const { email, firstName, lessonTitle, baseUrl } = payload as any;
       if (!email || !firstName) {
         console.warn(
           "[notifications] lesson.completed missing email/firstName — skipping",
         );
         return;
       }
-      const tpl = templates.lessonCompleted(firstName, lessonTitle);
+      const tpl = templates.lessonCompleted(firstName, lessonTitle, baseUrl);
       await sendEmail({ to: email, ...tpl });
     },
   );
@@ -166,14 +167,14 @@ async function setupConsumers() {
     "week.completed",
     "notifications.week.completed",
     async (payload) => {
-      const { email, firstName, weekTitle } = payload as any;
+      const { email, firstName, weekTitle, baseUrl } = payload as any;
       if (!email || !firstName) {
         console.warn(
           "[notifications] week.completed missing email/firstName — skipping",
         );
         return;
       }
-      const tpl = templates.weekCompleted(firstName, weekTitle);
+      const tpl = templates.weekCompleted(firstName, weekTitle, baseUrl);
       await sendEmail({ to: email, ...tpl });
     },
   );
@@ -183,7 +184,7 @@ async function setupConsumers() {
     "exam.submitted",
     "notifications.exam.submitted",
     async (payload) => {
-      const { email, firstName, mcqScore, hasPending, timedOut, sessionId } =
+      const { email, firstName, mcqScore, hasPending, timedOut, sessionId, baseUrl } =
         payload as any;
       if (!email || !firstName) {
         console.warn(
@@ -197,6 +198,7 @@ async function setupConsumers() {
         Boolean(hasPending),
         Boolean(timedOut),
         sessionId ?? "",
+        baseUrl,
       );
       await sendEmail({ to: email, ...tpl });
     },
@@ -207,7 +209,7 @@ async function setupConsumers() {
     "cohort.group_notification_requested",
     "notifications.cohort.group_notification",
     async (payload) => {
-      const { email, firstName, cohortName, groupName, location, timeRange, practicalDay } = payload as any;
+      const { email, firstName, cohortName, groupName, location, timeRange, practicalDay, baseUrl } = payload as any;
       if (!email || !firstName) {
         console.warn("[notifications] cohort.group_notification_requested missing email/firstName — skipping");
         return;
@@ -218,7 +220,8 @@ async function setupConsumers() {
         groupName || "Group Unassigned",
         location || "LAUTECH Ogbomoso",
         timeRange || "9:00 AM – 5:00 PM",
-        practicalDay
+        practicalDay,
+        baseUrl
       );
       await sendEmail({ to: email, ...tpl });
     },

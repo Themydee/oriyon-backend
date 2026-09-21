@@ -114,6 +114,8 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
         console.log(`[auth-service][handleUserCreated] Rotated setup token for ${email}`);
       }
 
+      const frontendUrl = ((payload as any).baseUrl || (payload as any).origin || process.env.FRONTEND_URL || "https://oriyon.themydee.com").replace(/\/$/, "");
+
       await publishEvent(EVENTS.USER_SETUP_REQUESTED, {
         userId: existing.id,
         email: existing.email,
@@ -121,7 +123,8 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
         lastName,
         token,
         expiresAt: expiresAt.toISOString(),
-        setupLink: `${process.env.FRONTEND_URL}/auth/setup?token=${token}`,
+        baseUrl: frontendUrl,
+        setupLink: `${frontendUrl}/auth/setup?token=${token}`,
       });
 
       console.log(`[auth-service][handleUserCreated] Setup email re-queued for ${email}`);
@@ -147,6 +150,8 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
 
     await db.insert(setupTokens).values({ userId, token, expiresAt });
 
+    const frontendUrl = ((payload as any).baseUrl || (payload as any).origin || process.env.FRONTEND_URL || "https://oriyon.themydee.com").replace(/\/$/, "");
+
     // ── 4. Publish — notifications-service sends the welcome email ────────────
     await publishEvent(EVENTS.USER_SETUP_REQUESTED, {
       userId,
@@ -155,7 +160,8 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
       lastName,
       token,
       expiresAt: expiresAt.toISOString(),
-      setupLink: `${process.env.FRONTEND_URL}/auth/setup?token=${token}`,
+      baseUrl: frontendUrl,
+      setupLink: `${frontendUrl}/auth/setup?token=${token}`,
     });
 
     console.log(`[auth-service][handleUserCreated] Auth record + setup token created for ${email}`);

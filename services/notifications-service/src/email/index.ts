@@ -2,7 +2,7 @@ import { Resend } from "resend";
 
 const resend = new Resend(process.env.RESEND_API_KEY!);
 const FROM = process.env.EMAIL_FROM || "no-reply@oriyoninternational.com";
-const BASE_URL = process.env.FRONTEND_URL || "http://localhost:3000";
+const DEFAULT_BASE_URL = (process.env.FRONTEND_URL || "https://oriyon.themydee.com").replace(/\/$/, "");
 
 interface SendEmailOptions {
   to: string;
@@ -61,7 +61,8 @@ export async function sendEmail(
 
 const LOGO_URL = "https://res.cloudinary.com/dpbba8033/image/upload/v1775955555/logo_tre5jx.svg";
 
-function base(content: string, preheader = "") {
+function base(content: string, preheader = "", baseUrl?: string) {
+  const effectiveBaseUrl = (baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -140,7 +141,7 @@ function base(content: string, preheader = "") {
                 <a href="mailto:eewyla@oriyoninternational.com" style="color:#9e9c94; text-decoration:underline;">eewyla@oriyoninternational.com</a>
                 <br/><br/>
                 You are receiving this email because you are registered with the EEWYLA Training Programme.<br/>
-                <a href="${BASE_URL}" style="color:#5a7a5e; text-decoration:none;">www.oriyoninternational.com</a>
+                <a href="${effectiveBaseUrl}" style="color:#5a7a5e; text-decoration:none;">${effectiveBaseUrl.replace(/^https?:\/\//, "")}</a>
               </p>
             </td>
           </tr>
@@ -313,7 +314,9 @@ export const templates = {
 
   // ── Account Setup ──────────────────────────────────────────────
 
-  accountSetup: (firstName: string, setupLink: string) => ({
+  // ── Account Setup ──────────────────────────────────────────────
+
+  accountSetup: (firstName: string, setupLink: string, baseUrl?: string) => ({
     subject: "Set up your Oriyon International account",
     html: base(`
       ${heading(`Hi ${firstName}, your account is ready.`)}
@@ -323,12 +326,12 @@ export const templates = {
       ${para("Once active, your account gives you access to the EEWYLA training portal, your cohort schedule, and all programme resources.")}
       ${para("If you were not expecting this email, please ignore it — no action is required and your account will not be activated without the link.")}
       ${signature()}
-    `, "Your Oriyon International account is ready — click to set your password and get started."),
+    `, "Your Oriyon International account is ready — click to set your password and get started.", baseUrl),
   }),
 
   // ── Password Reset ─────────────────────────────────────────────
 
-  passwordReset: (firstName: string, resetLink: string) => ({
+  passwordReset: (firstName: string, resetLink: string, baseUrl?: string) => ({
     subject: "Reset your Oriyon International password",
     html: base(`
       ${heading(`Hi ${firstName},`)}
@@ -337,75 +340,85 @@ export const templates = {
       ${notice("<strong>This link expires in 1 hour.</strong> If it expires, you can request a new reset link from the login page.", "warning")}
       ${para("If you did not request a password reset, you can safely ignore this email. Your password will remain unchanged and your account is secure.")}
       ${signature()}
-    `, "A password reset was requested for your account — click to set a new password."),
+    `, "A password reset was requested for your account — click to set a new password.", baseUrl),
   }),
 
   // ── LMS ───────────────────────────────────────────────────────
 
-  lessonCompleted: (firstName: string, lessonTitle: string) => ({
-    subject: `Lesson complete — "${lessonTitle}"`,
-    html: base(`
-      ${heading(`Well done, ${firstName}.`)}
-      ${para("You have successfully completed the following lesson:")}
-      ${infoBox([{ label: "Lesson completed", value: lessonTitle }])}
-      ${para("Every lesson you complete builds your knowledge and brings you closer to full programme certification. Keep up the excellent work.")}
-      ${ctaButton("Continue Learning", `${BASE_URL}/learn/lms/dashboard`)}
-      ${signature()}
-    `, `You've completed "${lessonTitle}" — keep going!`),
-  }),
+  lessonCompleted: (firstName: string, lessonTitle: string, baseUrl?: string) => {
+    const effectiveBaseUrl = (baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+    return {
+      subject: `Lesson complete — "${lessonTitle}"`,
+      html: base(`
+        ${heading(`Well done, ${firstName}.`)}
+        ${para("You have successfully completed the following lesson:")}
+        ${infoBox([{ label: "Lesson completed", value: lessonTitle }])}
+        ${para("Every lesson you complete builds your knowledge and brings you closer to full programme certification. Keep up the excellent work.")}
+        ${ctaButton("Continue Learning", `${effectiveBaseUrl}/learn/lms/dashboard`)}
+        ${signature()}
+      `, `You've completed "${lessonTitle}" — keep going!`, baseUrl),
+    };
+  },
 
-  weekCompleted: (firstName: string, weekTitle: string) => ({
-    subject: `Week complete — "${weekTitle}"`,
-    html: base(`
-      ${heading(`Outstanding, ${firstName}.`)}
-      ${para("You have completed all lessons for the following training week:")}
-      ${infoBox([{ label: "Week completed", value: weekTitle }])}
-      ${para("Completing a full training week is a significant milestone. You are demonstrating the commitment and discipline that EEWYLA is designed to develop.")}
-      ${ctaButton("Continue to Next Week", `${BASE_URL}/learn/lms/dashboard`)}
-      ${signature()}
-    `, `You've completed all lessons in "${weekTitle}" — excellent progress.`),
-  }),
+  weekCompleted: (firstName: string, weekTitle: string, baseUrl?: string) => {
+    const effectiveBaseUrl = (baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+    return {
+      subject: `Week complete — "${weekTitle}"`,
+      html: base(`
+        ${heading(`Outstanding, ${firstName}.`)}
+        ${para("You have completed all lessons for the following training week:")}
+        ${infoBox([{ label: "Week completed", value: weekTitle }])}
+        ${para("Completing a full training week is a significant milestone. You are demonstrating the commitment and discipline that EEWYLA is designed to develop.")}
+        ${ctaButton("Continue to Next Week", `${effectiveBaseUrl}/learn/lms/dashboard`)}
+        ${signature()}
+      `, `You've completed all lessons in "${weekTitle}" — excellent progress.`, baseUrl),
+    };
+  },
 
   examSubmitted: (
     firstName: string,
     mcqScore: number,
     hasPending: boolean,
     timedOut: boolean,
-    sessionId: string
-  ) => ({
-    subject: timedOut
-      ? "Exam auto-submitted — review your result"
-      : "Exam submitted — your score is ready",
-    html: base(`
-      ${heading(`Hi ${firstName},`)}
-      ${para(timedOut
-      ? "Your exam was submitted automatically because the allotted time expired."
-      : "Your exam has been successfully submitted.")}
-      ${infoBox([
-        { label: "MCQ score", value: `${mcqScore}%` },
-        { label: "Status", value: timedOut ? "Timed out" : "Submitted" },
-        { label: "Review status", value: hasPending ? "Pending short/essay marking" : "Fully marked" },
-      ])}
-      ${hasPending
-        ? para("Your multiple choice score is now available. Short answer and essay questions are still being marked by our team, and your final result will be updated once marking is complete.")
-        : para("Your exam has been fully marked. The score shown above is your completed result.")}
-      ${ctaButton("View exam result", `${BASE_URL}/learn/lms/exam/session/${sessionId}/result`)}
-      ${signature()}
-    `, timedOut
-      ? "Your exam was auto-submitted because time expired. Your MCQ score is available and the remainder is pending review."
-      : "Your exam has been submitted. Your MCQ score is available and final marking is in progress."),
-  }),
+    sessionId: string,
+    baseUrl?: string
+  ) => {
+    const effectiveBaseUrl = (baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+    return {
+      subject: timedOut
+        ? "Exam auto-submitted — review your result"
+        : "Exam submitted — your score is ready",
+      html: base(`
+        ${heading(`Hi ${firstName},`)}
+        ${para(timedOut
+        ? "Your exam was submitted automatically because the allotted time expired."
+        : "Your exam has been successfully submitted.")}
+        ${infoBox([
+          { label: "MCQ score", value: `${mcqScore}%` },
+          { label: "Status", value: timedOut ? "Timed out" : "Submitted" },
+          { label: "Review status", value: hasPending ? "Pending short/essay marking" : "Fully marked" },
+        ])}
+        ${hasPending
+          ? para("Your multiple choice score is now available. Short answer and essay questions are still being marked by our team, and your final result will be updated once marking is complete.")
+          : para("Your exam has been fully marked. The score shown above is your completed result.")}
+        ${ctaButton("View exam result", `${effectiveBaseUrl}/learn/lms/exam/session/${sessionId}/result`)}
+        ${signature()}
+      `, timedOut
+        ? "Your exam was auto-submitted because time expired. Your MCQ score is available and the remainder is pending review."
+        : "Your exam has been submitted. Your MCQ score is available and final marking is in progress.", baseUrl),
+    };
+  },
 
   // ── Contact ───────────────────────────────────────────────────
 
-  contactReceived: (firstName: string) => ({
+  contactReceived: (firstName: string, baseUrl?: string) => ({
     subject: "We received your message",
     html: base(`
       ${heading(`Hi ${firstName},`)}
       ${para("Thank you for reaching out to Oriyon International. We have received your message and a member of our team will respond within <strong>2 business days</strong>.")}
       ${notice(`For urgent matters, contact us directly at <a href="mailto:eewyla@oriyoninternational.com" style="color:#5a7a5e;">eewyla@oriyoninternational.com</a>.`)}
       ${signature()}
-    `, "We've received your message and will respond within 2 business days."),
+    `, "We've received your message and will respond within 2 business days.", baseUrl),
   }),
 
   // ── Cohort & Group Notifications ─────────────────────────────────
@@ -416,22 +429,26 @@ export const templates = {
     groupName: string,
     location: string = "LAUTECH Ogbomoso",
     timeRange: string = "9:00 AM – 5:00 PM",
-    practicalDay?: string
-  ) => ({
-    subject: `Physical Training Schedule & Group Allocation — ${cohortName || "Cohort 1"}`,
-    html: base(`
-      ${heading(`Hi ${firstName},`)}
-      ${para(`We are pleased to inform you of your official group assignment, physical training location, and daily schedule for <strong>${cohortName || "Cohort 1"}</strong> of the EEWYLA Training Programme.`)}
-      ${infoBox([
-        { label: "Programme / Cohort", value: cohortName || "Cohort 1" },
-        { label: "Assigned Group", value: practicalDay ? `${groupName} (${practicalDay}s)` : groupName },
-        { label: "Training Location", value: location },
-        { label: "Physical Training Time", value: timeRange },
-      ])}
-      ${notice(`<strong>Important Notice:</strong> Physical practical sessions run strictly from <strong>${timeRange}</strong> at <strong>${location}</strong>. Please arrive promptly and bring appropriate training attire.`)}
-      ${para("You can view your detailed timetable and track your attendance on your LMS portal.")}
-      ${ctaButton("Access LMS Dashboard", `${BASE_URL}/learn/lms/dashboard`)}
-      ${signature()}
-    `, `Your group allocation: ${groupName} | Location: ${location} | Time: ${timeRange}`),
-  }),
+    practicalDay?: string,
+    baseUrl?: string
+  ) => {
+    const effectiveBaseUrl = (baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+    return {
+      subject: `Physical Training Schedule & Group Allocation — ${cohortName || "Cohort 1"}`,
+      html: base(`
+        ${heading(`Hi ${firstName},`)}
+        ${para(`We are pleased to inform you of your official group assignment, physical training location, and daily schedule for <strong>${cohortName || "Cohort 1"}</strong> of the EEWYLA Training Programme.`)}
+        ${infoBox([
+          { label: "Programme / Cohort", value: cohortName || "Cohort 1" },
+          { label: "Assigned Group", value: practicalDay ? `${groupName} (${practicalDay}s)` : groupName },
+          { label: "Training Location", value: location },
+          { label: "Physical Training Time", value: timeRange },
+        ])}
+        ${notice(`<strong>Important Notice:</strong> Physical practical sessions run strictly from <strong>${timeRange}</strong> at <strong>${location}</strong>. Please arrive promptly and bring appropriate training attire.`)}
+        ${para("You can view your detailed timetable and track your attendance on your LMS portal.")}
+        ${ctaButton("Access LMS Dashboard", `${effectiveBaseUrl}/learn/lms/dashboard`)}
+        ${signature()}
+      `, `Your group allocation: ${groupName} | Location: ${location} | Time: ${timeRange}`, baseUrl),
+    };
+  },
 };
