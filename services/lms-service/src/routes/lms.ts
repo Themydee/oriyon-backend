@@ -662,16 +662,24 @@ quizzesRouter.patch("/:id", async (req: Request, res: Response) => {
 // POST /lms/quizzes/:id/attempt
 quizzesRouter.post("/:id/attempt", async (req: Request, res: Response) => {
   const schema = z.object({
-    userId: z.string().uuid(),
-    weekId: z.string().uuid(),
-    cohortId: z.string().uuid(),
+    userId: z.string().optional().or(z.literal("")),
+    weekId: z.string().optional().or(z.literal("")),
+    cohortId: z.string().optional().or(z.literal("")),
     answers: z.record(z.string(), z.number()),
   });
 
   const parsed = schema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+    return res.status(400).json({ error: `Invalid request payload: ${issues}` });
+  }
 
-  const { userId, weekId, cohortId, answers } = parsed.data;
+  const rawUserId = (parsed.data.userId && z.string().uuid().safeParse(parsed.data.userId).success ? parsed.data.userId : null) || (req.headers["x-user-id"] as string) || (req as any).user?.id || (req as any).user?.userId;
+  if (!rawUserId || !z.string().uuid().safeParse(rawUserId).success) {
+    return res.status(400).json({ error: "A valid User ID is required to submit a quiz attempt." });
+  }
+  const userId = rawUserId;
+  const { answers } = parsed.data;
 
   try {
     const [quiz] = await db
@@ -681,6 +689,25 @@ quizzesRouter.post("/:id/attempt", async (req: Request, res: Response) => {
       .limit(1);
 
     if (!quiz) return res.status(404).json({ error: "Quiz not found" });
+
+    const weekId = (parsed.data.weekId && z.string().uuid().safeParse(parsed.data.weekId).success)
+      ? parsed.data.weekId
+      : quiz.weekId;
+
+    let cohortId = (parsed.data.cohortId && z.string().uuid().safeParse(parsed.data.cohortId).success)
+      ? parsed.data.cohortId
+      : "";
+
+    if (!cohortId) {
+      const [w] = await db.select({ cohortId: weeks.cohortId }).from(weeks).where(eq(weeks.id, weekId)).limit(1);
+      if (w?.cohortId) {
+        cohortId = w.cohortId;
+      }
+    }
+
+    if (!cohortId || !z.string().uuid().safeParse(cohortId).success) {
+      return res.status(400).json({ error: "Cohort ID could not be determined for this quiz attempt." });
+    }
 
     // Check quiz attempt limit (max 3 attempts per quiz)
     const existingAttempts = await db
@@ -703,7 +730,7 @@ quizzesRouter.post("/:id/attempt", async (req: Request, res: Response) => {
     const questions = quiz.questions as any[];
     let correct = 0;
     questions.forEach((q: any) => {
-      if (answers[q.id] === q.correctIndex) correct++;
+      if (Number(answers[q.id]) === Number(q.correctIndex)) correct++;
     });
 
     const score = questions.length > 0
