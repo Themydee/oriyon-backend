@@ -709,7 +709,7 @@ quizzesRouter.post("/:id/attempt", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Cohort ID could not be determined for this quiz attempt." });
     }
 
-    // Check quiz attempt limit (max 3 attempts per quiz)
+    // Check quiz attempt limit (max 10 attempts per quiz)
     const existingAttempts = await db
       .select()
       .from(quizAttempts)
@@ -720,11 +720,11 @@ quizzesRouter.post("/:id/attempt", async (req: Request, res: Response) => {
         )
       );
 
-    if (existingAttempts.length >= 3) {
+    if (existingAttempts.length >= 10) {
       return res.status(403).json({
-        error: "Attempt limit reached: You can only take a quiz a maximum of 3 times.",
+        error: "Attempt limit reached: You can take a quiz a maximum of 10 times.",
         attemptsCount: existingAttempts.length,
-        maxAttempts: 3,
+        maxAttempts: 10,
       });
     }
     const questions = quiz.questions as any[];
