@@ -9,6 +9,7 @@ import { connectRabbitMQ, consumeEvent, publishEvent } from "./rabbitmq";
 import { userRouter, cohortRouter } from "./routes/users";
 import adminRouter from "./routes/admin";
 import idDocumentRouter from "./routes/id-document";
+import { ticketsRouter } from "./routes/tickets";
 import { users, cohortMembers, groupMembers } from "./db/schema";
 import { eq } from "drizzle-orm";
 
@@ -97,6 +98,8 @@ app.use("/admin", adminRouter);
 app.use("/api/users", idDocumentRouter);
 app.use("/api/users", userRouter);
 app.use("/api/cohorts", cohortRouter);
+app.use("/tickets", ticketsRouter);
+app.use("/api/tickets", ticketsRouter);
 
 // ─────────────────────────────────────────────
 // RABBITMQ CONSUMERS
@@ -111,7 +114,7 @@ async function setupConsumers() {
     "application.approved",
     "user-service.application.approved",
     async (payload) => {
-      const { userId, email, firstName, lastName, phone, cohortId, approvedRole, groupId } = payload as any;
+      const { userId, email, firstName, lastName, phone, cohortId, approvedRole, groupId, physicalSiteId } = payload as any;
 
       // Idempotency guard — check if user already exists
       const [existing] = await db
@@ -129,6 +132,8 @@ async function setupConsumers() {
             isActive: true,
             approvedRole,
             isCooperativeOnly: false,
+            // Keep a site an admin already assigned; otherwise use the applicant's choice
+            ...(existing.physicalSiteId ? {} : { physicalSiteId: physicalSiteId || null }),
             updatedAt: new Date(),
           })
           .where(eq(users.id, existing.id))
@@ -172,6 +177,7 @@ async function setupConsumers() {
           phone,
           role: "trainee",
           approvedRole,
+          physicalSiteId: physicalSiteId || null,
           isActive: false,
         })
         .returning();

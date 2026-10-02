@@ -61,6 +61,15 @@ export async function sendEmail(
 
 const LOGO_URL = "https://res.cloudinary.com/dpbba8033/image/upload/v1775955555/logo_tre5jx.svg";
 
+function escapeHtml(value: string) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function base(content: string, preheader = "", baseUrl?: string) {
   const effectiveBaseUrl = (baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
   return `
@@ -449,6 +458,76 @@ export const templates = {
         ${ctaButton("Access LMS Dashboard", `${effectiveBaseUrl}/learn/lms/dashboard`)}
         ${signature()}
       `, `Your group allocation: ${groupName} | Location: ${location} | Time: ${timeRange}`, baseUrl),
+    };
+  },
+
+  // ── Trainer support tickets ───────────────────────────────────
+  // Subject lines and messages are written by users, so always escape them.
+
+  ticketCreated: (firstName: string, code: string, subject: string, trainerName: string, baseUrl?: string) => {
+    const url = (baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+    return {
+      subject: `We received your ticket ${code}`,
+      html: base(`
+        ${heading(`Thank you, ${escapeHtml(firstName)}.`)}
+        ${para("Your ticket has been received and our programme team will review it. Everything you share is handled confidentially and is never shown to the trainer concerned.")}
+        ${infoBox([
+          { label: "Ticket", value: code },
+          { label: "Subject", value: escapeHtml(subject) },
+          { label: "About", value: escapeHtml(trainerName) },
+        ])}
+        ${para("We aim to respond within 2 working days. You will get an email whenever we reply or update your ticket.")}
+        ${ctaButton("View your ticket", `${url}/learn/lms/support`)}
+        ${signature()}
+      `, `Ticket ${code} received — we'll be in touch.`, baseUrl),
+    };
+  },
+
+  ticketReplied: (name: string, code: string, subject: string, message: string, status: string, baseUrl?: string) => {
+    const url = (baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+    return {
+      subject: `New reply on your ticket ${code}`,
+      html: base(`
+        ${heading(`Hi ${escapeHtml(name)},`)}
+        ${para(`The programme team replied to your ticket <strong>${code}</strong> — "${escapeHtml(subject)}".`)}
+        ${notice(escapeHtml(message).replace(/\n/g, "<br />"), "info")}
+        ${infoBox([{ label: "Status", value: escapeHtml(status) }])}
+        ${ctaButton("Reply or view ticket", `${url}/learn/lms/support`)}
+        ${signature()}
+      `, `New reply on ticket ${code}`, baseUrl),
+    };
+  },
+
+  ticketStatusChanged: (name: string, code: string, subject: string, status: string, baseUrl?: string) => {
+    const url = (baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+    return {
+      subject: `Ticket ${code}: ${status}`,
+      html: base(`
+        ${heading(`Hi ${escapeHtml(name)},`)}
+        ${para(`Your ticket <strong>${code}</strong> — "${escapeHtml(subject)}" — is now <strong>${escapeHtml(status)}</strong>.`)}
+        ${para("If this does not solve the problem, you can reply from the ticket page and it will go back to the team.")}
+        ${ctaButton("View ticket", `${url}/learn/lms/support`)}
+        ${signature()}
+      `, `Ticket ${code} is now ${status}`, baseUrl),
+    };
+  },
+
+  ticketStaffAlert: (code: string, subject: string, category: string, priority: string, trainerName: string, reporterName: string, baseUrl?: string) => {
+    const url = (baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+    return {
+      subject: `${priority === "urgent" ? "[URGENT] " : ""}New trainer ticket ${code}: ${subject}`,
+      html: base(`
+        ${heading("New trainer ticket")}
+        ${infoBox([
+          { label: "Ticket", value: code },
+          { label: "Priority", value: escapeHtml(priority) },
+          { label: "Category", value: escapeHtml(category) },
+          { label: "Trainer", value: escapeHtml(trainerName) },
+          { label: "Raised by", value: escapeHtml(reporterName) },
+          { label: "Subject", value: escapeHtml(subject) },
+        ])}
+        ${ctaButton("Open in admin", `${url}/admin/trainer-tickets`)}
+      `, `New ${priority} ticket about ${trainerName}`, baseUrl),
     };
   },
 };
