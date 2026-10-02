@@ -1289,6 +1289,12 @@ app.patch(
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
 app.get(
+  "/api/lms/exams/:id/quiz-requirements",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
   "/api/lms/exams/:id/questions",
   authenticate,
   keepPath,

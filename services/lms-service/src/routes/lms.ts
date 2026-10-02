@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { eq, and, isNull, sql, desc, type InferModel } from "drizzle-orm";
+import { eq, and, isNull, sql, desc, inArray, lte, or, type InferModel } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../index";
 import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, practicalCheckins, exams, examQuestions, examSessions, examAnswers, examViolations, platformTutorials } from "../db/schema";
@@ -45,6 +45,71 @@ async function isWeek12AttendanceComplete(userId: string, cohortId: string) {
 
   const attendedDays = new Set(checkins.map((checkin) => checkin.day));
   return [1, 2, 3, 4, 5].every((day) => attendedDays.has(day));
+}
+
+// Weekly quizzes a trainee still has to take before they may start an exam.
+// Counts every published, already-unlocked week in the cohort that has a published
+// quiz. A week is satisfied once the user has submitted an attempt on any of its
+// quizzes (set REQUIRE_QUIZ_PASS to demand a pass instead).
+const REQUIRE_QUIZ_PASS = false;
+
+export async function getMissingWeeklyQuizzes(userId: string, cohortId: string) {
+  const now = new Date();
+  const cohortWeeks = await db
+    .select({ id: weeks.id, weekNumber: weeks.weekNumber, title: weeks.title })
+    .from(weeks)
+    .where(
+      and(
+        eq(weeks.cohortId, cohortId),
+        eq(weeks.isPublished, true),
+        or(isNull(weeks.unlockDate), lte(weeks.unlockDate, now)),
+      ),
+    )
+    .orderBy(weeks.weekNumber);
+  if (!cohortWeeks.length) return [];
+
+  const weekIds = cohortWeeks.map((w) => w.id);
+  const weekQuizzes = await db
+    .select({ id: quizzes.id, weekId: quizzes.weekId, title: quizzes.title, isPublished: quizzes.isPublished, createdAt: quizzes.createdAt })
+    .from(quizzes)
+    .where(inArray(quizzes.weekId, weekIds))
+    .orderBy(desc(quizzes.createdAt));
+  if (!weekQuizzes.length) return [];
+
+  const attempts = await db
+    .select({ quizId: quizAttempts.quizId, passed: quizAttempts.passed })
+    .from(quizAttempts)
+    .where(and(eq(quizAttempts.userId, userId), inArray(quizAttempts.quizId, weekQuizzes.map((q) => q.id))));
+  const doneQuizIds = new Set(attempts.filter((a) => !REQUIRE_QUIZ_PASS || a.passed).map((a) => a.quizId));
+
+  const weekLessons = await db
+    .select({ id: lessons.id, weekId: lessons.weekId })
+    .from(lessons)
+    .where(and(inArray(lessons.weekId, weekIds), eq(lessons.isPublished, true)));
+  const completed = await db
+    .select({ lessonId: progress.lessonId })
+    .from(progress)
+    .where(and(eq(progress.userId, userId), eq(progress.completed, true), inArray(progress.weekId, weekIds)));
+  const completedLessonIds = new Set(completed.map((p) => p.lessonId));
+
+  const missing = [];
+  for (const week of cohortWeeks) {
+    const quizzesForWeek = weekQuizzes.filter((q) => q.weekId === week.id);
+    // Newest published quiz is the one the week page shows
+    const activeQuiz = quizzesForWeek.find((q) => q.isPublished);
+    if (!activeQuiz) continue;
+    if (quizzesForWeek.some((q) => doneQuizIds.has(q.id))) continue;
+
+    missing.push({
+      weekId: week.id,
+      weekNumber: week.weekNumber,
+      weekTitle: week.title,
+      quizId: activeQuiz.id,
+      quizTitle: activeQuiz.title,
+      lessonsRemaining: weekLessons.filter((l) => l.weekId === week.id && !completedLessonIds.has(l.id)).length,
+    });
+  }
+  return missing;
 }
 
 // ─────────────────────────────────────────────
@@ -587,10 +652,12 @@ quizzesRouter.get("/week/:weekId", async (req: Request, res: Response) => {
     // Proactively update legacy DB quizzes to 70% passing score
     db.update(quizzes).set({ passingScore: 70 }).execute().catch(() => {});
 
+    // Published quizzes first, newest first, so clients can rely on index 0
     const all = await db
       .select()
       .from(quizzes)
-      .where(eq(quizzes.weekId, req.params.weekId));
+      .where(eq(quizzes.weekId, req.params.weekId))
+      .orderBy(desc(quizzes.isPublished), desc(quizzes.createdAt));
 
     const normalized = all.map((q) => ({
       ...q,
@@ -1303,6 +1370,22 @@ examsRouter.get("/", async (req: Request, res: Response) => {
   }
 });
  
+// GET /lms/exams/:id/quiz-requirements
+// Weekly quizzes the calling trainee must take before starting this exam.
+examsRouter.get("/:id/quiz-requirements", async (req: Request, res: Response) => {
+  const userId = req.headers["x-user-id"] as string | undefined;
+  if (!userId) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    const [exam] = await db.select().from(exams).where(eq(exams.id, req.params.id)).limit(1);
+    if (!exam) return res.status(404).json({ error: "Exam not found" });
+    const missingQuizzes = await getMissingWeeklyQuizzes(userId, exam.cohortId);
+    return res.json({ ready: missingQuizzes.length === 0, missingQuizzes });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to check quiz requirements" });
+  }
+});
+
 // GET /lms/exams/:id
 examsRouter.get("/:id", async (req: Request, res: Response) => {
   try {
@@ -1683,6 +1766,17 @@ examsRouter.post(
         });
       }
  
+      // Every unlocked weekly quiz must be taken before a new exam session starts
+      const missingQuizzes = await getMissingWeeklyQuizzes(userId, exam.cohortId);
+      if (missingQuizzes.length > 0) {
+        const list = missingQuizzes.map((q) => `Week ${q.weekNumber}: ${q.quizTitle}`).join(", ");
+        return res.status(403).json({
+          error: `You must take every weekly quiz before this exam. Missing: ${list}.`,
+          code: "QUIZZES_INCOMPLETE",
+          missingQuizzes,
+        });
+      }
+
       // Create new session
       const startedAt = new Date();
       const deadlineAt = new Date(
