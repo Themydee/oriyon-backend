@@ -1,9 +1,14 @@
 # Oriyon Daily Site Report — Agent Instructions
 
 You are the **coordinator** of Oriyon International's daily website monitoring team.
-Your job: find out what happened on the website in the last 24 hours (logins, what is
-breaking, what is slow), work out *why* using the code, and publish one clear report
-saying what should be fixed and what could be improved.
+Your job: find out what is happening on the website (logins, what is breaking, what is
+slow), work out *why* using the code, and publish one clear report saying what should be
+fixed and what could be improved.
+
+**Cadence:** the job runs every 2 hours. There is **one report per day** (Africa/Lagos
+date): the first run of the day creates it, every later run rewrites it with the latest
+rolling-24h picture and adds a short "Latest check" entry. Do not create a new issue or
+document per run.
 
 Repositories (clone them if they are not already present):
 
@@ -16,7 +21,11 @@ From the `oriyon-backend` checkout run:
 
 ```bash
 node monitoring/collect.mjs --hours 24 --out /tmp/oriyon-snapshot.json
+node monitoring/collect.mjs --hours 2  --out /tmp/oriyon-snapshot-2h.json
 ```
+
+The 24h snapshot drives the report; the 2h snapshot tells you what changed since the
+previous run (new errors, a page that just went down, a login spike).
 
 If `monitoring/collect.mjs` does not exist on the default branch yet, run
 `git fetch origin claude/website-monitoring-agents-0qsj6f` and use the file from that branch.
@@ -36,8 +45,8 @@ The snapshot contains:
     top failing accounts and IPs, accounts still pending password setup
 - `notes[]` — anything that could not be collected (mention these in the report)
 
-Also find yesterday's report: the most recent open issue in `themydee/oriyon-backend`
-labelled `site-report`. You will compare against it.
+Also find today's report (if a previous run already created it) and yesterday's: the
+issues in `themydee/oriyon-backend` labelled `site-report`. Compare against them.
 
 ## Step 2 — Run three specialist subagents in parallel
 
@@ -95,6 +104,11 @@ Use exactly this structure:
 
 **Overall status:** 🟢 Healthy | 🟡 Degraded | 🔴 Down — <one-sentence summary>
 
+_Last updated <HH:MM> WAT · checks every 2 hours_
+
+## Latest check (<HH:MM> WAT)
+<2–4 bullets: what changed in the last 2 hours. "No change" is a valid answer.>
+
 ## At a glance
 | Metric | Last 24h | vs yesterday |
 |---|---|---|
@@ -125,12 +139,18 @@ Use exactly this structure:
 Keep it readable for a non-engineer at the top (status + "Fix now"), with technical detail
 below. If there is nothing to fix, say so plainly — do not invent problems.
 
-## Step 4 — Publish
+## Step 4 — Publish (GitHub issue + Claude Doc)
 
-1. Make sure the label `site-report` exists in `themydee/oriyon-backend` (create it if not).
-2. Create an issue in `themydee/oriyon-backend` titled `Daily site report — <YYYY-MM-DD>`
-   with the report as the body and the `site-report` label.
-3. Close yesterday's `site-report` issue with a one-line comment linking today's.
-4. Finish with a 3-line summary: overall status, number of "fix now" items, link to the issue.
+**GitHub issue** in `themydee/oriyon-backend`, label `site-report` (create the label if missing):
+1. First run of the day: create `Daily site report — <YYYY-MM-DD>` with the report as the
+   body, and close yesterday's `site-report` issue with a comment linking today's.
+2. Later runs: replace today's issue body with the updated report. Add a comment **only**
+   when something new is "Fix now" or the overall status changed. That comment triggers
+   GitHub's email notification, so routine runs stay quiet.
+
+**Claude Doc**: one doc per day titled `Oriyon Site Report — <YYYY-MM-DD>`, same content.
+The first run creates it. Later runs update it in place, and the doc link goes in the issue body.
+
+Finish with a 3-line summary: overall status, number of "fix now" items, issue and doc links.
 
 Do not change any code, open pull requests, or push commits — this job only reports.

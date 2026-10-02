@@ -1,6 +1,6 @@
 # Site Monitoring & Daily Report
 
-A team of Claude agents checks oriyoninternational.com every morning. It records logins, what is
+A team of Claude agents checks oriyoninternational.com every 2 hours. It records logins, what is
 breaking and what is slow, works out the cause from the code, and posts a report as a GitHub issue
 labelled `site-report`.
 
@@ -17,7 +17,7 @@ Login attempts ──────▶ auth-service login_events table ───�
              (AGENT_PROMPT.md)   ── Agent B: logins & security
                                  ── Agent C: code & UX audit (improvements)
                                                           │
-                                  GitHub issue "Daily site report — YYYY-MM-DD"
+         one GitHub issue + one Claude Doc per day, refreshed every 2 hours
 ```
 
 ## What gets recorded
