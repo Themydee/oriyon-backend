@@ -8,6 +8,13 @@
       "when": 1774994756340,
       "tag": "0000_married_master_chief",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790981847592,
+      "tag": "0001_nasty_nuke",
+      "breakpoints": true
     }
   ]
 }

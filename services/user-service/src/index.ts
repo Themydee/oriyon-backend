@@ -35,9 +35,11 @@ queryClient`
     trainer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     assigned_at TIMESTAMP DEFAULT NOW() NOT NULL
   );
-`.catch((err) =>
-  console.error("[user-service] group_trainers table migration warning:", err)
-);
+`
+  .then(() => queryClient`ALTER TABLE group_trainers ADD COLUMN IF NOT EXISTS assigned_day varchar(100);`)
+  .catch((err) =>
+    console.error("[user-service] group_trainers table migration warning:", err)
+  );
 queryClient`
   DO $$
   BEGIN

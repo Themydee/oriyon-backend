@@ -82,6 +82,15 @@ app.use(
   }),
 );
 app.use(morgan("combined"));
+
+// Identity headers are set only by the authenticate middleware. Drop any the
+// client sent so downstream services can never be handed a forged role.
+app.use((req, _res, next) => {
+  for (const header of Object.keys(req.headers)) {
+    if (header.startsWith("x-user-")) delete req.headers[header];
+  }
+  next();
+});
 app.use(requestMetrics);
 
 // ─────────────────────────────────────────────
@@ -360,7 +369,7 @@ app.post(
   }),
 );
 app.delete(
-  "/api/cooperative/:id",
+  "/api/cooperative/:id([0-9a-fA-F-]{36})",
   authenticate,
   requireRole("admin"),
   keepPath,
@@ -370,7 +379,7 @@ app.delete(
   }),
 );
 app.get(
-  "/api/cooperative/:id",
+  "/api/cooperative/:id([0-9a-fA-F-]{36})",
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -445,7 +454,7 @@ app.delete(
   }),
 );
 app.patch(
-  "/api/cooperative/:id",
+  "/api/cooperative/:id([0-9a-fA-F-]{36})",
   authenticate,
   requireRole("admin"),
   keepPath,
