@@ -8,6 +8,7 @@ import { createProxyMiddleware } from "http-proxy-middleware";
 import swaggerUi from "swagger-ui-express";
 import { swaggerSpec } from "./swagger";
 import { authenticate, requireRole } from "./middleware/auth";
+import { requestMetrics, monitoringRouter } from "./monitoring";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -81,6 +82,7 @@ app.use(
   }),
 );
 app.use(morgan("combined"));
+app.use(requestMetrics);
 
 // ─────────────────────────────────────────────
 // SECURED RATE LIMITERS
@@ -151,6 +153,11 @@ app.get("/health", (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+// ─────────────────────────────────────────────
+// MONITORING — browser error intake + daily report
+// ─────────────────────────────────────────────
+app.use("/api/monitoring", monitoringRouter);
 
 // ─────────────────────────────────────────────
 // SWAGGER API DOCUMENTATION (QA testing endpoints)

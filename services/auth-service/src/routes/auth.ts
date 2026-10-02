@@ -4,9 +4,9 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
-import { eq, and, sql, ilike } from "drizzle-orm";
+import { eq, and, sql, ilike, gte, desc } from "drizzle-orm";
 import { db } from "../index";
-import { authUsers, refreshTokens, setupTokens } from "../db/schema";
+import { authUsers, refreshTokens, setupTokens, loginEvents } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 import { EVENTS } from "../types";
 import { getClientFrontendUrl } from "../utils/urlHelper";
@@ -78,12 +78,41 @@ async function saveRefreshToken(userId: string, token: string) {
   }
 }
 
+// Records a login / set-password / reset-password attempt for the
+// monitoring report. Never throws — monitoring must not break auth.
+async function recordLoginEvent(
+  req: Request,
+  event: "login" | "set_password" | "reset_password",
+  success: boolean,
+  reason: string,
+  user?: { id?: string | null; email?: string | null; role?: string | null },
+) {
+  try {
+    const forwarded = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim();
+    await db.insert(loginEvents).values({
+      event,
+      success,
+      reason,
+      email: user?.email?.trim().toLowerCase().slice(0, 255) || null,
+      userId: user?.id || null,
+      role: user?.role || null,
+      ip: (forwarded || req.ip || "").slice(0, 64) || null,
+      userAgent: (req.headers["user-agent"] as string | undefined)?.slice(0, 500) || null,
+    });
+  } catch (err) {
+    console.warn("[auth] recordLoginEvent warning:", err);
+  }
+}
+
 // ─────────────────────────────────────────────
 // POST /auth/login
 // ─────────────────────────────────────────────
 router.post("/login", async (req: Request, res: Response) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
+    await recordLoginEvent(req, "login", false, "invalid_input", {
+      email: typeof req.body?.email === "string" ? req.body.email : null,
+    });
     return res.status(400).json({ error: "Invalid input", details: parsed.error.flatten() });
   }
 
@@ -97,23 +126,28 @@ router.post("/login", async (req: Request, res: Response) => {
       .limit(1);
 
     if (!user) {
+      await recordLoginEvent(req, "login", false, "unknown_email", { email: cleanEmail });
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
     if (!user.isActive) {
       if (user.passwordHash) {
+        await recordLoginEvent(req, "login", false, "account_restricted", user);
         return res.status(403).json({ error: "Your application is undergoing a revisit. Access is restricted at this time." });
       }
+      await recordLoginEvent(req, "login", false, "setup_incomplete", user);
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
     // Guard: user exists but has never set a password yet
     if (!user.passwordHash) {
+      await recordLoginEvent(req, "login", false, "setup_incomplete", user);
       return res.status(403).json({ error: "Account setup not complete. Please check your email for a setup link." });
     }
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
+      await recordLoginEvent(req, "login", false, "wrong_password", user);
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
@@ -140,9 +174,11 @@ router.post("/login", async (req: Request, res: Response) => {
       console.error("[auth] Failed to publish user.logged_in event to RabbitMQ, continuing login:", rabbitmqErr);
     }
 
+    await recordLoginEvent(req, "login", true, "ok", user);
     return res.json({ accessToken, refreshToken, role: user.role });
   } catch (err: any) {
     console.error("[auth] login error:", err);
+    await recordLoginEvent(req, "login", false, "server_error", { email: parsed.data.email });
     return res.status(500).json({ error: "Internal server error", message: err?.message || String(err) });
   }
 });
@@ -235,12 +271,15 @@ router.post("/set-password", async (req: Request, res: Response) => {
       .limit(1);
 
     if (!setupToken) {
+      await recordLoginEvent(req, "set_password", false, "invalid_token");
       return res.status(400).json({ error: "Invalid token" });
     }
     if (setupToken.used) {
+      await recordLoginEvent(req, "set_password", false, "token_used", { id: setupToken.userId });
       return res.status(400).json({ error: "Token has already been used" });
     }
     if (setupToken.expiresAt < new Date()) {
+      await recordLoginEvent(req, "set_password", false, "token_expired", { id: setupToken.userId });
       return res.status(400).json({ error: "Token has expired. Please contact support." });
     }
 
@@ -284,9 +323,11 @@ router.post("/set-password", async (req: Request, res: Response) => {
       .set({ lastLoginAt: new Date() })
       .where(eq(authUsers.id, user.id));
 
+    await recordLoginEvent(req, "set_password", true, "ok", user);
     return res.json({ accessToken, refreshToken, role: user.role });
   } catch (err) {
     console.error("[auth] set-password error:", err);
+    await recordLoginEvent(req, "set_password", false, "server_error");
     return res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -418,6 +459,7 @@ router.post("/reset-password", async (req: Request, res: Response) => {
       .limit(1);
 
     if (!setupToken || setupToken.used || setupToken.expiresAt < new Date()) {
+      await recordLoginEvent(req, "reset_password", false, "invalid_or_expired_token", setupToken ? { id: setupToken.userId } : undefined);
       return res.status(400).json({ error: "Invalid or expired token" });
     }
 
@@ -438,9 +480,11 @@ router.post("/reset-password", async (req: Request, res: Response) => {
       .delete(refreshTokens)
       .where(eq(refreshTokens.userId, setupToken.userId));
 
+    await recordLoginEvent(req, "reset_password", true, "ok", { id: setupToken.userId });
     return res.json({ message: "Password reset successfully. Please log in." });
   } catch (err) {
     console.error("[auth] reset-password error:", err);
+    await recordLoginEvent(req, "reset_password", false, "server_error");
     return res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -542,6 +586,107 @@ router.get("/admin/setup-token/:email", async (req: Request, res: Response) => {
     return res.json({ token: setupToken.token });
   } catch (err) {
     console.error("[auth] fetch setup token error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /auth/admin/login-activity?hours=24
+// Admin only (called by the gateway's monitoring report).
+// Aggregated login / onboarding activity for the window.
+// ─────────────────────────────────────────────
+router.get("/admin/login-activity", async (req: Request, res: Response) => {
+  const callerRole = req.headers["x-user-role"] as string;
+  if (callerRole !== "admin") {
+    return res.status(403).json({ error: "Forbidden — admin only" });
+  }
+
+  const hours = Math.min(Math.max(Number(req.query.hours) || 24, 1), 24 * 30);
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+  try {
+    const byOutcome = await db
+      .select({
+        event: loginEvents.event,
+        success: loginEvents.success,
+        reason: loginEvents.reason,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(loginEvents)
+      .where(gte(loginEvents.createdAt, since))
+      .groupBy(loginEvents.event, loginEvents.success, loginEvents.reason);
+
+    const successfulByRole = await db
+      .select({
+        role: loginEvents.role,
+        logins: sql<number>`count(*)::int`,
+        uniqueUsers: sql<number>`count(distinct ${loginEvents.userId})::int`,
+      })
+      .from(loginEvents)
+      .where(and(gte(loginEvents.createdAt, since), eq(loginEvents.event, "login"), eq(loginEvents.success, true)))
+      .groupBy(loginEvents.role);
+
+    const byHour = await db
+      .select({
+        hour: sql<string>`to_char(date_trunc('hour', ${loginEvents.createdAt}), 'YYYY-MM-DD"T"HH24:00')`,
+        success: sql<number>`count(*) filter (where ${loginEvents.success})::int`,
+        failed: sql<number>`count(*) filter (where not ${loginEvents.success})::int`,
+      })
+      .from(loginEvents)
+      .where(and(gte(loginEvents.createdAt, since), eq(loginEvents.event, "login")))
+      .groupBy(sql`1`)
+      .orderBy(sql`1`);
+
+    // Accounts and IPs with repeated failures — possible lockouts or brute force
+    const topFailingEmails = await db
+      .select({
+        email: loginEvents.email,
+        failures: sql<number>`count(*)::int`,
+        reasons: sql<string[]>`array_agg(distinct ${loginEvents.reason})`,
+        lastAttempt: sql<string>`max(${loginEvents.createdAt})`,
+      })
+      .from(loginEvents)
+      .where(and(gte(loginEvents.createdAt, since), eq(loginEvents.success, false), sql`${loginEvents.email} is not null`))
+      .groupBy(loginEvents.email)
+      .orderBy(desc(sql`count(*)`))
+      .limit(15);
+
+    const topFailingIps = await db
+      .select({
+        ip: loginEvents.ip,
+        failures: sql<number>`count(*)::int`,
+        distinctEmails: sql<number>`count(distinct ${loginEvents.email})::int`,
+      })
+      .from(loginEvents)
+      .where(and(gte(loginEvents.createdAt, since), eq(loginEvents.success, false), sql`${loginEvents.ip} is not null`))
+      .groupBy(loginEvents.ip)
+      .orderBy(desc(sql`count(*)`))
+      .limit(10);
+
+    // Onboarding funnel: accounts created but password never set
+    const [pendingSetup] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(authUsers)
+      .where(sql`${authUsers.passwordHash} is null`);
+
+    const [expiredUnusedSetupTokens] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(setupTokens)
+      .where(and(eq(setupTokens.used, false), sql`${setupTokens.expiresAt} < now()`));
+
+    return res.json({
+      windowHours: hours,
+      since: since.toISOString(),
+      byOutcome,
+      successfulByRole,
+      byHour,
+      topFailingEmails,
+      topFailingIps,
+      accountsPendingSetup: pendingSetup?.count ?? 0,
+      expiredUnusedSetupTokens: expiredUnusedSetupTokens?.count ?? 0,
+    });
+  } catch (err) {
+    console.error("[auth] login-activity error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });

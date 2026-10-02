@@ -43,6 +43,13 @@
       "when": 1786782295985,
       "tag": "0005_graceful_vertigo",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790979788120,
+      "tag": "0006_bent_avengers",
+      "breakpoints": true
     }
   ]
 }

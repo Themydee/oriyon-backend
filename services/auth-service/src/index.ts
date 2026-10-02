@@ -87,6 +87,14 @@ async function bootstrap() {
   app.listen(PORT, () => {
     console.log(`[auth-service] Running on port ${PORT}`);
   });
+
+  // Prune old login_events rows used by the monitoring report
+  const retentionDays = Number(process.env.LOGIN_EVENTS_RETENTION_DAYS) || 90;
+  const pruneLoginEvents = () =>
+    queryClient`DELETE FROM login_events WHERE created_at < now() - make_interval(days => ${retentionDays})`
+      .catch((err: any) => console.warn("[auth-service] login_events prune warning:", err));
+  pruneLoginEvents();
+  setInterval(pruneLoginEvents, 24 * 60 * 60 * 1000).unref();
 }
 
 bootstrap().catch(console.error);
