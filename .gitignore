@@ -51,3 +51,5 @@ Thumbs.db
 .env
 .env.local
 .env.production
+# Gateway monitoring state (MONITORING_DATA_FILE)
+monitoring-data.json
