@@ -226,6 +226,38 @@ async function setupConsumers() {
       await sendEmail({ to: email, ...tpl });
     },
   );
+
+  // ── Trainer support tickets ───────────────────
+
+  await consumeEvent("ticket.created", "notifications.ticket.created", async (payload) => {
+    const p = payload as any;
+    if (p.reporterEmail) {
+      const tpl = templates.ticketCreated(p.firstName || p.reporterName || "there", p.code, p.subject, p.trainerName);
+      await sendEmail({ to: p.reporterEmail, ...tpl });
+    }
+    // Optional: alert the programme team (comma-separated addresses)
+    const alertTo = (process.env.TICKETS_ALERT_EMAIL || "").split(",").map((e) => e.trim()).filter(Boolean);
+    for (const to of alertTo) {
+      const tpl = templates.ticketStaffAlert(p.code, p.subject, p.category, p.priority, p.trainerName, p.reporterName);
+      await sendEmail({ to, ...tpl });
+    }
+  });
+
+  await consumeEvent("ticket.replied", "notifications.ticket.replied", async (payload) => {
+    const p = payload as any;
+    if (!p.reporterEmail) return;
+    const firstName = String(p.reporterName || "").split(" ")[0] || "there";
+    const tpl = templates.ticketReplied(firstName, p.code, p.subject, p.message, p.status);
+    await sendEmail({ to: p.reporterEmail, ...tpl });
+  });
+
+  await consumeEvent("ticket.status_changed", "notifications.ticket.status_changed", async (payload) => {
+    const p = payload as any;
+    if (!p.reporterEmail) return;
+    const firstName = String(p.reporterName || "").split(" ")[0] || "there";
+    const tpl = templates.ticketStatusChanged(firstName, p.code, p.subject, p.status);
+    await sendEmail({ to: p.reporterEmail, ...tpl });
+  });
 }
 
 async function bootstrap() {

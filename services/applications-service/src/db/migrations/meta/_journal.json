@@ -106,6 +106,13 @@
       "when": 1783598132604,
       "tag": "0014_tidy_leader",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790983152913,
+      "tag": "0015_crazy_corsair",
+      "breakpoints": true
     }
   ]
 }

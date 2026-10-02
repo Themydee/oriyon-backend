@@ -1420,6 +1420,31 @@ app.delete(
 );
 
 // ─────────────────────────────────────────────
+// TRAINER SUPPORT TICKETS (user-service) — signed-in users only;
+// the service decides who is staff from the role the gateway sets
+// ─────────────────────────────────────────────
+app.post(
+  "/api/tickets",
+  submissionLimiter,
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+// Staff queue — declared explicitly; the bare path is not proxied by app.use below
+app.get(
+  "/api/tickets",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+app.use(
+  "/api/tickets",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+
+// ─────────────────────────────────────────────
 // LMS COMMUNITY Q&A & REAL-TIME CHAT
 // ─────────────────────────────────────────────
 app.post(
