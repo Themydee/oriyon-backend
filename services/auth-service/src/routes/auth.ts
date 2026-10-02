@@ -63,7 +63,8 @@ function generateAccessToken(user: { id: string; email: string; role: string; as
 
 function generateRefreshToken(userId: string) {
   return jwt.sign(
-    { userId },
+    // jti keeps tokens unique when the same user logs in twice within one second
+    { userId, jti: crypto.randomUUID() },
     process.env.JWT_REFRESH_SECRET!,
     { expiresIn: (process.env.JWT_REFRESH_EXPIRES_IN || "7d") as any }
   );

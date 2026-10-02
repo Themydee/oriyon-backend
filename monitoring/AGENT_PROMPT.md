@@ -79,6 +79,8 @@ list of `{severity: critical|high|medium|low, title, evidence, likely cause (fil
 - 401 / 403 / 429 volumes from `traffic.totals` — are rate limits hurting real users?
 
 ### Agent C — Code & UX audit (improvements)
+- Run `node monitoring/check-gateway-routes.mjs`. Any `SECURITY` line is a **critical** finding:
+  an admin-only route is reachable without login because an earlier public route catches it.
 - Audit the frontend against the **Known Mismatches** and **Key Rules** in
   `oriyon-backup/CLAUDE.md` (unwired Register/Apply CTAs, demo-access buttons, newsletter
   and contact payloads, post-login redirect, access token in localStorage, etc.).
