@@ -227,6 +227,13 @@ app.get(
   keepPath,
   createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
 );
+app.post(
+  "/api/auth/admin/resend-setup",
+  authenticate,
+  requireRole("admin", "sub_admin"),
+  keepPath,
+  createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
+);
 app.get(
   "/api/auth/admin/setup-token/:email",
   authenticate,
@@ -457,6 +464,15 @@ app.patch(
   "/api/cooperative/:id([0-9a-fA-F-]{36})",
   authenticate,
   requireRole("admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.get(
+  "/api/cooperative/check-status",
+  strictLimiter,
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,

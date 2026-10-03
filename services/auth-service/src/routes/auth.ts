@@ -2,7 +2,6 @@ import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import { eq, and, sql, ilike, gte, desc } from "drizzle-orm";
 import { db } from "../index";
@@ -379,12 +378,86 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
   }
 });
 
+// Create a fresh 7-day setup token and publish the setup email event.
+async function issueSetupLink(req: Request, user: { id: string; email: string }) {
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days (1 week) for setup
+
+  await db.insert(setupTokens).values({ userId: user.id, token, expiresAt });
+
+  const baseUrl = getClientFrontendUrl(req);
+  await publishEvent(EVENTS.USER_SETUP_REQUESTED, {
+    userId: user.id,
+    email: user.email,
+    token,
+    expiresAt: expiresAt.toISOString(),
+    baseUrl,
+    setupLink: `${baseUrl}/auth/setup?token=${token}`,
+  });
+}
+
+// Look up a user-service profile by exact email (used by the admin resend path
+// when an approved user has a profile but no auth record yet).
+async function findUserProfileByEmail(email: string, callerId: string, callerRole: string) {
+  const base = process.env.USER_SERVICE_URL || "http://localhost:3002";
+  const r = await fetch(`${base}/users?search=${encodeURIComponent(email)}&limit=20`, {
+    headers: { "x-user-id": callerId, "x-user-role": callerRole },
+  });
+  if (!r.ok) throw new Error(`user-service responded ${r.status}`);
+  const body: any = await r.json();
+  const list: any[] = body?.data ?? body?.users ?? [];
+  return list.find((u) => typeof u?.email === "string" && u.email.toLowerCase() === email.toLowerCase()) ?? null;
+}
+
 // ─────────────────────────────────────────────
 // POST /auth/resend-setup
-// Resend the first-time account setup link
+// Public: resend the first-time setup link to an existing account that has
+// not set a password yet. Always returns the same reply so it cannot be used
+// to discover or create accounts.
 // ─────────────────────────────────────────────
 router.post("/resend-setup", async (req: Request, res: Response) => {
   const parsed = forgotPasswordSchema.safeParse(req.body); // reuse { email } schema
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const { email } = parsed.data;
+  const genericResponse = {
+    message: "If this email belongs to an approved account that still needs a password, a setup link has been sent.",
+  };
+
+  try {
+    const [user] = await db
+      .select()
+      .from(authUsers)
+      .where(eq(authUsers.email, email))
+      .limit(1);
+
+    if (user && !user.passwordHash) {
+      await issueSetupLink(req, user);
+    }
+
+    return res.json(genericResponse);
+  } catch (err) {
+    console.error("[auth] resend-setup error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// POST /auth/admin/resend-setup
+// Admin / sub_admin: send a setup link. If the person has a user-service
+// profile but no auth record yet, the auth record is created with the
+// profile's id and role. Unknown emails are refused.
+// ─────────────────────────────────────────────
+router.post("/admin/resend-setup", async (req: Request, res: Response) => {
+  const callerRole = req.headers["x-user-role"] as string;
+  const callerId = req.headers["x-user-id"] as string;
+  if (callerRole !== "admin" && callerRole !== "sub_admin") {
+    return res.status(403).json({ error: "Forbidden — admin only" });
+  }
+
+  const parsed = forgotPasswordSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
@@ -398,44 +471,41 @@ router.post("/resend-setup", async (req: Request, res: Response) => {
       .where(eq(authUsers.email, email))
       .limit(1);
 
-    // If no user exists in authUsers yet, auto-provision their account record
     if (!user) {
-      const newId = uuidv4();
-      const [newUser] = await db
+      const profile = await findUserProfileByEmail(email, callerId, callerRole);
+      if (!profile?.id) {
+        return res.status(404).json({
+          error: "No user profile with this email. Approve their application first.",
+        });
+      }
+
+      [user] = await db
         .insert(authUsers)
         .values({
-          id: newId,
+          id: profile.id,
           email,
-          role: "trainee",
+          role: profile.role || "trainee",
           isActive: false,
         })
+        .onConflictDoNothing()
         .returning();
-      user = newUser;
+
+      if (!user) {
+        [user] = await db.select().from(authUsers).where(eq(authUsers.id, profile.id)).limit(1);
+      }
+      if (!user) {
+        return res.status(409).json({ error: "Could not create the auth record for this user." });
+      }
     }
 
-    // If they already set a password, inform caller
     if (user.passwordHash) {
       return res.json({ message: "User has already set up their account password." });
     }
 
-    const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days (1 week) for setup
-
-    await db.insert(setupTokens).values({ userId: user.id, token, expiresAt });
-
-    const baseUrl = getClientFrontendUrl(req);
-    await publishEvent(EVENTS.USER_SETUP_REQUESTED, {
-      userId: user.id,
-      email: user.email,
-      token,
-      expiresAt: expiresAt.toISOString(),
-      baseUrl,
-      setupLink: `${baseUrl}/auth/setup?token=${token}`,
-    });
-
+    await issueSetupLink(req, user);
     return res.json({ message: `Account setup email successfully sent to ${email}.` });
   } catch (err) {
-    console.error("[auth] resend-setup error:", err);
+    console.error("[auth] admin resend-setup error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });

@@ -10,6 +10,74 @@ import { publishEvent } from "../rabbitmq";
 const router = Router();
 
 // ─────────────────────────────────────────────
+// GET /cooperative/check-status?identifier=<email | phone | member code>
+// Public (rate-limited at the gateway) — lets an applicant resume a saved
+// cooperative registration and pay. Returns no personal details: only
+// whether a record exists, its id (needed to start payment) and payment status.
+// ─────────────────────────────────────────────
+router.get("/check-status", async (req: Request, res: Response) => {
+  const identifier = String(req.query.identifier ?? "").trim();
+  if (!identifier || identifier.length > 255) {
+    return res.status(400).json({ error: "Enter the phone number or email you registered with." });
+  }
+
+  try {
+    let condition;
+    if (identifier.includes("@")) {
+      condition = sql`LOWER(${cooperativeMembers.email}) = ${identifier.toLowerCase()}`;
+    } else {
+      const digits = identifier.replace(/\D/g, "");
+      // Compare the last 10 digits so 0803…, 234803… and +234 803… all match.
+      const tail = digits.slice(-10);
+      if (tail.length === 10) {
+        condition = or(
+          sql`RIGHT(REGEXP_REPLACE(${cooperativeMembers.phone}, '[^0-9]', '', 'g'), 10) = ${tail}`,
+          sql`LOWER(${cooperativeMembers.memberId}) = ${identifier.toLowerCase()}`,
+        );
+      } else {
+        condition = sql`LOWER(${cooperativeMembers.memberId}) = ${identifier.toLowerCase()}`;
+      }
+    }
+
+    const [member] = await db
+      .select({
+        id: cooperativeMembers.id,
+        registrationFeePaid: cooperativeMembers.registrationFeePaid,
+        cooperativeId: cooperativeMembers.cooperativeId,
+      })
+      .from(cooperativeMembers)
+      .where(condition)
+      .orderBy(desc(cooperativeMembers.joinedAt))
+      .limit(1);
+
+    if (!member) {
+      return res.json({ found: false });
+    }
+
+    const paid = member.registrationFeePaid === "YES";
+    let whatsappLink: string | null = null;
+    if (paid && member.cooperativeId) {
+      const [coop] = await db
+        .select({ whatsappLink: cooperatives.whatsappLink })
+        .from(cooperatives)
+        .where(eq(cooperatives.id, member.cooperativeId))
+        .limit(1);
+      whatsappLink = coop?.whatsappLink ?? null;
+    }
+
+    return res.json({
+      found: true,
+      memberId: member.id,
+      paymentStatus: paid ? "PAID" : "PENDING",
+      whatsappLink,
+    });
+  } catch (err) {
+    console.error("[cooperative] check-status error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ─────────────────────────────────────────────
 // GET /cooperative
 // Public — list all cooperatives (or dynamic list)
 // ─────────────────────────────────────────────
