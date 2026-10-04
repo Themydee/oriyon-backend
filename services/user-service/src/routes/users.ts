@@ -577,6 +577,9 @@ userRouter.post("/lookup-by-ids", async (req: Request, res: Response) => {
         firstName: users.firstName,
         lastName: users.lastName,
         role: users.role,
+        approvedRole: users.approvedRole,
+        isCooperativeOnly: users.isCooperativeOnly,
+        isActive: users.isActive,
       })
       .from(users)
       .where(inArray(users.id, parsed.data.ids));
