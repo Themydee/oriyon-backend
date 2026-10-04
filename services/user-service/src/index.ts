@@ -350,6 +350,17 @@ async function ensureDbColumns() {
   } catch (err) {
     console.error("[user-service] Failed to ensure photo columns:", err);
   }
+
+  // Indexes for the admin user list (GET /users sorts by created_at and then
+  // loads cohort/group memberships for the page of users).
+  try {
+    await queryClient`CREATE INDEX IF NOT EXISTS users_created_at_idx ON users (created_at DESC);`;
+    await queryClient`CREATE INDEX IF NOT EXISTS users_role_idx ON users (role);`;
+    await queryClient`CREATE INDEX IF NOT EXISTS cohort_members_user_id_idx ON cohort_members (user_id);`;
+    await queryClient`CREATE INDEX IF NOT EXISTS group_members_user_id_idx ON group_members (user_id);`;
+  } catch (err) {
+    console.error("[user-service] Failed to ensure user list indexes:", err);
+  }
 }
 
 // ─────────────────────────────────────────────

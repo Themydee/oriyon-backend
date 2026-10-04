@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { z } from "zod";
-import { eq, and, sql, ilike, gte, desc } from "drizzle-orm";
+import { eq, and, sql, ilike, gte, desc, isNull } from "drizzle-orm";
 import { db } from "../index";
 import { authUsers, refreshTokens, setupTokens, loginEvents } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
@@ -107,6 +107,35 @@ async function recordLoginEvent(
 // ─────────────────────────────────────────────
 // POST /auth/login
 // ─────────────────────────────────────────────
+// Per-account brute-force guard: after this many wrong passwords for one email
+// within the window, further attempts for that email are refused until the
+// window passes. The gateway's per-IP limit is deliberately generous because
+// trainees at a training site share one IP address.
+const MAX_FAILED_LOGINS_PER_EMAIL = 10;
+const FAILED_LOGIN_WINDOW_MINUTES = 15;
+
+async function tooManyFailedLogins(email: string): Promise<boolean> {
+  try {
+    const since = new Date(Date.now() - FAILED_LOGIN_WINDOW_MINUTES * 60 * 1000);
+    const [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(loginEvents)
+      .where(
+        and(
+          eq(loginEvents.event, "login"),
+          eq(loginEvents.success, false),
+          eq(loginEvents.reason, "wrong_password"),
+          eq(loginEvents.email, email),
+          gte(loginEvents.createdAt, since),
+        ),
+      );
+    return (row?.n ?? 0) >= MAX_FAILED_LOGINS_PER_EMAIL;
+  } catch (err) {
+    console.warn("[auth] failed-login check warning:", err);
+    return false;
+  }
+}
+
 router.post("/login", async (req: Request, res: Response) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -119,6 +148,14 @@ router.post("/login", async (req: Request, res: Response) => {
   try {
     const { email, password } = parsed.data;
     const cleanEmail = email.trim().toLowerCase();
+
+    if (await tooManyFailedLogins(cleanEmail)) {
+      await recordLoginEvent(req, "login", false, "locked_out", { email: cleanEmail });
+      return res.status(429).json({
+        error: `Too many failed sign-in attempts for this account. Please wait ${FAILED_LOGIN_WINDOW_MINUTES} minutes or reset your password.`,
+      });
+    }
+
     const [user] = await db
       .select()
       .from(authUsers)
@@ -440,6 +477,109 @@ router.post("/resend-setup", async (req: Request, res: Response) => {
     return res.json(genericResponse);
   } catch (err) {
     console.error("[auth] resend-setup error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Look up user-service profiles for many ids at once (chunks of 500).
+async function lookupProfilesByIds(ids: string[], callerId: string, callerRole: string) {
+  const base = process.env.USER_SERVICE_URL || "http://localhost:3002";
+  const found = new Map<string, { id: string; email: string; firstName?: string; role?: string }>();
+  for (let i = 0; i < ids.length; i += 500) {
+    const r = await fetch(`${base}/users/lookup-by-ids`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-user-id": callerId, "x-user-role": callerRole },
+      body: JSON.stringify({ ids: ids.slice(i, i + 500) }),
+    });
+    if (!r.ok) throw new Error(`user-service responded ${r.status}`);
+    const body: any = await r.json();
+    for (const p of body?.data ?? []) found.set(p.id, p);
+  }
+  return found;
+}
+
+// ─────────────────────────────────────────────
+// POST /auth/admin/resend-setup/bulk
+// Admin / sub_admin: send setup links to every approved person who has not
+// set a password yet. Only accounts with a user-service profile are included
+// (orphan auth records, e.g. from the old public sign-up loophole, are skipped).
+// Body: { dryRun?: boolean, skipActiveLinks?: boolean, limit?: number }
+//   dryRun          — only return the counts, send nothing
+//   skipActiveLinks — leave out people whose current link has not expired
+//   limit           — send at most this many (oldest accounts first), so a
+//                     large backlog can go out in batches within email quotas
+// ─────────────────────────────────────────────
+router.post("/admin/resend-setup/bulk", async (req: Request, res: Response) => {
+  const callerRole = req.headers["x-user-role"] as string;
+  const callerId = req.headers["x-user-id"] as string;
+  if (callerRole !== "admin" && callerRole !== "sub_admin") {
+    return res.status(403).json({ error: "Forbidden — admin only" });
+  }
+
+  const parsed = z
+    .object({
+      dryRun: z.boolean().optional().default(false),
+      skipActiveLinks: z.boolean().optional().default(true),
+      limit: z.number().int().min(1).max(1000).optional().default(100),
+    })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+  const { dryRun, skipActiveLinks, limit } = parsed.data;
+
+  try {
+    const pending = await db
+      .select({ id: authUsers.id, email: authUsers.email, createdAt: authUsers.createdAt })
+      .from(authUsers)
+      .where(isNull(authUsers.passwordHash))
+      .orderBy(authUsers.createdAt);
+
+    const profiles = await lookupProfilesByIds(pending.map((u) => u.id), callerId, callerRole);
+    const withProfile = pending.filter((u) => profiles.has(u.id));
+
+    const activeRows = await db
+      .select({ userId: setupTokens.userId })
+      .from(setupTokens)
+      .where(and(eq(setupTokens.used, false), gte(setupTokens.expiresAt, new Date())));
+    const hasActiveLink = new Set(activeRows.map((r) => r.userId));
+
+    const eligible = skipActiveLinks ? withProfile.filter((u) => !hasActiveLink.has(u.id)) : withProfile;
+    const batch = eligible.slice(0, limit);
+
+    const summary = {
+      pendingAccounts: pending.length,
+      withoutProfile: pending.length - withProfile.length,
+      withActiveLink: withProfile.filter((u) => hasActiveLink.has(u.id)).length,
+      eligible: eligible.length,
+      batchSize: batch.length,
+    };
+
+    if (dryRun) {
+      return res.json({ dryRun: true, ...summary });
+    }
+
+    let sent = 0;
+    const failed: string[] = [];
+    for (const u of batch) {
+      try {
+        await issueSetupLink(req, u);
+        sent++;
+      } catch (err) {
+        console.error(`[auth] bulk resend-setup failed for ${u.id}:`, err);
+        failed.push(u.email);
+      }
+    }
+
+    return res.json({
+      dryRun: false,
+      ...summary,
+      sent,
+      failed: failed.length,
+      remaining: Math.max(0, eligible.length - sent),
+    });
+  } catch (err) {
+    console.error("[auth] bulk resend-setup error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
