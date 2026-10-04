@@ -440,14 +440,24 @@ async function issueSetupLink(req: Request, user: { id: string; email: string })
   await db.insert(setupTokens).values({ userId: user.id, token, expiresAt });
 
   const baseUrl = getClientFrontendUrl(req);
-  await publishEvent(EVENTS.USER_SETUP_REQUESTED, {
-    userId: user.id,
-    email: user.email,
-    token,
-    expiresAt: expiresAt.toISOString(),
-    baseUrl,
-    setupLink: `${baseUrl}/auth/setup?token=${token}`,
-  });
+  try {
+    await publishEvent(EVENTS.USER_SETUP_REQUESTED, {
+      userId: user.id,
+      email: user.email,
+      token,
+      expiresAt: expiresAt.toISOString(),
+      baseUrl,
+      setupLink: `${baseUrl}/auth/setup?token=${token}`,
+    });
+  } catch (err) {
+    // No email will go out, so don't leave a live link behind: it would make
+    // the next bulk run treat this person as "already has a valid link".
+    await db
+      .delete(setupTokens)
+      .where(eq(setupTokens.token, token))
+      .catch((cleanupErr: unknown) => console.error("[auth] setup token cleanup failed:", cleanupErr));
+    throw err;
+  }
 }
 
 // Look up a user-service profile by exact email (used by the admin resend path
