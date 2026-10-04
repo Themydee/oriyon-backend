@@ -555,6 +555,41 @@ userRouter.post("/trainers/email", async (req: Request, res: Response) => {
 });
 
 // POST /users/bulk-email
+// POST /users/lookup-by-ids
+// Admin / internal: return minimal profile info for the given user ids.
+// Used by auth-service to check which pending logins belong to real profiles.
+userRouter.post("/lookup-by-ids", async (req: Request, res: Response) => {
+  const role = req.headers["x-user-role"] as string;
+  if (role !== "admin" && role !== "sub_admin") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  const parsed = z.object({ ids: z.array(z.string().uuid()).max(1000) }).safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+  if (parsed.data.ids.length === 0) return res.json({ data: [] });
+
+  try {
+    const rows = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        role: users.role,
+        approvedRole: users.approvedRole,
+        isCooperativeOnly: users.isCooperativeOnly,
+        isActive: users.isActive,
+      })
+      .from(users)
+      .where(inArray(users.id, parsed.data.ids));
+    return res.json({ data: rows });
+  } catch (err) {
+    console.error("POST /users/lookup-by-ids error:", err);
+    return res.status(500).json({ error: "Failed to look up users" });
+  }
+});
+
 userRouter.post("/bulk-email", async (req: Request, res: Response) => {
   const schema = z.object({
     subject: z.string().min(1, "Subject is required"),

@@ -50,6 +50,13 @@
       "when": 1790979788120,
       "tag": "0006_bent_avengers",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791100000000,
+      "tag": "0007_login_counters_revoked",
+      "breakpoints": true
     }
   ]
 }

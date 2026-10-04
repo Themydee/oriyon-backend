@@ -3,9 +3,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { z } from "zod";
-import { eq, and, sql, ilike, gte, desc } from "drizzle-orm";
+import { eq, and, sql, ilike, gte, desc, isNull } from "drizzle-orm";
 import { db } from "../index";
-import { authUsers, refreshTokens, setupTokens, loginEvents } from "../db/schema";
+import { authUsers, refreshTokens, setupTokens, loginEvents, loginAttemptCounters } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 import { EVENTS } from "../types";
 import { getClientFrontendUrl } from "../utils/urlHelper";
@@ -107,6 +107,41 @@ async function recordLoginEvent(
 // ─────────────────────────────────────────────
 // POST /auth/login
 // ─────────────────────────────────────────────
+// Per-account brute-force guard: at most this many login attempts per email
+// in a fixed window. Each attempt is counted with one atomic upsert before the
+// password is checked, so concurrent guesses cannot all read a stale count.
+// A successful login clears the counter. The gateway's per-IP limit is
+// deliberately generous because trainees at a training site share one IP.
+const MAX_LOGIN_ATTEMPTS_PER_EMAIL = 10;
+const LOGIN_ATTEMPT_WINDOW_MINUTES = 15;
+
+async function reserveLoginAttempt(email: string): Promise<boolean> {
+  const rows = await db.execute(sql`
+    INSERT INTO login_attempt_counters (email, attempts, window_start)
+    VALUES (${email}, 1, now())
+    ON CONFLICT (email) DO UPDATE SET
+      attempts = CASE
+        WHEN login_attempt_counters.window_start < now() - make_interval(mins => ${LOGIN_ATTEMPT_WINDOW_MINUTES}) THEN 1
+        ELSE login_attempt_counters.attempts + 1
+      END,
+      window_start = CASE
+        WHEN login_attempt_counters.window_start < now() - make_interval(mins => ${LOGIN_ATTEMPT_WINDOW_MINUTES}) THEN now()
+        ELSE login_attempt_counters.window_start
+      END
+    RETURNING attempts
+  `);
+  const row = ((rows as any).rows ?? rows)[0];
+  return Number(row?.attempts ?? 0) <= MAX_LOGIN_ATTEMPTS_PER_EMAIL;
+}
+
+async function clearLoginAttempts(email: string) {
+  try {
+    await db.delete(loginAttemptCounters).where(eq(loginAttemptCounters.email, email));
+  } catch (err) {
+    console.warn("[auth] clearLoginAttempts warning:", err);
+  }
+}
+
 router.post("/login", async (req: Request, res: Response) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -119,6 +154,14 @@ router.post("/login", async (req: Request, res: Response) => {
   try {
     const { email, password } = parsed.data;
     const cleanEmail = email.trim().toLowerCase();
+
+    if (!(await reserveLoginAttempt(cleanEmail))) {
+      await recordLoginEvent(req, "login", false, "locked_out", { email: cleanEmail });
+      return res.status(429).json({
+        error: `Too many sign-in attempts for this account. Please wait ${LOGIN_ATTEMPT_WINDOW_MINUTES} minutes or reset your password.`,
+      });
+    }
+
     const [user] = await db
       .select()
       .from(authUsers)
@@ -174,6 +217,7 @@ router.post("/login", async (req: Request, res: Response) => {
       console.error("[auth] Failed to publish user.logged_in event to RabbitMQ, continuing login:", rabbitmqErr);
     }
 
+    await clearLoginAttempts(cleanEmail);
     await recordLoginEvent(req, "login", true, "ok", user);
     return res.json({ accessToken, refreshToken, role: user.role });
   } catch (err: any) {
@@ -285,11 +329,21 @@ router.post("/set-password", async (req: Request, res: Response) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Save password + activate account
-    await db
+    // Save password + activate account — never for a revoked account
+    // (its application was moved back to review; it must be approved again).
+    const activated = await db
       .update(authUsers)
       .set({ passwordHash, isActive: true, updatedAt: new Date() })
-      .where(eq(authUsers.id, setupToken.userId));
+      .where(and(eq(authUsers.id, setupToken.userId), isNull(authUsers.revokedAt)))
+      .returning({ id: authUsers.id });
+
+    if (activated.length === 0) {
+      await db.update(setupTokens).set({ used: true }).where(eq(setupTokens.id, setupToken.id));
+      await recordLoginEvent(req, "set_password", false, "account_revoked", { id: setupToken.userId });
+      return res.status(403).json({
+        error: "This account is no longer active. Please contact eewyla@oriyoninternational.com.",
+      });
+    }
 
     // Publish user.activated to sync user-service profile
     try {
@@ -386,14 +440,24 @@ async function issueSetupLink(req: Request, user: { id: string; email: string })
   await db.insert(setupTokens).values({ userId: user.id, token, expiresAt });
 
   const baseUrl = getClientFrontendUrl(req);
-  await publishEvent(EVENTS.USER_SETUP_REQUESTED, {
-    userId: user.id,
-    email: user.email,
-    token,
-    expiresAt: expiresAt.toISOString(),
-    baseUrl,
-    setupLink: `${baseUrl}/auth/setup?token=${token}`,
-  });
+  try {
+    await publishEvent(EVENTS.USER_SETUP_REQUESTED, {
+      userId: user.id,
+      email: user.email,
+      token,
+      expiresAt: expiresAt.toISOString(),
+      baseUrl,
+      setupLink: `${baseUrl}/auth/setup?token=${token}`,
+    });
+  } catch (err) {
+    // No email will go out, so don't leave a live link behind: it would make
+    // the next bulk run treat this person as "already has a valid link".
+    await db
+      .delete(setupTokens)
+      .where(eq(setupTokens.token, token))
+      .catch((cleanupErr: unknown) => console.error("[auth] setup token cleanup failed:", cleanupErr));
+    throw err;
+  }
 }
 
 // Look up a user-service profile by exact email (used by the admin resend path
@@ -433,13 +497,128 @@ router.post("/resend-setup", async (req: Request, res: Response) => {
       .where(eq(authUsers.email, email))
       .limit(1);
 
-    if (user && !user.passwordHash) {
+    if (user && !user.passwordHash && !user.revokedAt) {
       await issueSetupLink(req, user);
     }
 
     return res.json(genericResponse);
   } catch (err) {
     console.error("[auth] resend-setup error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Look up user-service profiles for many ids at once (chunks of 500).
+async function lookupProfilesByIds(ids: string[], callerId: string, callerRole: string) {
+  const base = process.env.USER_SERVICE_URL || "http://localhost:3002";
+  const found = new Map<string, any>();
+  for (let i = 0; i < ids.length; i += 500) {
+    const r = await fetch(`${base}/users/lookup-by-ids`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-user-id": callerId, "x-user-role": callerRole },
+      body: JSON.stringify({ ids: ids.slice(i, i + 500) }),
+    });
+    if (!r.ok) throw new Error(`user-service responded ${r.status}`);
+    const body: any = await r.json();
+    for (const p of body?.data ?? []) found.set(p.id, p);
+  }
+  return found;
+}
+
+// ─────────────────────────────────────────────
+// POST /auth/admin/resend-setup/bulk
+// Admin / sub_admin: send setup links to every approved person who has not
+// set a password yet. Only accounts with a user-service profile are included
+// (orphan auth records, e.g. from the old public sign-up loophole, are skipped).
+// Body: { dryRun?: boolean, skipActiveLinks?: boolean, limit?: number }
+//   dryRun          — only return the counts, send nothing
+//   skipActiveLinks — leave out people whose current link has not expired
+//   limit           — send at most this many (oldest accounts first), so a
+//                     large backlog can go out in batches within email quotas
+// ─────────────────────────────────────────────
+router.post("/admin/resend-setup/bulk", async (req: Request, res: Response) => {
+  const callerRole = req.headers["x-user-role"] as string;
+  const callerId = req.headers["x-user-id"] as string;
+  if (callerRole !== "admin" && callerRole !== "sub_admin") {
+    return res.status(403).json({ error: "Forbidden — admin only" });
+  }
+
+  const parsed = z
+    .object({
+      dryRun: z.boolean().optional().default(false),
+      skipActiveLinks: z.boolean().optional().default(true),
+      limit: z.number().int().min(1).max(1000).optional().default(100),
+    })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+  const { dryRun, skipActiveLinks, limit } = parsed.data;
+
+  try {
+    const pendingAll = await db
+      .select({
+        id: authUsers.id,
+        email: authUsers.email,
+        createdAt: authUsers.createdAt,
+        revokedAt: authUsers.revokedAt,
+      })
+      .from(authUsers)
+      .where(isNull(authUsers.passwordHash))
+      .orderBy(authUsers.createdAt);
+    const pending = pendingAll.filter((u) => !u.revokedAt);
+
+    const profiles = await lookupProfilesByIds(pending.map((u) => u.id), callerId, callerRole);
+    // Revoked before revoked_at existed: the profile's approval was cleared
+    // (application.revoked sets approvedRole to null). Leave those out; an
+    // admin can still send to a specific person from the single-send form.
+    const looksRevoked = (p: any) =>
+      p.role === "trainee" && !p.isCooperativeOnly && !p.approvedRole && p.isActive === false;
+    const withProfile = pending.filter((u) => profiles.has(u.id) && !looksRevoked(profiles.get(u.id)));
+
+    const activeRows = await db
+      .select({ userId: setupTokens.userId })
+      .from(setupTokens)
+      .where(and(eq(setupTokens.used, false), gte(setupTokens.expiresAt, new Date())));
+    const hasActiveLink = new Set(activeRows.map((r) => r.userId));
+
+    const eligible = skipActiveLinks ? withProfile.filter((u) => !hasActiveLink.has(u.id)) : withProfile;
+    const batch = eligible.slice(0, limit);
+
+    const summary = {
+      pendingAccounts: pendingAll.length,
+      revoked: pendingAll.length - pending.length + pending.filter((u) => profiles.has(u.id) && looksRevoked(profiles.get(u.id))).length,
+      withoutProfile: pending.filter((u) => !profiles.has(u.id)).length,
+      withActiveLink: withProfile.filter((u) => hasActiveLink.has(u.id)).length,
+      eligible: eligible.length,
+      batchSize: batch.length,
+    };
+
+    if (dryRun) {
+      return res.json({ dryRun: true, ...summary });
+    }
+
+    let sent = 0;
+    const failed: string[] = [];
+    for (const u of batch) {
+      try {
+        await issueSetupLink(req, u);
+        sent++;
+      } catch (err) {
+        console.error(`[auth] bulk resend-setup failed for ${u.id}:`, err);
+        failed.push(u.email);
+      }
+    }
+
+    return res.json({
+      dryRun: false,
+      ...summary,
+      sent,
+      failed: failed.length,
+      remaining: Math.max(0, eligible.length - sent),
+    });
+  } catch (err) {
+    console.error("[auth] bulk resend-setup error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -500,6 +679,12 @@ router.post("/admin/resend-setup", async (req: Request, res: Response) => {
 
     if (user.passwordHash) {
       return res.json({ message: "User has already set up their account password." });
+    }
+
+    if (user.revokedAt) {
+      return res.status(409).json({
+        error: "This person's application was revoked. Approve the application again to send a new setup link.",
+      });
     }
 
     await issueSetupLink(req, user);

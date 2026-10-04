@@ -93,8 +93,15 @@ async function bootstrap() {
   const pruneLoginEvents = () =>
     queryClient`DELETE FROM login_events WHERE created_at < now() - make_interval(days => ${retentionDays})`
       .catch((err: any) => console.warn("[auth-service] login_events prune warning:", err));
+  const pruneLoginCounters = () =>
+    queryClient`DELETE FROM login_attempt_counters WHERE window_start < now() - interval '1 day'`
+      .catch((err: any) => console.warn("[auth-service] login_attempt_counters prune warning:", err));
   pruneLoginEvents();
-  setInterval(pruneLoginEvents, 24 * 60 * 60 * 1000).unref();
+  pruneLoginCounters();
+  setInterval(() => {
+    pruneLoginEvents();
+    pruneLoginCounters();
+  }, 24 * 60 * 60 * 1000).unref();
 }
 
 bootstrap().catch(console.error);

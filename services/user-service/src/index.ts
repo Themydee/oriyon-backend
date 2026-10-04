@@ -350,6 +350,35 @@ async function ensureDbColumns() {
   } catch (err) {
     console.error("[user-service] Failed to ensure photo columns:", err);
   }
+
+}
+
+// Indexes for the admin user list (GET /users sorts by created_at and then
+// loads cohort/group memberships for the page of users). Built with
+// CONCURRENTLY so writes are not blocked, in the background after the service
+// is up so startup is not delayed. A build that was interrupted leaves an
+// INVALID index behind; that one is dropped and rebuilt.
+const USER_LIST_INDEXES: { name: string; ddl: string }[] = [
+  { name: "users_created_at_idx", ddl: "CREATE INDEX CONCURRENTLY IF NOT EXISTS users_created_at_idx ON users (created_at DESC)" },
+  { name: "users_role_idx", ddl: "CREATE INDEX CONCURRENTLY IF NOT EXISTS users_role_idx ON users (role)" },
+  { name: "cohort_members_user_id_idx", ddl: "CREATE INDEX CONCURRENTLY IF NOT EXISTS cohort_members_user_id_idx ON cohort_members (user_id)" },
+  { name: "group_members_user_id_idx", ddl: "CREATE INDEX CONCURRENTLY IF NOT EXISTS group_members_user_id_idx ON group_members (user_id)" },
+];
+
+async function ensureUserListIndexes() {
+  for (const { name, ddl } of USER_LIST_INDEXES) {
+    try {
+      const invalid = await queryClient`
+        SELECT 1 FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+        WHERE c.relname = ${name} AND NOT i.indisvalid`;
+      if (invalid.length > 0) {
+        await queryClient.unsafe(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
+      }
+      await queryClient.unsafe(ddl);
+    } catch (err) {
+      console.error(`[user-service] Failed to build index ${name}:`, err);
+    }
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -361,6 +390,7 @@ async function bootstrap() {
   await setupConsumers();
   app.listen(PORT, () => {
     console.log(`[user-service] Running on port ${PORT}`);
+    ensureUserListIndexes().catch((err) => console.error("[user-service] Index build error:", err));
   });
 }
 

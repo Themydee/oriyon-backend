@@ -105,13 +105,46 @@ const generalLimiter = rateLimit({
   message: { error: "Too many requests from this IP address. Please try again in 15 minutes." },
 });
 
-// 2. Strict Auth & Credentials Limiter — 15 requests per 15 minutes per IP
-const authLimiter = rateLimit({
+// 2. Auth limiters. Each group has its own counter, so a burst on one route
+//    (e.g. a class logging in together on shared site Wi-Fi) does not lock
+//    people out of the others. Per-account brute-force protection lives in
+//    auth-service (failed logins are counted per email).
+const authLimitMessage = { error: "Too many attempts from this network. Please try again in 15 minutes." };
+
+// Login — 200 per 15 minutes per IP (a whole training site shares one IP)
+const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 15,
+  max: 200,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Too many authentication attempts from this IP. Please try again after 15 minutes." },
+  message: authLimitMessage,
+});
+
+// Password setup / reset / change and setup-link requests — 100 per 15 minutes per IP
+const credentialLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: authLimitMessage,
+});
+
+// Session housekeeping (logout, token verify) — 600 per 15 minutes per IP
+const sessionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: authLimitMessage,
+});
+
+// Public lookups and small public forms (contact, newsletter, cooperative status) — 30 per 15 minutes per IP
+const publicFormLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please wait a few minutes and try again." },
 });
 
 // 3. Public Form / Submission Limiter — 30 submissions per 15 minutes per IP
@@ -143,7 +176,6 @@ const bulkActionLimiter = rateLimit({
 
 // Backward-compatibility aliases
 const limiter = generalLimiter;
-const strictLimiter = authLimiter;
 
 app.use(generalLimiter);
 
@@ -155,13 +187,15 @@ function keepPath(req: Request, _res: Response, next: NextFunction) {
 // ─────────────────────────────────────────────
 // HEALTH
 // ─────────────────────────────────────────────
-app.get("/health", (_req, res) => {
+const healthHandler = (_req: Request, res: Response) => {
   res.json({
     status: "ok",
     service: "api-gateway",
     timestamp: new Date().toISOString(),
   });
-});
+};
+app.get("/health", healthHandler);
+app.get("/api/health", healthHandler); // alias: uptime checkers often use the /api prefix
 
 // ─────────────────────────────────────────────
 // MONITORING — browser error intake + daily report
@@ -171,17 +205,23 @@ app.use("/api/monitoring", monitoringRouter);
 // ─────────────────────────────────────────────
 // SWAGGER API DOCUMENTATION (QA testing endpoints)
 // ─────────────────────────────────────────────
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-app.get("/api-docs.json", (_req, res) => {
-  res.json(swaggerSpec);
-});
+// The docs list every endpoint (admin ones included). They are off unless
+// API_DOCS_ENABLED=true, and even then require an admin login except when
+// NODE_ENV=development (local work).
+if (process.env.API_DOCS_ENABLED === "true") {
+  const docsGuard = process.env.NODE_ENV === "development" ? [] : [authenticate, requireRole("admin")];
+  app.use("/api-docs", ...docsGuard, swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+  app.get("/api-docs.json", ...docsGuard, (_req, res) => {
+    res.json(swaggerSpec);
+  });
+}
 
 // ─────────────────────────────────────────────
 // AUTH — public
 // ─────────────────────────────────────────────
 app.post(
   "/api/auth/login",
-  strictLimiter,
+  loginLimiter,
   keepPath,
   createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
 );
@@ -193,37 +233,45 @@ app.post(
 );
 app.post(
   "/api/auth/logout",
-  strictLimiter,
+  sessionLimiter,
   keepPath,
   createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
 );
 app.post(
   "/api/auth/set-password",
-  strictLimiter,
+  credentialLimiter,
   keepPath,
   createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
 );
 app.post(
   "/api/auth/resend-setup",
-  strictLimiter,
+  credentialLimiter,
   keepPath,
   createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
 );
 app.post(
   "/api/auth/forgot-password",
-  strictLimiter,
+  credentialLimiter,
   keepPath,
   createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
 );
 app.post(
   "/api/auth/reset-password",
-  strictLimiter,
+  credentialLimiter,
   keepPath,
   createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
 );
 app.get(
   "/api/auth/verify",
-  strictLimiter,
+  sessionLimiter,
+  keepPath,
+  createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
+);
+app.post(
+  "/api/auth/admin/resend-setup/bulk",
+  bulkActionLimiter,
+  authenticate,
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
 );
@@ -245,7 +293,7 @@ app.get(
 // AUTH — protected
 app.patch(
   "/api/auth/change-password",
-  strictLimiter,
+  credentialLimiter,
   authenticate,
   keepPath,
   createProxyMiddleware({ target: AUTH_SERVICE_URL, changeOrigin: true }),
@@ -472,7 +520,7 @@ app.patch(
 );
 app.get(
   "/api/cooperative/check-status",
-  strictLimiter,
+  publicFormLimiter,
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,
@@ -699,7 +747,7 @@ app.get(
 // ─────────────────────────────────────────────
 app.post(
   "/api/contact",
-  strictLimiter,
+  publicFormLimiter,
   keepPath,
   createProxyMiddleware({
     target: NOTIFICATIONS_SERVICE_URL,
@@ -708,7 +756,7 @@ app.post(
 );
 app.post(
   "/api/newsletter/subscribe",
-  strictLimiter,
+  publicFormLimiter,
   keepPath,
   createProxyMiddleware({
     target: NOTIFICATIONS_SERVICE_URL,
@@ -717,7 +765,7 @@ app.post(
 );
 app.delete(
   "/api/newsletter/unsubscribe",
-  strictLimiter,
+  publicFormLimiter,
   keepPath,
   createProxyMiddleware({
     target: NOTIFICATIONS_SERVICE_URL,
