@@ -816,6 +816,17 @@ quizzesRouter.post("/:id/attempt", async (req: Request, res: Response) => {
         )
       );
 
+    // Block retakes if user has already passed this quiz (70%+)
+    const alreadyPassed = existingAttempts.some(
+      (a) => a.passed === true || (typeof a.score === "number" && a.score >= 70)
+    );
+    if (alreadyPassed) {
+      return res.status(403).json({
+        error: "You have already passed this quiz with a passing score (70%+). Retakes are not allowed once passed.",
+        alreadyPassed: true,
+      });
+    }
+
     if (existingAttempts.length >= 10) {
       return res.status(403).json({
         error: "Attempt limit reached: You can take a quiz a maximum of 10 times.",
@@ -964,6 +975,27 @@ quizzesRouter.get("/admin/attempts", async (req: Request, res: Response) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Failed to fetch admin quiz attempts" });
+  }
+});
+
+// ADMIN — delete an individual quiz attempt
+// DELETE /lms/quizzes/admin/attempts/:id
+quizzesRouter.delete("/admin/attempts/:id", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const [deleted] = await db
+      .delete(quizAttempts)
+      .where(eq(quizAttempts.id, id))
+      .returning();
+
+    if (!deleted) {
+      return res.status(404).json({ error: "Quiz attempt not found" });
+    }
+
+    return res.json({ message: "Quiz attempt deleted successfully", attemptId: id, deleted });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to delete quiz attempt" });
   }
 });
 
