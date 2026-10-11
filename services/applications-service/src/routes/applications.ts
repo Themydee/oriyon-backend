@@ -57,6 +57,8 @@ const submitSchema = z.object({
   willingChampion: z.string().optional(),
   willingDonate: z.string().optional(),
   committedFullTraining: z.string().optional(),
+  trainingSiteId: z.string().max(100).optional(),
+  financiallyAbleToConvey: z.string().optional(),
   reference1: z.string().optional(),
   reference2: z.string().optional(),
   understandsCredit: z.boolean().optional(),
@@ -174,6 +176,12 @@ function evaluateAutoShortlist(app: z.infer<typeof submitSchema>): boolean {
 
 router.post("/", async (req: Request, res: Response) => {
   const parsed = submitSchema.safeParse(req.body);
+  if (parsed.success && parsed.data.financiallyAbleToConvey?.trim().toLowerCase() === "no") {
+    return res.status(400).json({
+      error:
+        "Applicants must be able to pay for their own daily transport to the training site. You cannot apply if you are unable to.",
+    });
+  }
   if (!parsed.success) {
     const flattened = parsed.error.flatten();
     const fieldErrs = Object.entries(flattened.fieldErrors)
@@ -775,7 +783,7 @@ const validApplicationColumns = new Set([
   "hasDependants", "dependantsDetail", "dependantsSchoolAge", "hasDisabledInHousehold",
   "disabledDetail", "benefitedBefore", "benefitedDetail", "biggestChallenge", "whyJoin",
   "hopesToAchieve", "willingTraceability", "hasAccess", "willingChampion", "willingDonate",
-  "committedFullTraining", "reference1", "reference2", "understandsCredit",
+  "committedFullTraining", "trainingSiteId", "financiallyAbleToConvey", "reference1", "reference2", "understandsCredit",
   "declarationConfirmed", "desiredRoleOption1", "desiredRoleOption2", "approvedRole",
   "status", "cohortId", "reviewedBy", "reviewNotes", "rejectionReason", "rejectedAt",
   "archivedAt", "isDeleted", "deletedAt", "submittedAt", "updatedAt"
@@ -878,6 +886,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
         cohortId: updated.cohortId,
         approvedRole: updated.approvedRole,
         groupId: groupId || undefined,
+        physicalSiteId: updated.trainingSiteId || undefined,
       });
     }
 

@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS "blog_posts" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"slug" varchar(255) NOT NULL,
+	"title" varchar(255) NOT NULL,
+	"category" varchar(100) DEFAULT 'News' NOT NULL,
+	"read_time" varchar(50) DEFAULT '5 min read',
+	"author" varchar(150) DEFAULT 'Admin' NOT NULL,
+	"author_title" varchar(150),
+	"author_img" text,
+	"image" text,
+	"hero_image" text,
+	"featured" boolean DEFAULT false NOT NULL,
+	"is_published" boolean DEFAULT true NOT NULL,
+	"excerpt" text NOT NULL,
+	"key_takeaways" jsonb DEFAULT '[]'::jsonb,
+	"content" jsonb DEFAULT '[]'::jsonb,
+	"tags" jsonb DEFAULT '[]'::jsonb,
+	"published_at" timestamp DEFAULT now(),
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL,
+	CONSTRAINT "blog_posts_slug_unique" UNIQUE("slug")
+);

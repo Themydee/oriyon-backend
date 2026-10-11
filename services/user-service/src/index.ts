@@ -9,6 +9,7 @@ import { connectRabbitMQ, consumeEvent, publishEvent } from "./rabbitmq";
 import { userRouter, cohortRouter } from "./routes/users";
 import adminRouter from "./routes/admin";
 import idDocumentRouter from "./routes/id-document";
+import { ticketsRouter } from "./routes/tickets";
 import { users, cohortMembers, groupMembers } from "./db/schema";
 import { eq } from "drizzle-orm";
 
@@ -35,9 +36,11 @@ queryClient`
     trainer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     assigned_at TIMESTAMP DEFAULT NOW() NOT NULL
   );
-`.catch((err) =>
-  console.error("[user-service] group_trainers table migration warning:", err)
-);
+`
+  .then(() => queryClient`ALTER TABLE group_trainers ADD COLUMN IF NOT EXISTS assigned_day varchar(100);`)
+  .catch((err) =>
+    console.error("[user-service] group_trainers table migration warning:", err)
+  );
 queryClient`
   DO $$
   BEGIN
@@ -95,6 +98,8 @@ app.use("/admin", adminRouter);
 app.use("/api/users", idDocumentRouter);
 app.use("/api/users", userRouter);
 app.use("/api/cohorts", cohortRouter);
+app.use("/tickets", ticketsRouter);
+app.use("/api/tickets", ticketsRouter);
 
 // ─────────────────────────────────────────────
 // RABBITMQ CONSUMERS
@@ -109,7 +114,7 @@ async function setupConsumers() {
     "application.approved",
     "user-service.application.approved",
     async (payload) => {
-      const { userId, email, firstName, lastName, phone, cohortId, approvedRole, groupId } = payload as any;
+      const { userId, email, firstName, lastName, phone, cohortId, approvedRole, groupId, physicalSiteId } = payload as any;
 
       // Idempotency guard — check if user already exists
       const [existing] = await db
@@ -127,6 +132,8 @@ async function setupConsumers() {
             isActive: true,
             approvedRole,
             isCooperativeOnly: false,
+            // Keep a site an admin already assigned; otherwise use the applicant's choice
+            ...(existing.physicalSiteId ? {} : { physicalSiteId: physicalSiteId || null }),
             updatedAt: new Date(),
           })
           .where(eq(users.id, existing.id))
@@ -170,6 +177,7 @@ async function setupConsumers() {
           phone,
           role: "trainee",
           approvedRole,
+          physicalSiteId: physicalSiteId || null,
           isActive: false,
         })
         .returning();
@@ -342,6 +350,35 @@ async function ensureDbColumns() {
   } catch (err) {
     console.error("[user-service] Failed to ensure photo columns:", err);
   }
+
+}
+
+// Indexes for the admin user list (GET /users sorts by created_at and then
+// loads cohort/group memberships for the page of users). Built with
+// CONCURRENTLY so writes are not blocked, in the background after the service
+// is up so startup is not delayed. A build that was interrupted leaves an
+// INVALID index behind; that one is dropped and rebuilt.
+const USER_LIST_INDEXES: { name: string; ddl: string }[] = [
+  { name: "users_created_at_idx", ddl: "CREATE INDEX CONCURRENTLY IF NOT EXISTS users_created_at_idx ON users (created_at DESC)" },
+  { name: "users_role_idx", ddl: "CREATE INDEX CONCURRENTLY IF NOT EXISTS users_role_idx ON users (role)" },
+  { name: "cohort_members_user_id_idx", ddl: "CREATE INDEX CONCURRENTLY IF NOT EXISTS cohort_members_user_id_idx ON cohort_members (user_id)" },
+  { name: "group_members_user_id_idx", ddl: "CREATE INDEX CONCURRENTLY IF NOT EXISTS group_members_user_id_idx ON group_members (user_id)" },
+];
+
+async function ensureUserListIndexes() {
+  for (const { name, ddl } of USER_LIST_INDEXES) {
+    try {
+      const invalid = await queryClient`
+        SELECT 1 FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+        WHERE c.relname = ${name} AND NOT i.indisvalid`;
+      if (invalid.length > 0) {
+        await queryClient.unsafe(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
+      }
+      await queryClient.unsafe(ddl);
+    } catch (err) {
+      console.error(`[user-service] Failed to build index ${name}:`, err);
+    }
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -353,6 +390,7 @@ async function bootstrap() {
   await setupConsumers();
   app.listen(PORT, () => {
     console.log(`[user-service] Running on port ${PORT}`);
+    ensureUserListIndexes().catch((err) => console.error("[user-service] Index build error:", err));
   });
 }
 

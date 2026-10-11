@@ -1,10 +1,12 @@
 import {
   pgTable,
   uuid,
+  integer,
   varchar,
   text,
   timestamp,
   boolean,
+  index,
 } from "drizzle-orm/pg-core";
 
 // ─────────────────────────────────────────────
@@ -24,6 +26,9 @@ export const authUsers = pgTable("auth_users", {
   isCooperativeOnly: boolean("is_cooperative_only").notNull().default(false),
   isActive: boolean("is_active").notNull().default(false),      // false until set-password completes
   blacklistReason: text("blacklist_reason"),
+  // Set when the person's application is revoked (user.deactivated). A revoked
+  // account cannot get setup links or redeem one until it is approved again.
+  revokedAt: timestamp("revoked_at"),
   lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -62,4 +67,42 @@ export const setupTokens = pgTable("setup_tokens", {
   expiresAt: timestamp("expires_at").notNull(),
   used: boolean("used").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ─────────────────────────────────────────────
+// login_events
+// One row per login / set-password / reset-password
+// attempt, successful or not. Read by the monitoring
+// report (GET /auth/admin/login-activity).
+// Rows older than LOGIN_EVENTS_RETENTION_DAYS are pruned.
+// ─────────────────────────────────────────────
+export const loginEvents = pgTable(
+  "login_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    event: varchar("event", { length: 30 }).notNull(),           // login | set_password | reset_password
+    success: boolean("success").notNull(),
+    reason: varchar("reason", { length: 50 }).notNull(),          // ok | unknown_email | wrong_password | ...
+    email: varchar("email", { length: 255 }),
+    userId: uuid("user_id"),
+    role: varchar("role", { length: 50 }),
+    ip: varchar("ip", { length: 64 }),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    createdAtIdx: index("login_events_created_at_idx").on(table.createdAt),
+  }),
+);
+
+// ─────────────────────────────────────────────
+// login_attempt_counters
+// Per-email login attempt counter in a fixed 15-minute window. Updated with a
+// single atomic upsert per attempt, so concurrent guesses cannot all slip
+// under the limit. Cleared on a successful login.
+// ─────────────────────────────────────────────
+export const loginAttemptCounters = pgTable("login_attempt_counters", {
+  email: varchar("email", { length: 255 }).primaryKey(),
+  attempts: integer("attempts").notNull(),
+  windowStart: timestamp("window_start").notNull(),
 });

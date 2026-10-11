@@ -58,6 +58,7 @@ export async function handleUserCreated(payload: Record<string, unknown>) {
     if (existing) {
       const updateData: any = {
         isCooperativeOnly: isCooperativeOnly ?? false,
+        revokedAt: null, // approved again
         updatedAt: new Date(),
       };
 

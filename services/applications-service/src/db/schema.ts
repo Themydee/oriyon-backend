@@ -85,6 +85,12 @@
     willingDonate: varchar("willing_donate", { length: 10 }),
     committedFullTraining: varchar("committed_full_training", { length: 10 }),
 
+    // ── TRAINING SITE & COMMUTE ──
+    // trainingSiteId matches a site id in the frontend's lib/sitesData.ts (the same
+    // ids stored in users.physical_site_id); copied to the user on approval.
+    trainingSiteId: varchar("training_site_id", { length: 100 }),
+    financiallyAbleToConvey: varchar("financially_able_to_convey", { length: 10 }),
+
     // ── REFERENCES & DECLARATION ──
     reference1: text("reference1"),
     reference2: text("reference2"),

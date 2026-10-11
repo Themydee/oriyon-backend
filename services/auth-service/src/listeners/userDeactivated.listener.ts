@@ -1,5 +1,5 @@
 import { db } from "../index";
-import { authUsers, refreshTokens } from "../db/schema";
+import { authUsers, refreshTokens, setupTokens } from "../db/schema";
 
 export async function handleUserDeactivated(payload: Record<string, unknown>) {
   const { userId, email } = payload as any;
@@ -12,11 +12,14 @@ export async function handleUserDeactivated(payload: Record<string, unknown>) {
   try {
     const { eq } = await import("drizzle-orm");
 
-    // Deactivate auth record
+    // Deactivate and mark revoked, so no setup link can reactivate the account
     await db
       .update(authUsers)
-      .set({ isActive: false, updatedAt: new Date() })
+      .set({ isActive: false, revokedAt: new Date(), updatedAt: new Date() })
       .where(eq(authUsers.id, userId));
+
+    // Invalidate any outstanding setup links
+    await db.delete(setupTokens).where(eq(setupTokens.userId, userId));
 
     // Revoke all refresh tokens
     await db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));

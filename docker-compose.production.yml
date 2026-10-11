@@ -21,6 +21,7 @@ services:
     environment:
       PORT: 3000
       JWT_SECRET: ${JWT_SECRET}
+      MONITORING_API_KEY: ${MONITORING_API_KEY}
       FRONTEND_URL: ${FRONTEND_URL}
       AUTH_SERVICE_URL: http://auth-service:3001
       USER_SERVICE_URL: http://user-service:3002
