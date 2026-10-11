@@ -595,6 +595,7 @@ quizzesRouter.get("/week/:weekId", async (req: Request, res: Response) => {
     const normalized = all.map((q) => ({
       ...q,
       passingScore: 70,
+      isPublished: q.isPublished ?? true,
     }));
     return res.json(normalized);
   } catch {
@@ -611,7 +612,7 @@ quizzesRouter.get("/:id", async (req: Request, res: Response) => {
       .where(eq(quizzes.id, req.params.id))
       .limit(1);
     if (!quiz) return res.status(404).json({ error: "Quiz not found" });
-    return res.json({ ...quiz, passingScore: 70 });
+    return res.json({ ...quiz, passingScore: 70, isPublished: quiz.isPublished ?? true });
   } catch {
     return res.status(500).json({ error: "Failed to fetch quiz" });
   }
@@ -630,7 +631,7 @@ quizzesRouter.post("/", async (req: Request, res: Response) => {
       correctIndex: z.number().int(),
     })).default([]),
     passingScore: z.number().int().min(1).max(100).default(70),
-    isPublished: z.boolean().optional(),
+    isPublished: z.boolean().default(true),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -707,6 +708,34 @@ quizzesRouter.post("/:id/attempt", async (req: Request, res: Response) => {
 
     if (!cohortId || !z.string().uuid().safeParse(cohortId).success) {
       return res.status(400).json({ error: "Cohort ID could not be determined for this quiz attempt." });
+    }
+
+    // Verify all published lessons for this week are completed before allowing quiz attempt
+    const weekLessons = await db
+      .select({ id: lessons.id })
+      .from(lessons)
+      .where(and(eq(lessons.weekId, weekId), eq(lessons.isPublished, true)));
+
+    if (weekLessons.length > 0) {
+      const userProgress = await db
+        .select({ lessonId: progress.lessonId })
+        .from(progress)
+        .where(
+          and(
+            eq(progress.userId, userId),
+            eq(progress.weekId, weekId),
+            eq(progress.completed, true)
+          )
+        );
+
+      const completedLessonIds = new Set(userProgress.map((p) => p.lessonId));
+      const allLessonsCompleted = weekLessons.every((l) => completedLessonIds.has(l.id));
+
+      if (!allLessonsCompleted) {
+        return res.status(403).json({
+          error: "You must complete all lessons for this week before attempting the quiz.",
+        });
+      }
     }
 
     // Check quiz attempt limit (max 10 attempts per quiz)
