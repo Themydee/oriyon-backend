@@ -964,8 +964,19 @@ cohortRouter.get("/:id", async (req: Request, res: Response) => {
     if (!cohort) return res.status(404).json({ error: "Cohort not found" });
 
     const members = await db
-      .select()
+      .select({
+        id: users.id,
+        userId: users.id,
+        cohortMemberId: cohortMembers.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        phone: users.phone,
+        role: users.role,
+        enrolledAt: cohortMembers.enrolledAt,
+      })
       .from(cohortMembers)
+      .innerJoin(users, eq(users.id, cohortMembers.userId))
       .where(eq(cohortMembers.cohortId, req.params.id));
 
     return res.json({ ...cohort, members });
