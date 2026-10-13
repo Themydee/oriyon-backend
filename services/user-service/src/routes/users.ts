@@ -821,6 +821,7 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
         lastName: "last_name",
         phone: "phone",
         address: "address",
+        specialization: "specialization",
         passportPicture: "passport_picture",
         passportUrl: "passport_url",
         avatarUrl: "avatar_url",
@@ -843,8 +844,11 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
       };
 
       const whereConditions: string[] = [];
-      if (validTargetId) whereConditions.push(`id = '${validTargetId}'::uuid`);
-      if (escapedEmail) whereConditions.push(`email = '${escapedEmail}'`);
+      if (validTargetId) {
+        whereConditions.push(`id = '${validTargetId}'::uuid`);
+      } else if (escapedEmail) {
+        whereConditions.push(`email = '${escapedEmail}'`);
+      }
 
       if (whereConditions.length > 0) {
         const whereSql = whereConditions.join(" OR ");
@@ -853,15 +857,13 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
           if (updateData[jsKey] !== undefined) {
             try {
               const val = updateData[jsKey];
-              let valSql = "NULL";
-              if (val !== null) {
-                if (typeof val === "boolean") {
-                  valSql = `${val}`;
-                } else {
-                  valSql = `'${String(val).replace(/'/g, "''")}'`;
-                }
+              if (val === null) {
+                await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = NULL WHERE ${whereSql}`));
+              } else if (typeof val === "boolean") {
+                await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = ${val} WHERE ${whereSql}`));
+              } else {
+                await db.execute(sql`UPDATE users SET ${sql.raw(sqlCol)} = ${val} WHERE ${sql.raw(whereSql)}`);
               }
-              await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = ${valSql} WHERE ${whereSql}`));
             } catch (colErr) {
               console.warn(`Column ${sqlCol} update skipped (likely missing on DB):`, colErr);
             }

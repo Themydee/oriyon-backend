@@ -342,15 +342,29 @@ async function setupConsumers() {
 
 async function ensureDbColumns() {
   try {
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS specialization text;`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS address text;`;
     await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS passport_picture text;`;
     await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS passport_url text;`;
     await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text;`;
     await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo text;`;
-    console.log("[user-service] Auto-migration: ensured passport photo columns exist.");
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS id_type varchar(60);`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS id_document text;`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS id_filename varchar(255);`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS id_mime_type varchar(60);`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS id_uploaded_at timestamp;`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_status varchar(30);`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_rejection_reason text;`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_cooperative_only boolean DEFAULT false;`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS approved_role varchar(255);`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS physical_site_id varchar(100);`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS assigned_state varchar(100);`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS assigned_lga varchar(100);`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS assigned_zone varchar(150);`;
+    console.log("[user-service] Auto-migration: ensured all user columns exist.");
   } catch (err) {
-    console.error("[user-service] Failed to ensure photo columns:", err);
+    console.error("[user-service] Failed to ensure user columns:", err);
   }
-
 }
 
 // Indexes for the admin user list (GET /users sorts by created_at and then
