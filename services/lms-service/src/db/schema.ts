@@ -141,7 +141,6 @@ export const week12Checkins = pgTable("week12_checkins", {
   userId: uuid("user_id").notNull(),
   cohortId: uuid("cohort_id").notNull(),
   codeId: uuid("code_id")
-    .notNull()
     .references(() => week12Codes.id, { onDelete: "cascade" }),
   day: integer("day").notNull(), // 1–5
   checkedInAt: timestamp("checked_in_at").notNull().defaultNow(),
@@ -158,6 +157,19 @@ export const practicalCheckins = pgTable("practical_checkins", {
   codeSubmitted: varchar("code_submitted", { length: 128 }).notNull(),
   verifiedBy: uuid("verified_by"),
   checkedInAt: timestamp("checked_in_at").notNull().defaultNow(),
+});
+
+// ─── Practical Codes ──────────────────────────────────────────────────────────
+
+export const practicalCodes = pgTable("practical_codes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: varchar("user_id", { length: 128 }).notNull(),
+  cohortId: varchar("cohort_id", { length: 128 }).notNull(),
+  groupId: varchar("group_id", { length: 128 }),
+  weekNumber: integer("week_number").notNull(),
+  code: varchar("code", { length: 128 }).notNull().unique(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // ─── Physical Sessions ────────────────────────────────────────────────────────
@@ -350,4 +362,24 @@ export const communityChatMessages = pgTable("community_chat_messages", {
   authorAvatar: text("author_avatar"),
   isPinned: boolean("is_pinned").default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ─── Appeals ──────────────────────────────────────────────────────────────────
+export const appeals = pgTable("appeals", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  userName: varchar("user_name", { length: 255 }).notNull(),
+  userEmail: varchar("user_email", { length: 255 }).notNull(),
+  cohortId: uuid("cohort_id"),
+  appealType: varchar("appeal_type", { length: 64 }).notNull(), // 'week12_attendance' | 'exam_score'
+  sessionId: uuid("session_id"),
+  score: integer("score"),
+  daysAttended: integer("days_attended"),
+  reason: text("reason").notNull(),
+  status: varchar("status", { length: 32 }).notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
+  adminNotes: text("admin_notes"),
+  reviewedBy: uuid("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

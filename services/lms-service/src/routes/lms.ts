@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { eq, and, isNull, sql, desc, inArray, lte, or, type InferModel } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../index";
-import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, practicalCheckins, exams, examQuestions, examSessions, examAnswers, examViolations, platformTutorials } from "../db/schema";
+import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, practicalCheckins, practicalCodes, exams, examQuestions, examSessions, examAnswers, examViolations, platformTutorials, appeals } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 
 type WeekRow = InferModel<typeof weeks>;
@@ -16,15 +16,16 @@ export const quizzesRouter = Router();
 export const examsRouter = Router();
 export const tutorialsRouter = Router();
 export const practicalRouter = Router();
+export const appealsRouter = Router();
 // ─────────────────────────────────────────────
 // HELPER — fetch user from user-service
-// Gets email + firstName for notification events
+// Gets email + firstName + lastName for notifications / verification
 // ─────────────────────────────────────────────
-async function fetchUser(userId: string): Promise<{ email: string; firstName: string } | null> {
+export async function fetchUser(userId: string): Promise<{ id?: string; email: string; firstName: string; lastName?: string } | null> {
   try {
     const res = await fetch(`${process.env.USER_SERVICE_URL}/users/${userId}`);
     if (!res.ok) return null;
-    const user = await res.json() as { email: string; firstName: string };
+    const user = await res.json() as { id?: string; email: string; firstName: string; lastName?: string };
     return user;
   } catch {
     console.warn(`[lms-service] Could not fetch user ${userId} from user-service`);
@@ -32,20 +33,72 @@ async function fetchUser(userId: string): Promise<{ email: string; firstName: st
   }
 }
 
-async function isWeek12AttendanceComplete(userId: string, cohortId: string) {
-  const checkins = await db
-    .select({ day: week12Checkins.day })
-    .from(week12Checkins)
-    .where(
-      and(
-        eq(week12Checkins.userId, userId),
-        eq(week12Checkins.cohortId, cohortId)
+export async function isWeek12AttendanceComplete(userId: string, cohortId?: string): Promise<boolean> {
+  try {
+    // 1. Check if user has an approved appeal for Week 12 physical attendance
+    const [approvedAppeal] = await db
+      .select({ id: appeals.id })
+      .from(appeals)
+      .where(
+        and(
+          eq(appeals.userId, userId),
+          eq(appeals.appealType, "week12_attendance"),
+          eq(appeals.status, "approved")
+        )
       )
-    );
+      .limit(1);
 
-  const attendedDays = new Set(checkins.map((checkin) => checkin.day));
-  return [1, 2, 3, 4, 5].every((day) => attendedDays.has(day));
+    if (approvedAppeal) return true;
+
+    // 2. Check if user has a verified Week 12 practical check-in
+    const [practicalCheckin] = await db
+      .select({ id: practicalCheckins.id })
+      .from(practicalCheckins)
+      .where(
+        and(
+          eq(practicalCheckins.userId, userId),
+          eq(practicalCheckins.weekNumber, 12)
+        )
+      )
+      .limit(1);
+
+    if (practicalCheckin) return true;
+
+    // 3. Check for 5 days of daily codes check-ins (Days 1 to 5)
+    const checkinConditions = [eq(week12Checkins.userId, userId)];
+    if (cohortId) {
+      checkinConditions.push(eq(week12Checkins.cohortId, cohortId));
+    }
+
+    const checkins = await db
+      .select({ day: week12Checkins.day })
+      .from(week12Checkins)
+      .where(and(...checkinConditions));
+
+    const attendedDays = new Set(checkins.map((checkin) => checkin.day));
+    if ([1, 2, 3, 4, 5].every((day) => attendedDays.has(day))) {
+      return true;
+    }
+
+    // Also check cross-cohort checkins if cohortId was scoped but user has checkins in another cohort record
+    if (cohortId && attendedDays.size < 5) {
+      const allCheckins = await db
+        .select({ day: week12Checkins.day })
+        .from(week12Checkins)
+        .where(eq(week12Checkins.userId, userId));
+      const allAttendedDays = new Set(allCheckins.map((c) => c.day));
+      if ([1, 2, 3, 4, 5].every((day) => allAttendedDays.has(day))) {
+        return true;
+      }
+    }
+
+    return false;
+  } catch (err) {
+    console.error("[lms-service] Error checking isWeek12AttendanceComplete:", err);
+    return false;
+  }
 }
+
 
 // Weekly quizzes a trainee still has to take before they may start an exam.
 // Counts every published, already-unlocked week in the cohort that has a published
@@ -1059,7 +1112,7 @@ week12Router.get("/codes/:cohortId", async (req: Request, res: Response) => {
 // POST /lms/week12/checkin — trainee checks in with code
 week12Router.post("/checkin", async (req: Request, res: Response) => {
   const schema = z.object({
-    userId: z.string().uuid(),
+    userId: z.string().uuid().optional(),
     cohortId: z.string().uuid(),
     code: z.string(),
   });
@@ -1067,14 +1120,27 @@ week12Router.post("/checkin", async (req: Request, res: Response) => {
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { userId, cohortId, code } = parsed.data;
+  const headerUserId = req.headers["x-user-id"] as string | undefined;
+  const effectiveUserId = headerUserId || parsed.data.userId;
+
+  if (!effectiveUserId) {
+    return res.status(400).json({ error: "User ID is required" });
+  }
+
+  const { cohortId, code } = parsed.data;
+  const normalizedCode = code.trim().toUpperCase().replace(/\s+/g, "-");
 
   try {
-    // Find the code
+    // Find the code (exact match or normalized)
     const [codeRecord] = await db
       .select()
       .from(week12Codes)
-      .where(eq(week12Codes.code, code))
+      .where(
+        or(
+          eq(week12Codes.code, code),
+          eq(week12Codes.code, normalizedCode)
+        )
+      )
       .limit(1);
 
     if (!codeRecord) {
@@ -1086,32 +1152,43 @@ week12Router.post("/checkin", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "This code is not for your cohort." });
     }
 
-    // Check code is valid for today
-    const today = new Date().toISOString().split("T")[0];
-    if (codeRecord.validDate !== today) {
+    // Check code validity with timezone tolerance (WAT = UTC+1 vs UTC)
+    const now = new Date();
+    const watDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Lagos" }).format(now);
+    const utcDateStr = now.toISOString().split("T")[0];
+    const isValidDate = codeRecord.validDate === watDateStr || codeRecord.validDate === utcDateStr;
+    const ageHours = codeRecord.createdAt
+      ? (now.getTime() - new Date(codeRecord.createdAt).getTime()) / (1000 * 60 * 60)
+      : 0;
+
+    if (!isValidDate && ageHours > 28) {
       return res.status(400).json({ error: "This code has expired or is not valid today." });
     }
 
-    // Check if already checked in for this day
+    // Check if already checked in for this day (Idempotency)
     const [existing] = await db
       .select()
       .from(week12Checkins)
       .where(
         and(
-          eq(week12Checkins.userId, userId),
+          eq(week12Checkins.userId, effectiveUserId),
           eq(week12Checkins.day, codeRecord.day)
         )
       )
       .limit(1);
 
     if (existing) {
-      return res.status(409).json({ error: "You have already checked in for this day." });
+      return res.status(200).json({
+        message: `✅ You are already checked in for Day ${codeRecord.day}!`,
+        checkin: existing,
+        alreadyCheckedIn: true,
+      });
     }
 
     const [checkin] = await db
       .insert(week12Checkins)
       .values({
-        userId,
+        userId: effectiveUserId,
         cohortId,
         codeId: codeRecord.id,
         day: codeRecord.day,
@@ -1123,8 +1200,66 @@ week12Router.post("/checkin", async (req: Request, res: Response) => {
       checkin,
     });
   } catch (err) {
-    console.error(err);
+    console.error("[week12Router.post /checkin] error:", err);
     return res.status(500).json({ error: "Failed to check in" });
+  }
+});
+
+// POST /lms/week12/admin/checkin — admin manually records attendance for a day
+week12Router.post("/admin/checkin", async (req: Request, res: Response) => {
+  const schema = z.object({
+    cohortId: z.string().uuid(),
+    userId: z.string().uuid(),
+    day: z.number().int().min(1).max(5),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const { cohortId, userId, day } = parsed.data;
+
+  try {
+    const [existing] = await db
+      .select()
+      .from(week12Checkins)
+      .where(
+        and(
+          eq(week12Checkins.userId, userId),
+          eq(week12Checkins.day, day)
+        )
+      )
+      .limit(1);
+
+    if (existing) {
+      return res.json({
+        message: `User is already checked in for Day ${day}`,
+        checkin: existing,
+      });
+    }
+
+    const [codeRecord] = await db
+      .select({ id: week12Codes.id })
+      .from(week12Codes)
+      .where(and(eq(week12Codes.cohortId, cohortId), eq(week12Codes.day, day)))
+      .limit(1);
+
+    const [checkin] = await db
+      .insert(week12Checkins)
+      .values({
+        cohortId,
+        userId,
+        day,
+        codeId: codeRecord ? codeRecord.id : null,
+      })
+      .returning();
+
+    return res.status(201).json({
+      message: `✅ Manually checked in for Day ${day}`,
+      checkin,
+    });
+  } catch (err) {
+    console.error("[week12Router.post /admin/checkin] error:", err);
+    return res.status(500).json({ error: "Failed to manually check in trainee" });
   }
 });
 
@@ -1144,18 +1279,19 @@ week12Router.get("/checkins/:cohortId", async (req: Request, res: Response) => {
 // GET /lms/week12/checkins/:cohortId/:userId — check a specific trainee's attendance
 week12Router.get("/checkins/:cohortId/:userId", async (req: Request, res: Response) => {
   try {
+    const { cohortId, userId } = req.params;
     const all = await db
       .select()
       .from(week12Checkins)
       .where(
         and(
-          eq(week12Checkins.cohortId, req.params.cohortId),
-          eq(week12Checkins.userId, req.params.userId)
+          eq(week12Checkins.cohortId, cohortId),
+          eq(week12Checkins.userId, userId)
         )
       );
 
     const days = all.map((c) => c.day);
-    const fullyAttended = [1, 2, 3, 4, 5].every((d) => days.includes(d));
+    const fullyAttended = await isWeek12AttendanceComplete(userId, cohortId);
 
     return res.json({ checkins: all, days, fullyAttended });
   } catch {
@@ -1196,7 +1332,8 @@ practicalRouter.post("/checkins", async (req: Request, res: Response) => {
   }
 
   const isUuid = (str: any) => typeof str === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
-  const validVerifiedBy = isUuid(verifiedBy) ? verifiedBy : null;
+  const headerUserId = req.headers["x-user-id"] as string | undefined;
+  const validVerifiedBy = isUuid(verifiedBy) ? verifiedBy : (isUuid(headerUserId) ? headerUserId : null);
 
   try {
     const [existing] = await db
@@ -1303,6 +1440,512 @@ practicalRouter.delete("/checkins/user/:userId", async (req: Request, res: Respo
   }
 });
 
+// ─── Authoritative Practical Code Lifecycle (Weeks 1 to 12) ───────────────────
+
+export function generatePracticalCodeString(
+  userId: string,
+  weekNumber: number,
+  email = ""
+): string {
+  const cleanEmail = (email || "").toLowerCase().trim();
+  const cleanUserId = (userId || "id").trim();
+  const seed = `ORIYON-PRAC-CODE-V3-${cleanUserId}-${cleanEmail}-W${weekNumber}-SALT`;
+  let hash1 = 0;
+  let hash2 = 0;
+  for (let i = 0; i < seed.length; i++) {
+    const char = seed.charCodeAt(i);
+    hash1 = (hash1 << 5) - hash1 + char;
+    hash1 |= 0;
+    hash2 = (hash2 << 3) ^ char;
+  }
+
+  const p1 = Math.abs(hash1).toString(36).toUpperCase().padStart(4, "7").slice(0, 4);
+  const p2 = Math.abs(hash2).toString(36).toUpperCase().padStart(4, "9").slice(0, 4);
+  return `PRAC-W${weekNumber}-${p1}-${p2}`;
+}
+
+export function normalizePracticalCodeInput(raw: string): string {
+  return (raw || "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^A-Z0-9-]/gi, "")
+    .replace(/-+/g, "-")
+    .toUpperCase();
+}
+
+// POST /lms/practical/code
+// Generates or retrieves an authoritative practical attendance code persisted in PostgreSQL
+practicalRouter.post("/code", async (req: Request, res: Response) => {
+  const headerUserId = req.headers["x-user-id"] as string | undefined;
+  const userId = headerUserId || req.body.userId;
+  const { cohortId, groupId, weekNumber, email } = req.body;
+
+  if (!userId) {
+    return res.status(401).json({ error: "User authentication required" });
+  }
+
+  const wNum = Number(weekNumber);
+  if (isNaN(wNum) || wNum < 1 || wNum > 12) {
+    return res.status(400).json({ error: "Invalid week number. Practical sessions run from Week 1 to Week 12." });
+  }
+
+  const cleanCohortId = String(cohortId || "00000000-0000-0000-0000-000000000000").trim();
+  const cleanUserId = String(userId).trim();
+  const cleanGroupId = groupId ? String(groupId).trim() : null;
+
+  try {
+    // 1. Check if user already has an authoritative code for this week
+    const existingList = await db
+      .select()
+      .from(practicalCodes)
+      .where(
+        and(
+          eq(practicalCodes.userId, cleanUserId),
+          eq(practicalCodes.weekNumber, wNum)
+        )
+      );
+
+    if (existingList.length > 0) {
+      const existing = existingList[0];
+      return res.json({
+        success: true,
+        code: existing.code,
+        weekNumber: existing.weekNumber,
+        cohortId: existing.cohortId,
+        groupId: existing.groupId,
+        isExisting: true,
+      });
+    }
+
+    // 2. Generate authoritative code
+    const generatedCode = generatePracticalCodeString(cleanUserId, wNum, email);
+
+    // 3. Persist to database
+    const [inserted] = await db
+      .insert(practicalCodes)
+      .values({
+        cohortId: cleanCohortId,
+        userId: cleanUserId,
+        groupId: cleanGroupId,
+        weekNumber: wNum,
+        code: generatedCode,
+      })
+      .onConflictDoUpdate({
+        target: [practicalCodes.cohortId, practicalCodes.userId, practicalCodes.weekNumber],
+        set: {
+          code: generatedCode,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+
+    return res.status(201).json({
+      success: true,
+      code: inserted.code,
+      weekNumber: inserted.weekNumber,
+      cohortId: inserted.cohortId,
+      groupId: inserted.groupId,
+      isExisting: false,
+    });
+  } catch (err: any) {
+    console.error("Generate practical code error:", err);
+    try {
+      const [retryExisting] = await db
+        .select()
+        .from(practicalCodes)
+        .where(
+          and(
+            eq(practicalCodes.userId, cleanUserId),
+            eq(practicalCodes.weekNumber, wNum)
+          )
+        );
+      if (retryExisting) {
+        return res.json({
+          success: true,
+          code: retryExisting.code,
+          weekNumber: retryExisting.weekNumber,
+          cohortId: retryExisting.cohortId,
+          groupId: retryExisting.groupId,
+          isExisting: true,
+        });
+      }
+    } catch {}
+
+    return res.status(500).json({ error: "Failed to generate or retrieve attendance code" });
+  }
+});
+
+// GET /lms/practical/code/user/:userId
+practicalRouter.get("/code/user/:userId", async (req: Request, res: Response) => {
+  const { userId } = req.params;
+  const { week } = req.query;
+
+  try {
+    const conditions = [eq(practicalCodes.userId, userId)];
+    if (week && !isNaN(Number(week))) {
+      conditions.push(eq(practicalCodes.weekNumber, Number(week)));
+    }
+
+    const list = await db
+      .select()
+      .from(practicalCodes)
+      .where(and(...conditions));
+
+    return res.json(list);
+  } catch (err) {
+    console.error("Fetch user practical codes error:", err);
+    return res.status(500).json({ error: "Failed to fetch practical codes" });
+  }
+});
+
+// POST /lms/practical/verify-code
+// Authoritative endpoint for administrators to verify a trainee's physical attendance code
+practicalRouter.post("/verify-code", async (req: Request, res: Response) => {
+  const rawCode = String(req.body.code || "").trim();
+  const normalized = normalizePracticalCodeInput(rawCode);
+  const selectedWeekNum = req.body.weekNumber !== undefined && !isNaN(Number(req.body.weekNumber))
+    ? Number(req.body.weekNumber)
+    : undefined;
+  const cohortId = req.body.cohortId as string | undefined;
+
+  if (!normalized) {
+    return res.status(400).json({ error: "Please enter an attendance code to verify." });
+  }
+
+  const isUuid = (str: any) =>
+    typeof str === "string" &&
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+
+  try {
+    // 1. O(1) Authoritative lookup in practical_codes
+    let [matchedCode] = await db
+      .select()
+      .from(practicalCodes)
+      .where(eq(practicalCodes.code, normalized));
+
+    // 1b. If not found by exact string, check prefix variations e.g. without PRAC- or with PRAC-
+    if (!matchedCode) {
+      if (!normalized.startsWith("PRAC-")) {
+        const withPrefix = `PRAC-${normalized}`;
+        const [foundWithPrefix] = await db
+          .select()
+          .from(practicalCodes)
+          .where(eq(practicalCodes.code, withPrefix));
+        if (foundWithPrefix) matchedCode = foundWithPrefix;
+      }
+    }
+
+    // 1c. Legacy checkin fallback: Did a previous checkin record this exact code?
+    if (!matchedCode) {
+      const [existingCheckin] = await db
+        .select()
+        .from(practicalCheckins)
+        .where(eq(practicalCheckins.codeSubmitted, normalized));
+
+      if (existingCheckin) {
+        // Dynamically backfill into practical_codes
+        const [backfilled] = await db
+          .insert(practicalCodes)
+          .values({
+            cohortId: existingCheckin.cohortId,
+            userId: existingCheckin.userId,
+            groupId: existingCheckin.groupId,
+            weekNumber: existingCheckin.weekNumber,
+            code: normalized,
+          })
+          .onConflictDoUpdate({
+            target: [practicalCodes.cohortId, practicalCodes.userId, practicalCodes.weekNumber],
+            set: { code: normalized, updatedAt: new Date() },
+          })
+          .returning();
+        matchedCode = backfilled;
+      }
+    }
+
+    // 2. If code does not exist anywhere in database
+    if (!matchedCode) {
+      // Check if format hints at a specific week for helpful diagnostic feedback
+      const matchWeek = normalized.match(/PRAC-W(\d+)-/);
+      const hintWeek = matchWeek ? Number(matchWeek[1]) : null;
+
+      return res.status(404).json({
+        error: "Invalid attendance code",
+        message: hintWeek
+          ? `Code not found in system database. Trainee must generate and view their Week ${hintWeek} code in their dashboard before physical verification.`
+          : `Attendance code "${rawCode}" does not exist in the system database.`,
+        code: normalized,
+      });
+    }
+
+    // 3. User Identity Resolution
+    const trainee = await fetchUser(matchedCode.userId);
+    const traineeName = trainee
+      ? `${trainee.firstName} ${trainee.lastName || ""}`.trim()
+      : "Trainee";
+
+    // 4. Week Mismatch Check
+    if (selectedWeekNum !== undefined && matchedCode.weekNumber !== selectedWeekNum) {
+      return res.status(400).json({
+        error: "Week mismatch",
+        message: `⚠️ This code is registered to ${traineeName} for WEEK ${matchedCode.weekNumber}! You currently have Week ${selectedWeekNum} selected. Please select Week ${matchedCode.weekNumber} to verify.`,
+        codeWeek: matchedCode.weekNumber,
+        selectedWeek: selectedWeekNum,
+        user: {
+          id: matchedCode.userId,
+          firstName: trainee?.firstName || "Trainee",
+          lastName: trainee?.lastName || "",
+          email: trainee?.email || "",
+          cohortId: matchedCode.cohortId,
+          groupId: matchedCode.groupId,
+        },
+      });
+    }
+
+    // 5. Idempotent check: Is user already checked in for this practical week?
+    const [alreadyRecorded] = await db
+      .select()
+      .from(practicalCheckins)
+      .where(
+        and(
+          eq(practicalCheckins.userId, matchedCode.userId),
+          eq(practicalCheckins.weekNumber, matchedCode.weekNumber)
+        )
+      );
+
+    if (alreadyRecorded) {
+      return res.status(200).json({
+        success: true,
+        message: `Trainee ${traineeName} is ALREADY marked PRESENT for Week ${matchedCode.weekNumber} Practical Session.`,
+        alreadyCheckedIn: true,
+        checkin: alreadyRecorded,
+        user: {
+          id: matchedCode.userId,
+          firstName: trainee?.firstName || "Trainee",
+          lastName: trainee?.lastName || "",
+          email: trainee?.email || "",
+          cohortId: matchedCode.cohortId,
+          groupId: matchedCode.groupId,
+        },
+      });
+    }
+
+    // 6. Record verified practical attendance
+    const headerAdminId = req.headers["x-user-id"] as string | undefined;
+    const verifiedBy = isUuid(headerAdminId) ? headerAdminId : null;
+
+    let targetCohortId = matchedCode.cohortId;
+    if (!isUuid(targetCohortId)) {
+      if (cohortId && isUuid(cohortId)) {
+        targetCohortId = cohortId;
+      } else {
+        targetCohortId = "00000000-0000-0000-0000-000000000000";
+      }
+    }
+
+    const [newCheckin] = await db
+      .insert(practicalCheckins)
+      .values({
+        cohortId: targetCohortId,
+        userId: matchedCode.userId,
+        groupId: matchedCode.groupId || null,
+        weekNumber: matchedCode.weekNumber,
+        codeSubmitted: matchedCode.code,
+        verifiedBy,
+      })
+      .returning();
+
+    return res.status(201).json({
+      success: true,
+      message: `✅ Verified! ${traineeName} marked PRESENT for Week ${matchedCode.weekNumber} Practical Session!`,
+      alreadyCheckedIn: false,
+      checkin: newCheckin,
+      user: {
+        id: matchedCode.userId,
+        firstName: trainee?.firstName || "Trainee",
+        lastName: trainee?.lastName || "",
+        email: trainee?.email || "",
+        cohortId: matchedCode.cohortId,
+        groupId: matchedCode.groupId,
+      },
+    });
+  } catch (err) {
+    console.error("Authoritative practical verify-code error:", err);
+    return res.status(500).json({ error: "Failed to verify attendance code" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// APPEALS ROUTER (Exam Score & Week 12 Physical Attendance)
+// ─────────────────────────────────────────────
+
+// GET /lms/appeals — list appeals with filters
+appealsRouter.get("/", async (req: Request, res: Response) => {
+  try {
+    const { cohortId, userId, appealType, status } = req.query;
+    const headerUserId = req.headers["x-user-id"] as string | undefined;
+    const headerUserRole = req.headers["x-user-role"] as string | undefined;
+
+    const conditions: any[] = [];
+
+    // If student/trainee, enforce viewing only their own appeals
+    const isStaff = headerUserRole && ["admin", "sub_admin", "trainer", "lead_trainer"].includes(headerUserRole);
+    if (!isStaff && headerUserId) {
+      conditions.push(eq(appeals.userId, headerUserId));
+    } else if (userId && typeof userId === "string") {
+      conditions.push(eq(appeals.userId, userId));
+    }
+
+    if (cohortId && typeof cohortId === "string") {
+      conditions.push(eq(appeals.cohortId, cohortId));
+    }
+    if (appealType && typeof appealType === "string") {
+      conditions.push(eq(appeals.appealType, appealType as any));
+    }
+    if (status && typeof status === "string") {
+      conditions.push(eq(appeals.status, status as any));
+    }
+
+    let query = db.select().from(appeals);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+
+    const list = await query.orderBy(desc(appeals.createdAt));
+    return res.json(list);
+  } catch (err) {
+    console.error("[appealsRouter GET /] error:", err);
+    return res.status(500).json({ error: "Failed to fetch appeals" });
+  }
+});
+
+// GET /lms/appeals/user/:userId — trainee's appeals
+appealsRouter.get("/user/:userId", async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+    const list = await db
+      .select()
+      .from(appeals)
+      .where(eq(appeals.userId, userId))
+      .orderBy(desc(appeals.createdAt));
+    return res.json(list);
+  } catch (err) {
+    console.error("[appealsRouter GET /user/:userId] error:", err);
+    return res.status(500).json({ error: "Failed to fetch user appeals" });
+  }
+});
+
+// GET /lms/appeals/:id — single appeal
+appealsRouter.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const [record] = await db
+      .select()
+      .from(appeals)
+      .where(eq(appeals.id, req.params.id))
+      .limit(1);
+
+    if (!record) return res.status(404).json({ error: "Appeal not found" });
+    return res.json(record);
+  } catch (err) {
+    console.error("[appealsRouter GET /:id] error:", err);
+    return res.status(500).json({ error: "Failed to fetch appeal" });
+  }
+});
+
+// POST /lms/appeals — submit a new appeal
+appealsRouter.post("/", async (req: Request, res: Response) => {
+  const schema = z.object({
+    userId: z.string().uuid().optional(),
+    userName: z.string().min(1),
+    userEmail: z.string().email(),
+    cohortId: z.string().uuid().optional().nullable(),
+    appealType: z.enum(["exam_score", "week12_attendance"]),
+    sessionId: z.string().uuid().optional().nullable(),
+    score: z.number().optional().nullable(),
+    daysAttended: z.number().int().min(1).max(5).optional().nullable(),
+    reason: z.string().min(5),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const headerUserId = req.headers["x-user-id"] as string | undefined;
+  const effectiveUserId = headerUserId || parsed.data.userId;
+
+  if (!effectiveUserId) {
+    return res.status(400).json({ error: "User ID is required" });
+  }
+
+  try {
+    const [inserted] = await db
+      .insert(appeals)
+      .values({
+        userId: effectiveUserId,
+        userName: parsed.data.userName,
+        userEmail: parsed.data.userEmail,
+        cohortId: parsed.data.cohortId || null,
+        appealType: parsed.data.appealType,
+        sessionId: parsed.data.sessionId || null,
+        score: parsed.data.score !== undefined ? parsed.data.score : null,
+        daysAttended: parsed.data.daysAttended || null,
+        reason: parsed.data.reason,
+        status: "pending",
+      })
+      .returning();
+
+    return res.status(201).json({
+      message: "Appeal submitted successfully",
+      appeal: inserted,
+    });
+  } catch (err) {
+    console.error("[appealsRouter POST /] error:", err);
+    return res.status(500).json({ error: "Failed to submit appeal" });
+  }
+});
+
+// PATCH /lms/appeals/:id — admin updates status and notes
+appealsRouter.patch("/:id", async (req: Request, res: Response) => {
+  const schema = z.object({
+    status: z.enum(["pending", "approved", "rejected"]),
+    adminNotes: z.string().optional().nullable(),
+    reviewedBy: z.string().optional().nullable(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const headerUserId = req.headers["x-user-id"] as string | undefined;
+  const reviewer = parsed.data.reviewedBy || headerUserId || "admin";
+
+  try {
+    const [updated] = await db
+      .update(appeals)
+      .set({
+        status: parsed.data.status,
+        adminNotes: parsed.data.adminNotes,
+        reviewedBy: reviewer,
+        reviewedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(appeals.id, req.params.id))
+      .returning();
+
+    if (!updated) {
+      return res.status(404).json({ error: "Appeal not found" });
+    }
+
+    return res.json({
+      message: `Appeal updated to ${parsed.data.status}`,
+      appeal: updated,
+    });
+  } catch (err) {
+    console.error("[appealsRouter PATCH /:id] error:", err);
+    return res.status(500).json({ error: "Failed to update appeal" });
+  }
+});
 
 // ─────────────────────────────────────────────
 // HELPER — recalculate and sync exam totalMarks
@@ -1431,39 +2074,8 @@ examsRouter.get("/", async (req: Request, res: Response) => {
   }
 });
  
-// GET /lms/exams/:id/quiz-requirements
-// Weekly quizzes the calling trainee must take before starting this exam.
-examsRouter.get("/:id/quiz-requirements", async (req: Request, res: Response) => {
-  const userId = req.headers["x-user-id"] as string | undefined;
-  if (!userId) return res.status(401).json({ error: "Unauthorized" });
-  try {
-    const [exam] = await db.select().from(exams).where(eq(exams.id, req.params.id)).limit(1);
-    if (!exam) return res.status(404).json({ error: "Exam not found" });
-    const missingQuizzes = await getMissingWeeklyQuizzes(userId, exam.cohortId);
-    return res.json({ ready: missingQuizzes.length === 0, missingQuizzes });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to check quiz requirements" });
-  }
-});
-
-// GET /lms/exams/:id
-examsRouter.get("/:id", async (req: Request, res: Response) => {
-  try {
-    const [exam] = await db
-      .select()
-      .from(exams)
-      .where(eq(exams.id, req.params.id))
-      .limit(1);
-    if (!exam) return res.status(404).json({ error: "Exam not found" });
-    return res.json(exam);
-  } catch {
-    return res.status(500).json({ error: "Failed to fetch exam" });
-  }
-});
-
 // ADMIN — list all exam sessions with exam title
-// GET /lms/exams/admin/sessions
+// GET /lms/exams/admin/sessions (Must be defined BEFORE /:id to prevent route collision)
 examsRouter.get("/admin/sessions", async (req: Request, res: Response) => {
   const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
   const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
@@ -1527,8 +2139,45 @@ examsRouter.get("/admin/sessions", async (req: Request, res: Response) => {
     const all = await baseQuery;
     return res.json(all);
   } catch (err) {
-    console.error(err);
+    console.error("[examsRouter GET /admin/sessions] error:", err);
     return res.status(500).json({ error: "Failed to fetch admin exam sessions" });
+  }
+});
+
+// GET /lms/exams/:id/quiz-requirements
+// Weekly quizzes and Week 12 physical attendance required before starting this exam.
+examsRouter.get("/:id/quiz-requirements", async (req: Request, res: Response) => {
+  const userId = req.headers["x-user-id"] as string | undefined;
+  if (!userId) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    const [exam] = await db.select().from(exams).where(eq(exams.id, req.params.id)).limit(1);
+    if (!exam) return res.status(404).json({ error: "Exam not found" });
+    const missingQuizzes = await getMissingWeeklyQuizzes(userId, exam.cohortId);
+    const week12AttendanceComplete = await isWeek12AttendanceComplete(userId, exam.cohortId);
+    const ready = missingQuizzes.length === 0 && week12AttendanceComplete;
+    return res.json({
+      ready,
+      missingQuizzes,
+      week12AttendanceComplete,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to check quiz requirements" });
+  }
+});
+
+// GET /lms/exams/:id
+examsRouter.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const [exam] = await db
+      .select()
+      .from(exams)
+      .where(eq(exams.id, req.params.id))
+      .limit(1);
+    if (!exam) return res.status(404).json({ error: "Exam not found" });
+    return res.json(exam);
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch exam" });
   }
 });
  
@@ -1736,30 +2385,37 @@ examsRouter.post(
   "/:id/sessions/start",
   async (req: Request, res: Response) => {
     const schema = z.object({
-      userId: z.string().uuid(),
+      userId: z.string().uuid().optional(),
     });
- 
+
     const parsed = schema.safeParse(req.body);
     if (!parsed.success)
       return res.status(400).json({ error: parsed.error.flatten() });
- 
-    const { userId } = parsed.data;
+
+    const headerUserId = req.headers["x-user-id"] as string | undefined;
+    const userId = headerUserId || parsed.data.userId;
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+
     const examId = req.params.id;
- 
+
     try {
       const [exam] = await db
         .select()
         .from(exams)
         .where(and(eq(exams.id, examId), eq(exams.isPublished, true)))
         .limit(1);
- 
+
       if (!exam)
         return res.status(404).json({ error: "Exam not found or not published" });
- 
+
       const complete = await isWeek12AttendanceComplete(userId, exam.cohortId);
       if (!complete) {
         return res.status(403).json({
-          error: "Week 12 attendance must be complete before taking this exam.",
+          error: "Week 12 physical practical attendance must be complete before taking this exam.",
+          code: "WEEK12_ATTENDANCE_INCOMPLETE",
         });
       }
  
@@ -1934,15 +2590,29 @@ examsRouter.patch(
       for (const [questionId, answerText] of Object.entries(
         parsed.data.answers
       )) {
-        await db
-          .update(examAnswers)
-          .set({ answerText, updatedAt: new Date() })
+        const [existingAns] = await db
+          .select({ id: examAnswers.id })
+          .from(examAnswers)
           .where(
             and(
               eq(examAnswers.sessionId, session.id),
               eq(examAnswers.questionId, questionId)
             )
-          );
+          )
+          .limit(1);
+
+        if (existingAns) {
+          await db
+            .update(examAnswers)
+            .set({ answerText, updatedAt: new Date() })
+            .where(eq(examAnswers.id, existingAns.id));
+        } else {
+          await db.insert(examAnswers).values({
+            sessionId: session.id,
+            questionId,
+            answerText,
+          });
+        }
       }
  
       await db

@@ -16,6 +16,7 @@ import {
   week12Router,
   tutorialsRouter,
   practicalRouter,
+  appealsRouter,
 } from "./routes/lms";
 import statsRouter from "./routes/stats";
 import communityRouter from "./routes/community";
@@ -47,6 +48,7 @@ app.use("/lms/exams", examsRouter);
 app.use("/lms/week12", week12Router);
 app.use("/lms/tutorials", tutorialsRouter);
 app.use("/lms/practical", practicalRouter);
+app.use("/lms/appeals", appealsRouter);
 app.use("/lms/community", communityRouter);
 app.use("/api/lms/quizzes", quizzesRouter);
 app.use("/api/lms/exams", examsRouter);
@@ -58,6 +60,7 @@ app.use("/api/lms/sessions", sessionsRouter);
 app.use("/api/lms/stats", statsRouter);    
 app.use("/api/lms/tutorials", tutorialsRouter);    
 app.use("/api/lms/practical", practicalRouter);    
+app.use("/api/lms/appeals", appealsRouter);
 app.use("/api/lms/community", communityRouter);    
 
 async function setupConsumers() {
@@ -89,6 +92,7 @@ async function ensureDbColumns() {
   try {
     await queryClient.unsafe(`
       ALTER TABLE lessons ADD COLUMN IF NOT EXISTS audio_url text;
+      ALTER TABLE week12_checkins ALTER COLUMN code_id DROP NOT NULL;
       
       CREATE TABLE IF NOT EXISTS practical_checkins (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -100,6 +104,43 @@ async function ensureDbColumns() {
         verified_by uuid,
         checked_in_at timestamp NOT NULL DEFAULT now()
       );
+
+      CREATE TABLE IF NOT EXISTS practical_codes (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id varchar(128) NOT NULL,
+        cohort_id varchar(128) NOT NULL,
+        group_id varchar(128),
+        week_number integer NOT NULL,
+        code varchar(128) NOT NULL UNIQUE,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS appeals (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id uuid NOT NULL,
+        user_name varchar(255) NOT NULL,
+        user_email varchar(255) NOT NULL,
+        cohort_id uuid,
+        appeal_type varchar(50) NOT NULL,
+        session_id uuid,
+        score integer,
+        days_attended integer,
+        reason text NOT NULL,
+        status varchar(20) NOT NULL DEFAULT 'pending',
+        admin_notes text,
+        reviewed_by varchar(255),
+        reviewed_at timestamp,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_practical_checkins_cohort_user_week ON practical_checkins (cohort_id, user_id, week_number);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_practical_codes_cohort_user_week ON practical_codes (cohort_id, user_id, week_number);
+      CREATE INDEX IF NOT EXISTS idx_practical_codes_code ON practical_codes (code);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_week12_checkins_cohort_user_day ON week12_checkins (cohort_id, user_id, day);
+      CREATE INDEX IF NOT EXISTS idx_appeals_user_id ON appeals (user_id);
+      CREATE INDEX IF NOT EXISTS idx_appeals_status ON appeals (status);
 
       CREATE TABLE IF NOT EXISTS community_questions (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -311,6 +311,71 @@ app.post(
     changeOrigin: true,
   }),
 );
+
+// ── EEWYLA REFEREE VERIFICATION ROUTES ──
+// Referee micro-form (public)
+app.get(
+  "/api/applications/referee-form/:token",
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.post(
+  "/api/applications/referee-form/:token",
+  submissionLimiter,
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
+// Messaging provider webhooks (public callback)
+app.post(
+  "/api/applications/webhooks/messaging",
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
+// Referee background worker trigger (admin only)
+app.post(
+  "/api/applications/referee-jobs/run",
+  authenticate,
+  requireRole("admin", "sub_admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
+// Replace referee within permitted window
+app.put(
+  "/api/applications/:id/referees/:refereeId",
+  submissionLimiter,
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
+// Get application referee verification details (admin only)
+app.get(
+  "/api/applications/:id/referee-verification",
+  authenticate,
+  requireRole("admin", "sub_admin"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
 app.get(
   "/api/applications",
   authenticate,
@@ -1348,6 +1413,13 @@ app.patch(
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
 app.get(
+  "/api/lms/exams/admin/sessions",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
   "/api/lms/exams/:id",
   authenticate,
   keepPath,
@@ -1411,6 +1483,13 @@ app.post(
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
+app.post(
+  "/api/lms/week12/admin/checkin",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
 app.get(
   "/api/lms/week12/checkins/:cohortId",
   authenticate,
@@ -1456,6 +1535,54 @@ app.delete(
   "/api/lms/practical/checkins/user/:userId",
   authenticate,
   requireRole("admin", "sub_admin", "trainer", "lead_trainer", "corper", "coordinator"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.post(
+  "/api/lms/practical/code",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
+  "/api/lms/practical/code/user/:userId",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.post(
+  "/api/lms/practical/verify-code",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer", "corper", "coordinator"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+
+// ─────────────────────────────────────────────
+// LMS — appeals
+// ─────────────────────────────────────────────
+app.get(
+  "/api/lms/appeals",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
+  "/api/lms/appeals/user/:userId",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.post(
+  "/api/lms/appeals",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.patch(
+  "/api/lms/appeals/:id",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );

@@ -56,6 +56,85 @@ async function ensureDbColumnsExist() {
       CREATE INDEX IF NOT EXISTS idx_applications_submitted_at ON applications(submitted_at DESC);
       CREATE INDEX IF NOT EXISTS idx_applications_email ON applications(email);
       CREATE INDEX IF NOT EXISTS idx_applications_cohort_id ON applications(cohort_id);
+
+      -- EEWYLA Referee Verification System
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS referee_declaration_confirmed BOOLEAN DEFAULT false;
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS referee_declaration_timestamp TIMESTAMP;
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS referee_verification_status VARCHAR(50) DEFAULT 'pending';
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS referee_verified_at TIMESTAMP;
+      ALTER TABLE applications ADD COLUMN IF NOT EXISTS is_eligible_for_review BOOLEAN DEFAULT false;
+
+      CREATE TABLE IF NOT EXISTS application_referees (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+        referee_index INTEGER NOT NULL,
+        full_name VARCHAR(255) NOT NULL,
+        phone VARCHAR(50) NOT NULL,
+        normalized_phone VARCHAR(50) NOT NULL,
+        email VARCHAR(255),
+        relationship VARCHAR(100),
+        status VARCHAR(50) NOT NULL DEFAULT 'REF-PENDING',
+        status_reason TEXT,
+        channel VARCHAR(20) NOT NULL DEFAULT 'whatsapp',
+        delivery_status VARCHAR(50) NOT NULL DEFAULT 'pending',
+        delivery_timestamp TIMESTAMP,
+        initial_message_sent_at TIMESTAMP,
+        first_response_at TIMESTAMP,
+        response_duration_seconds INTEGER,
+        rapid_response_flagged BOOLEAN NOT NULL DEFAULT false,
+        reconfirmation_status VARCHAR(50),
+        reconfirmation_sent_at TIMESTAMP,
+        relationship_category VARCHAR(100),
+        relationship_responded_at TIMESTAMP,
+        verification_token VARCHAR(128) UNIQUE,
+        token_hash VARCHAR(128),
+        token_expires_at TIMESTAMP,
+        form_submitted_at TIMESTAMP,
+        form_vouch_commitment BOOLEAN,
+        form_applicant_interest TEXT,
+        form_relationship_duration VARCHAR(100),
+        is_opted_out BOOLEAN NOT NULL DEFAULT false,
+        opted_out_at TIMESTAMP,
+        replacement_window_expires_at TIMESTAMP,
+        replaced_by_referee_id UUID,
+        clarification_sent BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS referee_verification_audit_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+        referee_id UUID REFERENCES application_referees(id) ON DELETE CASCADE,
+        event_type VARCHAR(100) NOT NULL,
+        previous_status VARCHAR(50),
+        new_status VARCHAR(50),
+        reason TEXT,
+        metadata JSONB,
+        actor VARCHAR(100) NOT NULL DEFAULT 'system',
+        timestamp TIMESTAMP NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS referee_scheduled_jobs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+        referee_id UUID REFERENCES application_referees(id) ON DELETE CASCADE,
+        job_type VARCHAR(100) NOT NULL,
+        scheduled_for TIMESTAMP NOT NULL,
+        status VARCHAR(50) NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        processed_at TIMESTAMP,
+        payload JSONB,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_app_referees_app_id ON application_referees(application_id);
+      CREATE INDEX IF NOT EXISTS idx_app_referees_norm_phone ON application_referees(normalized_phone);
+      CREATE INDEX IF NOT EXISTS idx_app_referees_token ON application_referees(verification_token);
+      CREATE INDEX IF NOT EXISTS idx_ref_audit_app_id ON referee_verification_audit_logs(application_id);
+      CREATE INDEX IF NOT EXISTS idx_ref_jobs_status_sched ON referee_scheduled_jobs(status, scheduled_for);
     `);
     console.log("[applications-service] Database columns and performance indexes verified successfully.");
   } catch (err) {

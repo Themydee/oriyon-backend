@@ -6,6 +6,8 @@ import postgres from "postgres";
 import { db } from "../index";
 import { applications } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
+import { refereeVerificationService } from "../services/refereeVerificationService";
+import { getMessagingProvider } from "../messaging";
 
 const router = Router();
 
@@ -63,6 +65,16 @@ const submitSchema = z.object({
   reference2: z.string().optional(),
   understandsCredit: z.boolean().optional(),
   declarationConfirmed: z.boolean().optional(),
+  refereeDeclarationConfirmed: z.boolean().optional(),
+  referee1Name: z.string().optional(),
+  referee1Phone: z.string().optional(),
+  referee1Relationship: z.string().optional(),
+  referee1Email: z.string().optional(),
+  referee2Name: z.string().optional(),
+  referee2Phone: z.string().optional(),
+  referee2Relationship: z.string().optional(),
+  referee2Email: z.string().optional(),
+  cohortId: z.string().uuid().optional().nullable().or(z.literal("")),
   desiredRoleOption1: z.string().optional(),
   desiredRoleOption2: z.string().optional(),
   idDocument: z.string().optional(),
@@ -174,6 +186,17 @@ function evaluateAutoShortlist(app: z.infer<typeof submitSchema>): boolean {
 
 
 
+
+function parseLegacyReference(refText: string | undefined): { fullName: string; phone: string; relationship?: string } {
+  if (!refText) return { fullName: "Referee", phone: "" };
+  const phoneMatch = refText.match(/(\+?234[789][01]\d{8}|0[789][01]\d{8}|[789][01]\d{8})/);
+  const phone = phoneMatch ? phoneMatch[0] : "";
+  const parts = refText.split(/[,;\n]/).map((s: string) => s.trim()).filter(Boolean);
+  const fullName = parts[0] && parts[0] !== phone ? parts[0] : "Referee";
+  const relationship = parts.length > 2 ? parts[2] : (parts.length > 1 && !parts[1].match(/\d/) ? parts[1] : undefined);
+  return { fullName, phone, relationship };
+}
+
 router.post("/", async (req: Request, res: Response) => {
   const parsed = submitSchema.safeParse(req.body);
   if (parsed.success && parsed.data.financiallyAbleToConvey?.trim().toLowerCase() === "no") {
@@ -192,6 +215,43 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
+    // ── MANDATORY REFEREE DECLARATION CHECK ──
+    if (!parsed.data.refereeDeclarationConfirmed) {
+      return res.status(400).json({
+        error: "You must confirm that your referees have been informed and consent to being contacted before submitting your application.",
+        code: "DECLARATION_REQUIRED",
+      });
+    }
+
+    // ── EXTRACT REFEREES & RUN FRAUD GATES ──
+    const ref1 = {
+      fullName: (parsed.data.referee1Name || parseLegacyReference(parsed.data.reference1).fullName || "Referee 1").trim(),
+      phone: (parsed.data.referee1Phone || parseLegacyReference(parsed.data.reference1).phone || "").trim(),
+      email: parsed.data.referee1Email?.trim() || undefined,
+      relationship: (parsed.data.referee1Relationship || parseLegacyReference(parsed.data.reference1).relationship || "Reference").trim(),
+    };
+    const ref2 = {
+      fullName: (parsed.data.referee2Name || parseLegacyReference(parsed.data.reference2).fullName || "Referee 2").trim(),
+      phone: (parsed.data.referee2Phone || parseLegacyReference(parsed.data.reference2).phone || "").trim(),
+      email: parsed.data.referee2Email?.trim() || undefined,
+      relationship: (parsed.data.referee2Relationship || parseLegacyReference(parsed.data.reference2).relationship || "Reference").trim(),
+    };
+
+    const targetCohortId = parsed.data.cohortId && parsed.data.cohortId.trim() !== "" ? parsed.data.cohortId : null;
+    const fraudGateResult = await refereeVerificationService.validateFraudGates(
+      parsed.data.phone,
+      ref1.phone,
+      ref2.phone,
+      targetCohortId
+    );
+
+    if (!fraudGateResult.valid) {
+      return res.status(400).json({
+        error: fraudGateResult.error,
+        code: fraudGateResult.code,
+      });
+    }
+
     // Duplicate email check
     const [dupEmail] = await db
       .select({ id: applications.id })
@@ -235,7 +295,11 @@ router.post("/", async (req: Request, res: Response) => {
 
     const data = {
       ...cleanParsedData,
+      cohortId: targetCohortId || undefined,
       status: calculatedStatus,
+      refereeDeclarationConfirmed: true,
+      refereeDeclarationTimestamp: new Date(),
+      refereeVerificationStatus: "in_progress",
       devices: parsed.data.devices ? JSON.stringify(parsed.data.devices) : undefined,
       biggestChallenge: parsed.data.biggestChallenge ? JSON.stringify(parsed.data.biggestChallenge) : undefined,
       hasAccess: parsed.data.hasAccess ? JSON.stringify(parsed.data.hasAccess) : undefined,
@@ -250,6 +314,18 @@ router.post("/", async (req: Request, res: Response) => {
       .insert(applications)
       .values(data)
       .returning();
+
+    // Initiate automated referee verification
+    try {
+      await refereeVerificationService.initiateRefereeVerification(
+        application.id,
+        `${application.firstName} ${application.lastName}`,
+        ref1,
+        ref2
+      );
+    } catch (refErr) {
+      console.error("[POST /applications] Referee verification initiation error:", refErr);
+    }
 
     try {
       await publishEvent("application.submitted", {
@@ -1001,5 +1077,120 @@ function parseArrayFields(a: any) {
     kycRejectionReason: a.kyc_rejection_reason || a.kycRejectionReason,
   };
 }
+
+
+// ─────────────────────────────────────────────
+// REFEREE VERIFICATION & MICRO-FORM ENDPOINTS
+// ─────────────────────────────────────────────
+
+// GET /applications/referee-form/:token (Public)
+router.get("/referee-form/:token", async (req: Request, res: Response) => {
+  try {
+    const result = await refereeVerificationService.getMicroForm(req.params.token);
+    if (!result.valid) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    return res.json(result.data);
+  } catch (err: any) {
+    console.error("[GET /referee-form/:token Error]:", err);
+    return res.status(500).json({ error: "Failed to retrieve verification form" });
+  }
+});
+
+// POST /applications/referee-form/:token (Public)
+router.post("/referee-form/:token", async (req: Request, res: Response) => {
+  try {
+    const result = await refereeVerificationService.submitMicroForm(req.params.token, req.body);
+    if (!result.success) {
+      return res.status(result.status || 400).json({ error: result.message });
+    }
+    return res.json({ success: true, message: result.message });
+  } catch (err: any) {
+    console.error("[POST /referee-form/:token Error]:", err);
+    return res.status(500).json({ error: "Failed to submit verification form" });
+  }
+});
+
+// POST /applications/webhooks/messaging (Inbound replies & Delivery receipts)
+router.post("/webhooks/messaging", async (req: Request, res: Response) => {
+  try {
+    const messaging = getMessagingProvider();
+    const sigHeader = req.headers["x-webhook-signature"] as string | undefined;
+
+    if (!messaging.verifyWebhookSignature(sigHeader, JSON.stringify(req.body))) {
+      return res.status(401).json({ error: "Invalid webhook signature" });
+    }
+
+    // Check delivery receipt callback
+    const receipt = messaging.parseDeliveryWebhook(req.body);
+    if (receipt) {
+      await refereeVerificationService.handleDeliveryReceipt(receipt);
+      return res.json({ status: "receipt_processed" });
+    }
+
+    // Check inbound referee message
+    const inbound = messaging.parseInboundWebhook(req.body);
+    if (inbound) {
+      const outcome = await refereeVerificationService.handleInboundMessage(inbound);
+      return res.json({ status: "inbound_processed", outcome });
+    }
+
+    return res.json({ status: "acknowledged" });
+  } catch (err: any) {
+    console.error("[POST /webhooks/messaging Error]:", err);
+    return res.status(500).json({ error: "Webhook processing error" });
+  }
+});
+
+// PUT /applications/:id/referees/:refereeId (Applicant replaces referee)
+router.put("/:id/referees/:refereeId", async (req: Request, res: Response) => {
+  const { fullName, phone, relationship, email } = req.body;
+  if (!fullName || !phone) {
+    return res.status(400).json({ error: "Full name and phone number are required for the new referee." });
+  }
+
+  try {
+    const result = await refereeVerificationService.replaceReferee(req.params.id, req.params.refereeId, {
+      fullName,
+      phone,
+      relationship,
+      email,
+    });
+
+    if (!result.success) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+
+    return res.json({ success: true, message: "Referee updated successfully and verification initiated.", referee: result.referee });
+  } catch (err: any) {
+    console.error("[PUT /:id/referees/:refereeId Error]:", err);
+    return res.status(500).json({ error: "Failed to update referee" });
+  }
+});
+
+// GET /applications/:id/referee-verification (Admin & Applicant view)
+router.get("/:id/referee-verification", async (req: Request, res: Response) => {
+  try {
+    const details = await refereeVerificationService.getApplicationRefereeDetails(req.params.id);
+    if (!details) {
+      return res.status(404).json({ error: "Application not found" });
+    }
+    return res.json(details);
+  } catch (err: any) {
+    console.error("[GET /:id/referee-verification Error]:", err);
+    return res.status(500).json({ error: "Failed to retrieve referee verification details" });
+  }
+});
+
+// POST /applications/referee-jobs/run (Background worker trigger)
+router.post("/referee-jobs/run", async (_req: Request, res: Response) => {
+  try {
+    const stats = await refereeVerificationService.processScheduledJobs();
+    return res.json({ success: true, ...stats });
+  } catch (err: any) {
+    console.error("[POST /referee-jobs/run Error]:", err);
+    return res.status(500).json({ error: "Failed to run scheduled jobs" });
+  }
+});
 
 export default router;
