@@ -961,6 +961,8 @@ router.patch("/:id", async (req: Request, res: Response) => {
         phone: updated.phone,
         cohortId: updated.cohortId,
         approvedRole: updated.approvedRole,
+        gender: updated.gender || undefined,
+        age: updated.age || undefined,
         groupId: groupId || undefined,
         physicalSiteId: updated.trainingSiteId || undefined,
       });

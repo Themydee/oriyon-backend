@@ -29,6 +29,15 @@ queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS specialization text;`.cat
 queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS address text;`.catch((err) =>
   console.error("[user-service] Address migration warning:", err)
 );
+queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS gender varchar(20);`.catch((err) =>
+  console.error("[user-service] gender migration warning:", err)
+);
+queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS age integer;`.catch((err) =>
+  console.error("[user-service] age migration warning:", err)
+);
+queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth timestamp;`.catch((err) =>
+  console.error("[user-service] date_of_birth migration warning:", err)
+);
 queryClient`
   CREATE TABLE IF NOT EXISTS group_trainers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -114,7 +123,7 @@ async function setupConsumers() {
     "application.approved",
     "user-service.application.approved",
     async (payload) => {
-      const { userId, email, firstName, lastName, phone, cohortId, approvedRole, groupId, physicalSiteId } = payload as any;
+      const { userId, email, firstName, lastName, phone, cohortId, approvedRole, groupId, physicalSiteId, gender, age } = payload as any;
 
       // Idempotency guard — check if user already exists
       const [existing] = await db
@@ -177,6 +186,8 @@ async function setupConsumers() {
           phone,
           role: "trainee",
           approvedRole,
+          gender: gender || null,
+          age: (age && !isNaN(parseInt(age, 10))) ? parseInt(age, 10) : null,
           physicalSiteId: physicalSiteId || null,
           isActive: false,
         })

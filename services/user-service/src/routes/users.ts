@@ -918,6 +918,286 @@ userRouter.delete("/:id", async (req: Request, res: Response) => {
 // COHORTS
 // ─────────────────────────────────────────────
 
+
+// ─────────────────────────────────────────────
+// COHORT ANALYTICS & PARTICIPANT DEMOGRAPHICS
+// ─────────────────────────────────────────────
+
+async function handleCohortAnalytics(cohortIdentifier: string | null, res: Response) {
+  try {
+    let targetCohort = null;
+    const allCohorts = await db.select().from(cohorts).orderBy(cohorts.createdAt);
+
+    if (cohortIdentifier && cohortIdentifier !== "active" && cohortIdentifier !== "all") {
+      const [found] = await db.select().from(cohorts).where(eq(cohorts.id, cohortIdentifier)).limit(1);
+      targetCohort = found || null;
+    } else {
+      // Find active cohort using authoritative rules:
+      // 1. isActive === true AND current date is between startDate and endDate
+      // 2. isActive === true ordered by startDate DESC, createdAt DESC
+      const activeList = allCohorts.filter((c) => c.isActive);
+      if (activeList.length > 0) {
+        const now = new Date();
+        const currentlyRunning = activeList.find((c) => {
+          if (!c.startDate) return false;
+          const s = new Date(c.startDate);
+          const e = c.endDate ? new Date(c.endDate) : null;
+          return s <= now && (!e || e >= now);
+        });
+        targetCohort = currentlyRunning || activeList[0];
+      }
+    }
+
+    if (!targetCohort) {
+      return res.json({
+        activeCohort: null,
+        message: "No active cohort found",
+        allCohorts: allCohorts.map((c) => ({
+          id: c.id,
+          name: c.name,
+          isActive: c.isActive,
+          state: c.state,
+          startDate: c.startDate,
+          endDate: c.endDate,
+        })),
+        summary: {
+          totalMembers: 0,
+          totalGroups: 0,
+          totalAssigned: 0,
+          totalUnassigned: 0,
+          reportingDenominator: 0,
+          reportingTimestamp: new Date().toISOString(),
+        },
+        groups: [],
+        unassigned: { count: 0, percentage: 0 },
+        demographics: {
+          gender: {
+            male: { count: 0, percentage: 0 },
+            female: { count: 0, percentage: 0 },
+            unknown: { count: 0, percentage: 0 },
+          },
+          youth: {
+            definition: "Ages 18–35 inclusive (National Youth Policy & African Youth Charter standard)",
+            youth: { count: 0, percentage: 0 },
+            olderAdults: { count: 0, percentage: 0 },
+            unknown: { count: 0, percentage: 0 },
+          },
+        },
+      });
+    }
+
+    // 1. Fetch distinct cohort members
+    const memberRows = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        role: users.role,
+        isActive: users.isActive,
+        gender: users.gender,
+        age: users.age,
+        enrolledAt: cohortMembers.enrolledAt,
+      })
+      .from(cohortMembers)
+      .innerJoin(users, eq(users.id, cohortMembers.userId))
+      .where(eq(cohortMembers.cohortId, targetCohort.id));
+
+    // Deduplicate distinct users
+    const userMap = new Map<string, (typeof memberRows)[0]>();
+    for (const m of memberRows) {
+      if (!userMap.has(m.id)) {
+        userMap.set(m.id, m);
+      }
+    }
+    const distinctMembers = Array.from(userMap.values());
+    const totalMembers = distinctMembers.length;
+
+    // 2. Fetch Groups belonging strictly to this cohort
+    const cohortGroupList = await db
+      .select()
+      .from(groups)
+      .where(eq(groups.cohortId, targetCohort.id))
+      .orderBy(groups.name);
+
+    // 3. Fetch Group Memberships
+    let groupMemberRows: { groupId: string; userId: string }[] = [];
+    if (cohortGroupList.length > 0) {
+      const groupIds = cohortGroupList.map((g) => g.id);
+      groupMemberRows = await db
+        .select({
+          groupId: groupMembers.groupId,
+          userId: groupMembers.userId,
+        })
+        .from(groupMembers)
+        .where(inArray(groupMembers.groupId, groupIds));
+    }
+
+    const groupUserMap = new Map<string, Set<string>>();
+    const assignedUserIds = new Set<string>();
+
+    for (const g of cohortGroupList) {
+      groupUserMap.set(g.id, new Set<string>());
+    }
+
+    for (const gm of groupMemberRows) {
+      if (groupUserMap.has(gm.groupId)) {
+        groupUserMap.get(gm.groupId)!.add(gm.userId);
+      }
+      assignedUserIds.add(gm.userId);
+    }
+
+    // Optional facilitators/coordinators per group
+    const trainersByGroup = new Map<string, any[]>();
+    try {
+      if (cohortGroupList.length > 0) {
+        const gtRows = await db
+          .select({
+            groupId: groupTrainers.groupId,
+            trainerId: users.id,
+            name: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`,
+            email: users.email,
+            specialization: users.specialization,
+            assignedDay: groupTrainers.assignedDay,
+          })
+          .from(groupTrainers)
+          .innerJoin(users, eq(users.id, groupTrainers.trainerId))
+          .where(inArray(groupTrainers.groupId, cohortGroupList.map((g) => g.id)));
+
+        gtRows.forEach((tr) => {
+          if (!trainersByGroup.has(tr.groupId)) trainersByGroup.set(tr.groupId, []);
+          trainersByGroup.get(tr.groupId)!.push(tr);
+        });
+      }
+    } catch {
+      // Ignore if table does not exist
+    }
+
+    const groupsData = cohortGroupList.map((g) => {
+      const userSet = groupUserMap.get(g.id) || new Set();
+      const count = userSet.size;
+      return {
+        id: g.id,
+        name: g.name,
+        description: g.description,
+        practicalDay: g.practicalDay,
+        isActive: g.isActive,
+        memberCount: count,
+        percentage: totalMembers > 0 ? Number(((count / totalMembers) * 100).toFixed(1)) : 0,
+        facilitators: trainersByGroup.get(g.id) || [],
+      };
+    });
+
+    const unassignedCount = distinctMembers.filter((m) => !assignedUserIds.has(m.id)).length;
+
+    // 4. Compute Demographic Breakdown
+    let males = 0;
+    let females = 0;
+    let unknownGender = 0;
+
+    let youth = 0;
+    let olderAdults = 0;
+    let unknownAge = 0;
+
+    for (const m of distinctMembers) {
+      const g = (m.gender || "").toLowerCase().trim();
+      if (g === "male" || g === "m") {
+        males++;
+      } else if (g === "female" || g === "f") {
+        females++;
+      } else {
+        unknownGender++;
+      }
+
+      const a = m.age;
+      if (typeof a === "number" && !isNaN(a) && a >= 18 && a <= 35) {
+        youth++;
+      } else if (typeof a === "number" && !isNaN(a) && a > 35) {
+        olderAdults++;
+      } else {
+        unknownAge++;
+      }
+    }
+
+    return res.json({
+      activeCohort: {
+        id: targetCohort.id,
+        name: targetCohort.name,
+        description: targetCohort.description,
+        state: targetCohort.state,
+        startDate: targetCohort.startDate,
+        endDate: targetCohort.endDate,
+        isActive: targetCohort.isActive,
+        status: targetCohort.isActive ? "active" : "inactive",
+        lastRefreshedAt: new Date().toISOString(),
+      },
+      allCohorts: allCohorts.map((c) => ({
+        id: c.id,
+        name: c.name,
+        isActive: c.isActive,
+        state: c.state,
+        startDate: c.startDate,
+        endDate: c.endDate,
+      })),
+      summary: {
+        totalMembers,
+        totalGroups: cohortGroupList.length,
+        totalAssigned: assignedUserIds.size,
+        totalUnassigned: unassignedCount,
+        reportingDenominator: totalMembers,
+        reportingTimestamp: new Date().toISOString(),
+      },
+      groups: groupsData,
+      unassigned: {
+        count: unassignedCount,
+        percentage: totalMembers > 0 ? Number(((unassignedCount / totalMembers) * 100).toFixed(1)) : 0,
+      },
+      demographics: {
+        gender: {
+          male: {
+            count: males,
+            percentage: totalMembers > 0 ? Number(((males / totalMembers) * 100).toFixed(1)) : 0,
+          },
+          female: {
+            count: females,
+            percentage: totalMembers > 0 ? Number(((females / totalMembers) * 100).toFixed(1)) : 0,
+          },
+          unknown: {
+            count: unknownGender,
+            percentage: totalMembers > 0 ? Number(((unknownGender / totalMembers) * 100).toFixed(1)) : 0,
+          },
+        },
+        youth: {
+          definition: "Ages 18–35 inclusive (National Youth Policy & African Youth Charter standard)",
+          youth: {
+            count: youth,
+            percentage: totalMembers > 0 ? Number(((youth / totalMembers) * 100).toFixed(1)) : 0,
+          },
+          olderAdults: {
+            count: olderAdults,
+            percentage: totalMembers > 0 ? Number(((olderAdults / totalMembers) * 100).toFixed(1)) : 0,
+          },
+          unknown: {
+            count: unknownAge,
+            percentage: totalMembers > 0 ? Number(((unknownAge / totalMembers) * 100).toFixed(1)) : 0,
+          },
+        },
+      },
+    });
+  } catch (err: any) {
+    console.error("[handleCohortAnalytics] error:", err);
+    return res.status(500).json({ error: "Failed to generate cohort analytics" });
+  }
+}
+
+cohortRouter.get("/active/analytics", async (_req: Request, res: Response) => {
+  return handleCohortAnalytics(null, res);
+});
+
+cohortRouter.get("/:id/analytics", async (req: Request, res: Response) => {
+  return handleCohortAnalytics(req.params.id, res);
+});
+
 cohortRouter.get("/", async (_req: Request, res: Response) => {
   try {
     const all = await db.select().from(cohorts).orderBy(cohorts.createdAt);

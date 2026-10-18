@@ -1034,6 +1034,20 @@ app.delete(
 // COHORTS
 // ─────────────────────────────────────────────
 app.get(
+  "/api/cohorts/active/analytics",
+  authenticate,
+  requireRole("admin", "sub_admin", "coordinator"),
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
+  "/api/cohorts/:id/analytics",
+  authenticate,
+  requireRole("admin", "sub_admin", "coordinator"),
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
   "/api/cohorts",
   authenticate,
   keepPath,
