@@ -530,4 +530,167 @@ export const templates = {
       `, `New ${priority} ticket about ${trainerName}`, baseUrl),
     };
   },
+
+  // ── Workshops ─────────────────────────────────────────────────
+
+  workshopEmailVerification: (
+    code: string,
+    expiresMinutes = 10,
+    workshopTitle = "EEWYLA Practical Workshop",
+    baseUrl?: string
+  ) => {
+    const title = workshopTitle || "EEWYLA Practical Workshop";
+    const subject = `Your Verification Code for ${title}: ${code}`;
+    const preheader = `Your 6-digit verification code is ${code} (expires in ${expiresMinutes} minutes).`;
+
+    const codeBox = `
+      <div style="background-color:#f4f7f2; border:2px dashed #2D5A27; border-radius:8px; padding:24px 16px; text-align:center; margin:24px 0;">
+        <div style="font-family:'Courier New',Courier,monospace; font-size:36px; font-weight:bold; letter-spacing:8px; color:#1E3F20; line-height:1;">
+          ${escapeHtml(code)}
+        </div>
+        <p style="font-family:Arial,sans-serif; font-size:12px; color:#5a6e5a; margin:10px 0 0; font-weight:bold;">
+          Expires in ${expiresMinutes} minutes
+        </p>
+      </div>
+    `;
+
+    return {
+      subject,
+      html: base(`
+        ${heading("Verify Your Email")}
+        ${para("Dear Participant,")}
+        ${para(`Thank you for registering for <strong>${escapeHtml(title)}</strong>. Please use the 6-digit verification code below to verify your email and proceed with your registration:`)}
+        ${codeBox}
+        ${notice("<strong>Security Notice:</strong> Never share this code with anyone. Oriyon International staff will never ask for your verification code.", "warning")}
+        ${para("If you did not initiate this registration, you can safely ignore this email.")}
+        ${signature()}
+      `, preheader, baseUrl),
+    };
+  },
+
+  workshopRegistrationConfirmed: (
+    data: {
+      participantName: string;
+      workshopTitle: string;
+      registrationReference: string;
+      paystackReference: string;
+      amountKobo: number;
+      currency: string;
+      paidAt: string | Date;
+    },
+    baseUrl?: string
+  ) => {
+    const {
+      participantName,
+      workshopTitle,
+      registrationReference,
+      paystackReference,
+      amountKobo,
+      currency,
+      paidAt,
+    } = data;
+
+    const displayAmount = (amountKobo / 100).toLocaleString("en-NG", {
+      style: "currency",
+      currency: currency || "NGN",
+    });
+
+    const formattedDate = new Date(paidAt).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    const subject = `Confirmed: Registration for ${workshopTitle}`;
+    const preheader = `Your seat for ${workshopTitle} is confirmed. Ref: ${registrationReference}`;
+
+    return {
+      subject,
+      html: base(`
+        ${heading("Registration & Payment Confirmed")}
+        ${para(`Dear <strong>${escapeHtml(participantName)}</strong>,`)}
+        ${para(`Congratulations! Your payment for <strong>${escapeHtml(workshopTitle)}</strong> has been verified successfully. Your seat has been reserved.`)}
+        ${infoBox([
+          { label: "Participant Name", value: escapeHtml(participantName) },
+          { label: "Workshop", value: escapeHtml(workshopTitle) },
+          { label: "Registration Ref", value: escapeHtml(registrationReference) },
+          { label: "Payment Ref", value: escapeHtml(paystackReference) },
+          { label: "Amount Paid", value: displayAmount },
+          { label: "Confirmed Date", value: formattedDate },
+        ])}
+        ${notice("<strong>Important:</strong> Please save this email and keep your Registration Reference handy for check-in on the first day of training.", "info")}
+        ${para("Our training team will reach out with the workshop timetable, venue directions, and practical session gear requirements ahead of the start date.")}
+        ${signature()}
+      `, preheader, baseUrl),
+    };
+  },
+
+  complaintSubmitted: (
+    data: {
+      name: string;
+      trackingCode: string;
+      natureOfComplaint: string;
+      description?: string;
+    },
+    baseUrl?: string
+  ) => {
+    const { name, trackingCode, natureOfComplaint, description } = data;
+    const subject = `Grievance Received: Tracking Code ${trackingCode}`;
+    return {
+      subject,
+      html: base(`
+        ${heading(`Thank you, ${escapeHtml(name)}.`)}
+        ${para("Your grievance report has been submitted to the Oriyon Grievance Redress Mechanism committee. We treat all submissions seriously and confidentially.")}
+        ${infoBox([
+          { label: "Tracking Code", value: trackingCode },
+          { label: "Category", value: escapeHtml(natureOfComplaint) },
+        ])}
+        ${description ? notice(`<strong>Summary:</strong> ${escapeHtml(description)}`, "info") : ""}
+        ${para("Our committee will investigate and follow up with you. Please retain your tracking code for future reference.")}
+        ${signature()}
+      `, `Your grievance ${trackingCode} has been received.`, baseUrl),
+    };
+  },
+
+  shopOrderPlaced: (
+    data: {
+      customerName: string;
+      ref: string;
+      total: number;
+      items: Array<{ name: string; quantity: number; price: number }>;
+    },
+    baseUrl?: string
+  ) => {
+    const { customerName, ref, total, items } = data;
+    const formattedTotal = Number(total).toLocaleString("en-NG", {
+      style: "currency",
+      currency: "NGN",
+    });
+    const itemsHtml = (items || [])
+      .map(
+        (i) =>
+          `<tr><td style="padding:6px 0; font-size:13px; color:#3d3d3a;">${escapeHtml(i.name)} &times; ${i.quantity}</td><td style="padding:6px 0; text-align:right; font-size:13px; font-weight:bold; color:#0d1f0f;">${(Number(i.price) * i.quantity).toLocaleString("en-NG", { style: "currency", currency: "NGN" })}</td></tr>`
+      )
+      .join("");
+
+    return {
+      subject: `Order Confirmation #${ref}`,
+      html: base(`
+        ${heading(`Order Confirmed, ${escapeHtml(customerName)}`)}
+        ${para("Thank you for your purchase from the Oriyon Shop. Your order is being processed.")}
+        ${infoBox([
+          { label: "Order Reference", value: ref },
+          { label: "Total Amount", value: formattedTotal },
+        ])}
+        <table cellpadding="0" cellspacing="0" border="0" style="width:100%; margin:16px 0 24px; border-top:1px solid #e2e0d8; border-bottom:1px solid #e2e0d8; padding:12px 0;">
+          ${itemsHtml}
+        </table>
+        ${para("You will receive updates as your items are prepared and dispatched.")}
+        ${signature()}
+      `, `Order #${ref} confirmed — Oriyon Shop`, baseUrl),
+    };
+  },
+
 };

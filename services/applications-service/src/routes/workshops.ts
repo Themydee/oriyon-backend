@@ -21,7 +21,7 @@ import {
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "oriyon-secret-key-2026-qa-test";
 const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:3000").replace(/\/$/, "");
-const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "sk_test_52bd168f23b9e3c49711cc403a56ba6db9849149";
+const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || "sk_test_f9e5be53d3b65af77fc8a7ab5d829e11dbd2e831";
 
 export interface WorkshopSessionPayload {
   sub: string; // normalized email
@@ -182,7 +182,7 @@ router.post("/:slug/email-challenges", async (req: Request, res: Response) => {
     });
 
     // Send email
-    await sendVerificationChallengeEmail(normalizedEmail, code, 10);
+    await sendVerificationChallengeEmail(normalizedEmail, code, 10, workshop.title);
 
     // In local dev/testing, log OTP securely for automated verification
     if (process.env.NODE_ENV !== "production") {

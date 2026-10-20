@@ -72,7 +72,7 @@ export async function sendEmailDirect(to: string, subject: string, html: string)
   return false;
 }
 
-export async function sendVerificationChallengeEmail(to: string, code: string, expiresMinutes = 10): Promise<void> {
+export async function sendVerificationChallengeEmail(to: string, code: string, expiresMinutes = 10, workshopTitle = "EEWYLA Practical Workshop"): Promise<void> {
   const subject = "Your EEWYLA Goat Training Workshop Verification Code";
   const html = baseLayout(`
     <h2 style="margin-top:0; color:#1E3F20;">Workshop Registration Verification</h2>
@@ -86,20 +86,20 @@ export async function sendVerificationChallengeEmail(to: string, code: string, e
     <p>If you did not initiate this registration request, please disregard this email.</p>
   `);
 
-  // 1. Try direct send
-  const directSent = await sendEmailDirect(to, subject, html);
-
-  // 2. Publish to event bus for asynchronous notification worker
+  // 1. Publish to RabbitMQ for notifications-service processing
   try {
     await publishEvent("workshop.email_verification_requested", {
       email: to,
       code,
       expiresMinutes,
+      workshopTitle,
       subject,
       html,
     });
-  } catch (err) {
-    // Non-fatal if direct send worked or in offline test environment
+    console.log(`[Workshop Email] Event published to RabbitMQ for ${to}`);
+  } catch (err: any) {
+    console.warn(`[Workshop Email] RabbitMQ publish failed, falling back to direct Resend send:`, err.message);
+    await sendEmailDirect(to, subject, html);
   }
 }
 
@@ -189,10 +189,7 @@ export async function sendRegistrationConfirmationEmail(payload: WorkshopConfirm
     <p style="margin-top:24px;">We look forward to welcoming you to the workshop!</p>
   `);
 
-  // Direct send
-  await sendEmailDirect(to, subject, html);
-
-  // Event bus publish
+  // 1. Publish to RabbitMQ for notifications-service processing
   try {
     await publishEvent("workshop.registration_confirmed", {
       email: to,
@@ -203,8 +200,12 @@ export async function sendRegistrationConfirmationEmail(payload: WorkshopConfirm
       amountKobo,
       currency,
       paidAt,
+      subject,
+      html,
     });
-  } catch (err) {
-    // Non-fatal
+    console.log(`[Workshop Email] Registration confirmed event published to RabbitMQ for ${to}`);
+  } catch (err: any) {
+    console.warn(`[Workshop Email] RabbitMQ publish failed, falling back to direct Resend send:`, err.message);
+    await sendEmailDirect(to, subject, html);
   }
 }

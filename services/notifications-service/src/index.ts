@@ -251,6 +251,101 @@ async function setupConsumers() {
     await sendEmail({ to: p.reporterEmail, ...tpl });
   });
 
+  // ── Workshops ─────────────────────────────────
+
+  await consumeEvent(
+    "workshop.email_verification_requested",
+    "notifications.workshop.email_verification",
+    async (payload) => {
+      const p = payload as any;
+      const email = p.email || p.to;
+      if (!email) {
+        console.warn("[notifications] workshop.email_verification_requested missing email — skipping");
+        return;
+      }
+      console.log(`[notifications] Processing workshop verification code email for ${email}`);
+      const tpl = templates.workshopEmailVerification(
+        String(p.code),
+        Number(p.expiresMinutes || 10),
+        p.workshopTitle || "EEWYLA Practical Workshop",
+        p.baseUrl
+      );
+      await sendEmail({ to: email, ...tpl });
+    },
+  );
+
+  await consumeEvent(
+    "workshop.registration_confirmed",
+    "notifications.workshop.registration_confirmed",
+    async (payload) => {
+      const p = payload as any;
+      const email = p.email || p.to;
+      if (!email) {
+        console.warn("[notifications] workshop.registration_confirmed missing email — skipping");
+        return;
+      }
+      console.log(`[notifications] Processing workshop registration confirmed email for ${email}`);
+      const tpl = templates.workshopRegistrationConfirmed(
+        {
+          participantName: p.participantName || "Participant",
+          workshopTitle: p.workshopTitle || "EEWYLA Practical Workshop",
+          registrationReference: p.registrationReference || "",
+          paystackReference: p.paystackReference || "",
+          amountKobo: Number(p.amountKobo || 0),
+          currency: p.currency || "NGN",
+          paidAt: p.paidAt || new Date().toISOString(),
+        },
+        p.baseUrl
+      );
+      await sendEmail({ to: email, ...tpl });
+    },
+  );
+
+  // ── Grievances / Complaints ───────────────────
+
+  await consumeEvent(
+    "complaint.submitted",
+    "notifications.complaint.submitted",
+    async (payload) => {
+      const p = payload as any;
+      if (!p.email) return;
+      console.log(`[notifications] Processing complaint submitted email for ${p.email}`);
+      const tpl = templates.complaintSubmitted(
+        {
+          name: p.name || "Complainant",
+          trackingCode: p.trackingCode,
+          natureOfComplaint: p.natureOfComplaint,
+          description: p.description,
+        },
+        p.baseUrl
+      );
+      await sendEmail({ to: p.email, ...tpl });
+    },
+  );
+
+  // ── Shop Orders ───────────────────────────────
+
+  await consumeEvent(
+    "shop.order_placed",
+    "notifications.shop.order_placed",
+    async (payload) => {
+      const p = payload as any;
+      if (!p.email) return;
+      console.log(`[notifications] Processing shop order placed email for ${p.email}`);
+      const tpl = templates.shopOrderPlaced(
+        {
+          customerName: p.customerName || "Valued Customer",
+          ref: p.ref || String(p.orderId || ""),
+          total: p.total || 0,
+          items: p.items || [],
+        },
+        p.baseUrl
+      );
+      await sendEmail({ to: p.email, ...tpl });
+    },
+  );
+
+
   await consumeEvent("ticket.status_changed", "notifications.ticket.status_changed", async (payload) => {
     const p = payload as any;
     if (!p.reporterEmail) return;
