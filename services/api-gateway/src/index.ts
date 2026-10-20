@@ -7,7 +7,7 @@ import rateLimit from "express-rate-limit";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import swaggerUi from "swagger-ui-express";
 import { swaggerSpec } from "./swagger";
-import { authenticate, requireRole } from "./middleware/auth";
+import { authenticate, optionalAuthenticate, requireRole } from "./middleware/auth";
 import { requestMetrics, monitoringRouter } from "./monitoring";
 
 const app = express();
@@ -546,7 +546,7 @@ app.post(
 );
 app.get(
   "/api/cooperative/announcements/broadcast",
-  authenticate,
+  optionalAuthenticate,
   keepPath,
   createProxyMiddleware({
     target: APPLICATIONS_SERVICE_URL,

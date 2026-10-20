@@ -67,3 +67,26 @@ export function requireRole(...roles: Array<"trainee" | "trainer" | "lead_traine
     next();
   };
 }
+
+export function optionalAuthenticate(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return next();
+  }
+
+  const token = authHeader.split(" ")[1];
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET!) as JwtPayload;
+    req.user = payload;
+    req.headers["x-user-id"] = payload.userId;
+    req.headers["x-user-email"] = payload.email;
+    req.headers["x-user-role"] = payload.role;
+    req.headers["x-user-assigned-state"] = payload.assignedState || "";
+    req.headers["x-user-assigned-lga"] = payload.assignedLga || "";
+    req.headers["x-user-assigned-zone"] = payload.assignedZone || "";
+    req.headers["x-user-is-cooperative-only"] = payload.isCooperativeOnly ? "true" : "false";
+  } catch {
+    // Optional auth - let invalid tokens pass through as unauthenticated public requests
+  }
+  next();
+}

@@ -177,6 +177,37 @@ async function ensureDbColumnsExist() {
       CREATE INDEX IF NOT EXISTS idx_workshops_slug ON workshops(slug);
       CREATE INDEX IF NOT EXISTS idx_workshops_status ON workshops(status, registration_availability);
 
+      INSERT INTO workshops (
+        slug,
+        title,
+        description,
+        currency,
+        member_price,
+        standard_price,
+        status,
+        registration_availability,
+        venue,
+        metadata
+      ) VALUES (
+        'eewyla-goat-training',
+        'EEWYLA Goat Training Workshop',
+        'Intensive hands-on practical training on modern goat husbandry, herd health management, breed selection, nutrition, biosecurity, and commercial livestock enterprise for women and youth.',
+        'NGN',
+        500000,
+        7000000,
+        'published',
+        true,
+        'Oriyon Training Facility & Partner Farms',
+        '{"cohort": "2026 Cohort 1", "durationDays": 3, "certificateIncluded": true}'::jsonb
+      )
+      ON CONFLICT (slug) DO UPDATE SET
+        title = EXCLUDED.title,
+        member_price = EXCLUDED.member_price,
+        standard_price = EXCLUDED.standard_price,
+        status = EXCLUDED.status,
+        registration_availability = EXCLUDED.registration_availability;
+
+
       CREATE TABLE IF NOT EXISTS workshop_registrations (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         workshop_id UUID NOT NULL REFERENCES workshops(id) ON DELETE RESTRICT,
