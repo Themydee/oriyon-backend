@@ -311,3 +311,117 @@ export const refereeScheduledJobs = pgTable("referee_scheduled_jobs", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+// ─────────────────────────────────────────────
+// EEWYLA WORKSHOP & PAYMENTS
+// ─────────────────────────────────────────────
+
+export const workshopStatusEnum = pgEnum("workshop_status", [
+  "draft",
+  "published",
+  "closed",
+]);
+
+export const workshopRegistrationStatusEnum = pgEnum("workshop_registration_status", [
+  "incomplete",
+  "pending_payment",
+  "paid",
+  "cancelled",
+  "expired",
+]);
+
+export const workshopPaymentStatusEnum = pgEnum("workshop_payment_status", [
+  "unpaid",
+  "pending",
+  "success",
+  "failed",
+  "refunded",
+]);
+
+export const workshopPaymentAttemptStatusEnum = pgEnum("workshop_payment_attempt_status", [
+  "pending",
+  "success",
+  "failed",
+  "abandoned",
+]);
+
+export const workshops = pgTable("workshops", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  slug: varchar("slug", { length: 255 }).notNull().unique(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  currency: varchar("currency", { length: 10 }).notNull().default("NGN"),
+  memberPrice: integer("member_price").notNull().default(500000), // ₦5,000 in kobo
+  standardPrice: integer("standard_price").notNull().default(7000000), // ₦70,000 in kobo
+  status: workshopStatusEnum("status").notNull().default("published"),
+  registrationAvailability: boolean("registration_availability").notNull().default(true),
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
+  venue: varchar("venue", { length: 255 }),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const workshopRegistrations = pgTable("workshop_registrations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workshopId: uuid("workshop_id").references(() => workshops.id).notNull(),
+  participantName: varchar("participant_name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 255 }).notNull(),
+  phone: varchar("phone", { length: 50 }),
+  emailVerifiedAt: timestamp("email_verified_at").notNull(),
+  eligible: boolean("eligible").notNull(),
+  eligibilitySource: varchar("eligibility_source", { length: 50 }).notNull(), // "APPROVED_TRAINEE", "ACTIVE_COOPERATIVE_MEMBER", "BOTH", "NONE"
+  eligibilityRecordId: text("eligibility_record_id"),
+  eligibilityDecisionTimestamp: timestamp("eligibility_decision_timestamp").notNull().defaultNow(),
+  amount: integer("amount").notNull(), // In kobo, immutable once created
+  currency: varchar("currency", { length: 10 }).notNull().default("NGN"),
+  status: workshopRegistrationStatusEnum("status").notNull().default("pending_payment"),
+  paymentStatus: workshopPaymentStatusEnum("payment_status").notNull().default("unpaid"),
+  additionalDetails: jsonb("additional_details"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const workshopPayments = pgTable("workshop_payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  registrationId: uuid("registration_id").references(() => workshopRegistrations.id).notNull(),
+  reference: varchar("reference", { length: 100 }).notNull().unique(), // Paystack reference
+  amount: integer("amount").notNull(), // In kobo
+  currency: varchar("currency", { length: 10 }).notNull().default("NGN"),
+  status: workshopPaymentAttemptStatusEnum("status").notNull().default("pending"),
+  paystackTransactionId: varchar("paystack_transaction_id", { length: 100 }),
+  authorizationUrl: text("authorization_url"),
+  initializedAt: timestamp("initialized_at").notNull().defaultNow(),
+  verifiedAt: timestamp("verified_at"),
+  paidAt: timestamp("paid_at"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const workshopEmailChallenges = pgTable("workshop_email_challenges", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  email: varchar("email", { length: 255 }).notNull(),
+  workshopSlug: varchar("workshop_slug", { length: 255 }).notNull(),
+  codeHash: varchar("code_hash", { length: 255 }).notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  maxAttempts: integer("max_attempts").notNull().default(5),
+  used: boolean("used").notNull().default(false),
+  usedAt: timestamp("used_at"),
+  ipAddress: varchar("ip_address", { length: 100 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const workshopWebhookEvents = pgTable("workshop_webhook_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  eventId: varchar("event_id", { length: 255 }).notNull().unique(),
+  eventType: varchar("event_type", { length: 100 }).notNull(),
+  reference: varchar("reference", { length: 100 }),
+  status: varchar("status", { length: 50 }).notNull().default("processed"),
+  payload: jsonb("payload").notNull(),
+  processedAt: timestamp("processed_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+

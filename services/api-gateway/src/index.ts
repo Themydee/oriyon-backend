@@ -699,6 +699,19 @@ app.post(
 );
 
 // ─────────────────────────────────────────────
+// WORKSHOP & PAYSTACK INTEGRATION (applications-service)
+// ─────────────────────────────────────────────
+app.use(
+  "/api/workshops",
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
+
+// ─────────────────────────────────────────────
 // SHOP SERVICE
 // ─────────────────────────────────────────────
 app.get(
