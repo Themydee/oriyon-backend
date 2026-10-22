@@ -5,6 +5,9 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+const queryClient = postgres(process.env.DATABASE_URL!);
+export const db = drizzle(queryClient);
+
 import { connectRabbitMQ } from "./rabbitmq";
 import applicationsRouter, { runAutoShortlistCheck } from "./routes/applications";
 import cooperativeRouter, { runCooperativeMemberIdBackfill } from "./routes/cooperative";
@@ -12,9 +15,6 @@ import complaintsRouter from "./routes/complaints";
 import workshopsRouter from "./routes/workshops";
 const app = express();
 const PORT = process.env.PORT || 3004;
-
-const queryClient = postgres(process.env.DATABASE_URL!);
-export const db = drizzle(queryClient);
 
 app.use(helmet());
 app.use(cors());

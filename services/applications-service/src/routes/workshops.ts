@@ -886,8 +886,21 @@ router.post("/:slug/webhook", handlePaystackWebhook);
 // Administrative visibility of all registrations
 // ─────────────────────────────────────────────
 router.get("/:slug/admin/registrations", async (req: Request, res: Response) => {
-  const userRole = req.headers["x-user-role"] as string;
-  if (!userRole || !["admin", "super_admin", "coordinator"].includes(userRole)) {
+  let userRole = req.headers["x-user-role"] as string;
+
+  if (!userRole && req.headers.authorization?.startsWith("Bearer ")) {
+    try {
+      const token = req.headers.authorization.split(" ")[1];
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      if (decoded && decoded.role) {
+        userRole = decoded.role;
+      }
+    } catch {
+      // invalid token
+    }
+  }
+
+  if (!userRole || !["admin", "super_admin", "sub_admin", "coordinator"].includes(userRole)) {
     return res.status(403).json({ error: "Access forbidden: Administrator privileges required." });
   }
 
@@ -919,6 +932,147 @@ router.get("/:slug/admin/registrations", async (req: Request, res: Response) => 
   } catch (err) {
     console.error("[workshops] admin registrations list error:", err);
     return res.status(500).json({ error: "Failed to fetch registrations." });
+  }
+});
+
+// ─────────────────────────────────────────────
+// 11. POST /api/workshops/:slug/payments/reconcile
+// Administrative payment reconciliation against Paystack
+// ─────────────────────────────────────────────
+router.post("/:slug/payments/reconcile", async (req: Request, res: Response) => {
+  let userRole = req.headers["x-user-role"] as string;
+
+  if (!userRole && req.headers.authorization?.startsWith("Bearer ")) {
+    try {
+      const token = req.headers.authorization.split(" ")[1];
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      if (decoded && decoded.role) {
+        userRole = decoded.role;
+      }
+    } catch {
+      // invalid token
+    }
+  }
+
+  if (!userRole || !["admin", "super_admin", "sub_admin", "coordinator"].includes(userRole)) {
+    return res.status(403).json({ error: "Access forbidden: Administrator privileges required." });
+  }
+
+  const { slug } = req.params;
+
+  try {
+    const [workshop] = await db
+      .select()
+      .from(workshops)
+      .where(eq(workshops.slug, slug))
+      .limit(1);
+
+    if (!workshop) {
+      return res.status(404).json({ error: "Workshop not found." });
+    }
+
+    // Find pending payments for this workshop
+    const pendingPayments = await db
+      .select({
+        paymentId: workshopPayments.id,
+        reference: workshopPayments.reference,
+        amount: workshopPayments.amount,
+        currency: workshopPayments.currency,
+        registrationId: workshopPayments.registrationId,
+        participantName: workshopRegistrations.participantName,
+        email: workshopRegistrations.email,
+      })
+      .from(workshopPayments)
+      .innerJoin(
+        workshopRegistrations,
+        eq(workshopPayments.registrationId, workshopRegistrations.id)
+      )
+      .where(
+        and(
+          eq(workshopRegistrations.workshopId, workshop.id),
+          eq(workshopPayments.status, "pending")
+        )
+      )
+      .limit(50);
+
+    let updatedCount = 0;
+    const isMock = !PAYSTACK_SECRET_KEY || PAYSTACK_SECRET_KEY.includes("mockkey");
+
+    for (const payment of pendingPayments) {
+      try {
+        if (isMock) {
+          continue;
+        }
+
+        const paystackRes = await axios.get(
+          "https://api.paystack.co/transaction/verify/" + payment.reference,
+          {
+            headers: { Authorization: "Bearer " + PAYSTACK_SECRET_KEY },
+            timeout: 5000,
+          }
+        );
+        const paystackData = paystackRes.data?.data;
+
+        if (paystackData?.status === "success" && paystackData.amount === payment.amount) {
+          const paidAt = new Date(paystackData.paid_at || Date.now());
+
+          await db
+            .update(workshopPayments)
+            .set({
+              status: "success",
+              paystackTransactionId: String(paystackData.id),
+              paidAt,
+              verifiedAt: new Date(),
+              metadata: paystackData,
+              updatedAt: new Date(),
+            })
+            .where(eq(workshopPayments.id, payment.paymentId));
+
+          await db
+            .update(workshopRegistrations)
+            .set({
+              status: "paid",
+              paymentStatus: "success",
+              updatedAt: new Date(),
+            })
+            .where(eq(workshopRegistrations.id, payment.registrationId));
+
+          updatedCount++;
+
+          sendRegistrationConfirmationEmail({
+            to: payment.email,
+            participantName: payment.participantName,
+            workshopTitle: workshop.title,
+            registrationReference: payment.registrationId,
+            paystackReference: payment.reference,
+            amountKobo: payment.amount,
+            currency: payment.currency,
+            paidAt,
+          }).catch((e) => console.error("[Reconcile] confirmation email error:", e));
+        } else if (paystackData?.status === "failed") {
+          await db
+            .update(workshopPayments)
+            .set({
+              status: "failed",
+              metadata: paystackData,
+              updatedAt: new Date(),
+            })
+            .where(eq(workshopPayments.id, payment.paymentId));
+        }
+      } catch (checkErr) {
+        console.warn("[Reconcile] Could not verify reference " + payment.reference);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: "Reconciliation completed. " + updatedCount + " payment(s) reconciled out of " + pendingPayments.length + " pending attempt(s).",
+      checked: pendingPayments.length,
+      updated: updatedCount,
+    });
+  } catch (err) {
+    console.error("[workshops] reconcile error:", err);
+    return res.status(500).json({ error: "Failed to reconcile workshop payments." });
   }
 });
 

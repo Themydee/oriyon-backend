@@ -701,6 +701,28 @@ app.post(
 // ─────────────────────────────────────────────
 // WORKSHOP & PAYSTACK INTEGRATION (applications-service)
 // ─────────────────────────────────────────────
+app.get(
+  "/api/workshops/:slug/admin/registrations",
+  authenticate,
+  requireRole("admin", "sub_admin", "coordinator"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
+app.post(
+  "/api/workshops/:slug/payments/reconcile",
+  authenticate,
+  requireRole("admin", "sub_admin", "coordinator"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
 app.use(
   "/api/workshops",
   keepPath,
