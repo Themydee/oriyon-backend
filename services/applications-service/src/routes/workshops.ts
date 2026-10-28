@@ -321,6 +321,10 @@ router.get("/:slug/eligibility", requireWorkshopSession, async (req: Request, re
 
     return res.json({
       eligible: decision.eligible,
+      memberStatus: decision.memberStatus,
+      eligibilitySource: decision.eligibilitySource,
+      cooperativeDetails: decision.cooperativeDetails || null,
+      adminContactMessage: decision.adminContactMessage || null,
       fee: {
         currency: decision.currency,
         amountKobo: decision.amountKobo,
@@ -393,8 +397,47 @@ router.post("/:slug/registrations", requireWorkshopSession, async (req: Request,
     if (existing) {
       if (existing.status === "paid" || existing.paymentStatus === "success") {
         return res.status(409).json({
-          error: "You have already completed registration and payment for this workshop.",
+          error: "You have already completed registration for this workshop.",
           registration: existing,
+          paid: true,
+        });
+      }
+
+      // If decision.amountKobo === 0, convert this existing registration into a paid free pass!
+      if (decision.amountKobo === 0) {
+        const [updated] = await db
+          .update(workshopRegistrations)
+          .set({
+            participantName: participantName.trim(),
+            phone: phone?.trim() || existing.phone,
+            additionalDetails: additionalDetails || existing.additionalDetails,
+            amount: 0,
+            status: "paid",
+            paymentStatus: "success",
+            eligible: true,
+            eligibilitySource: decision.eligibilitySource,
+            eligibilityRecordId: decision.eligibilityRecordId,
+            eligibilityDecisionTimestamp: decision.checkedAt,
+            updatedAt: new Date(),
+          })
+          .where(eq(workshopRegistrations.id, existing.id))
+          .returning();
+
+        sendRegistrationConfirmationEmail({
+          to: updated.email,
+          participantName: updated.participantName,
+          workshopTitle: workshop.title,
+          registrationReference: `REG-${updated.id.slice(0, 8).toUpperCase()}`,
+          paystackReference: "FREE-PASS-MEMBER",
+          amountKobo: 0,
+          currency: updated.currency,
+          paidAt: new Date().toISOString(),
+        }).catch(err => console.error("[workshops] free pass confirmation email error:", err));
+
+        return res.json({
+          registration: updated,
+          resumed: true,
+          isFreePass: true,
           paid: true,
         });
       }
@@ -414,10 +457,12 @@ router.post("/:slug/registrations", requireWorkshopSession, async (req: Request,
       return res.json({
         registration: updated,
         resumed: true,
+        paid: false,
       });
     }
 
     // 3. Atomically create new registration with locked server-determined fee
+    const isFree = decision.amountKobo === 0;
     const [created] = await db
       .insert(workshopRegistrations)
       .values({
@@ -432,15 +477,30 @@ router.post("/:slug/registrations", requireWorkshopSession, async (req: Request,
         eligibilityDecisionTimestamp: decision.checkedAt,
         amount: decision.amountKobo,
         currency: decision.currency,
-        status: "pending_payment",
-        paymentStatus: "unpaid",
+        status: isFree ? "paid" : "pending_payment",
+        paymentStatus: isFree ? "success" : "unpaid",
         additionalDetails: additionalDetails || null,
       })
       .returning();
 
+    if (isFree) {
+      sendRegistrationConfirmationEmail({
+        to: created.email,
+        participantName: created.participantName,
+        workshopTitle: workshop.title,
+        registrationReference: `REG-${created.id.slice(0, 8).toUpperCase()}`,
+        paystackReference: "FREE-PASS-MEMBER",
+        amountKobo: 0,
+        currency: created.currency,
+        paidAt: new Date().toISOString(),
+      }).catch(err => console.error("[workshops] free pass confirmation email error:", err));
+    }
+
     return res.status(201).json({
       registration: created,
       resumed: false,
+      isFreePass: isFree,
+      paid: isFree,
     });
   } catch (err: any) {
     console.error("[workshops] create registration error:", err);
@@ -472,7 +532,11 @@ router.post("/:slug/registrations/:id/payments", requireWorkshopSession, async (
       return res.status(404).json({ error: "Registration record not found or unauthorized." });
     }
 
-    if (registration.status === "paid" || registration.paymentStatus === "success") {
+    if (registration.amount === 0 || registration.status === "paid" || registration.paymentStatus === "success") {
+      return res.status(400).json({ error: "This registration is already confirmed as a free pass or paid." });
+    }
+
+    if (false) {
       return res.status(400).json({ error: "This registration has already been paid and confirmed." });
     }
 

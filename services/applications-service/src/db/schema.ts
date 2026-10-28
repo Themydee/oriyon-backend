@@ -351,8 +351,8 @@ export const workshops = pgTable("workshops", {
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
   currency: varchar("currency", { length: 10 }).notNull().default("NGN"),
-  memberPrice: integer("member_price").notNull().default(500000), // ₦5,000 in kobo
-  standardPrice: integer("standard_price").notNull().default(7000000), // ₦70,000 in kobo
+  memberPrice: integer("member_price").notNull().default(0), // ₦0 Free in kobo
+  standardPrice: integer("standard_price").notNull().default(3500000), // ₦35,000 in kobo
   status: workshopStatusEnum("status").notNull().default("published"),
   registrationAvailability: boolean("registration_availability").notNull().default(true),
   startDate: timestamp("start_date"),
