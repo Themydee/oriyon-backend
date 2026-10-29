@@ -732,6 +732,16 @@ app.use(
   }),
 );
 
+// Central Payments & Webhooks
+app.use(
+  "/api/payments",
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
 
 // ─────────────────────────────────────────────
 // SHOP SERVICE
@@ -746,7 +756,7 @@ app.get(
   }),
 );
 app.post(
-  "/api/shop/checkout",
+  ["/api/shop/checkout", "/api/shop/checkout/*"],
   keepPath,
   createProxyMiddleware({
     target: SHOP_SERVICE_URL,

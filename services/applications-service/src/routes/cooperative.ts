@@ -1,10 +1,11 @@
+import crypto from "crypto";
 
 import { Router, Request, Response } from "express";
 import { eq, count, and, sql, or, isNull, desc, ilike } from "drizzle-orm";
 import { z } from "zod";
 import axios from "axios";
 import { db } from "../index";
-import { cooperativeMembers, applications, cooperatives, cooperativePayments, announcements } from "../db/schema";
+import { cooperativeMembers, applications, cooperatives, cooperativePayments, payments, announcements } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 
 const router = Router();
@@ -229,8 +230,13 @@ router.post("/payment/initialize", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Member is not linked to any cooperative" });
     }
 
+    if (paymentType !== "contribution" && member.registrationFeePaid === "YES") {
+      return res.status(400).json({ error: "Registration fee for this member has already been paid and confirmed." });
+    }
+
     let feeAmount = 2000;
     let reference = "";
+    const randSuffix = crypto.randomBytes(4).toString("hex").toUpperCase();
 
     if (paymentType === "contribution") {
       let contribAmount = 2000;
@@ -249,7 +255,7 @@ router.post("/payment/initialize", async (req: Request, res: Response) => {
         }
       }
       feeAmount = contribAmount;
-      reference = `COOP-CONTRIB-${memberId}-${Date.now()}`;
+      reference = `COOP-CONTRIB-${memberId.slice(0, 8)}-${Date.now()}-${randSuffix}`;
     } else {
       const [coop] = await db
         .select()
@@ -257,18 +263,34 @@ router.post("/payment/initialize", async (req: Request, res: Response) => {
         .where(eq(cooperatives.id, member.cooperativeId))
         .limit(1);
       feeAmount = coop?.registrationFee || 2000;
-      reference = `COOP-PAY-${memberId}-${Date.now()}`;
+      reference = `COOP-PAY-${memberId.slice(0, 8)}-${Date.now()}-${randSuffix}`;
     }
 
     const paystackAmount = feeAmount * 100; // in kobo
 
-    // Log the transaction in the database
+    // Log the transaction in cooperativePayments
     await db.insert(cooperativePayments).values({
       memberId: member.id,
       amount: paystackAmount,
+      currency: "NGN",
       reference,
       status: "pending",
     });
+
+    // Record attempt in master payments registry
+    await db
+      .insert(payments)
+      .values({
+        reference,
+        category: paymentType === "contribution" ? "cooperative_contribution" : "cooperative_registration_fee",
+        businessEntityId: member.id,
+        amountKobo: paystackAmount,
+        currency: "NGN",
+        customerEmail: member.email || "member@oriyoninternational.com",
+        status: "pending",
+        provider: "paystack",
+      })
+      .onConflictDoNothing();
 
     const secretKey = process.env.PAYSTACK_SECRET_KEY || "sk_test_mockkey123";
 
@@ -358,65 +380,102 @@ router.post("/payment/verify", async (req: Request, res: Response) => {
       });
     }
 
-    const secretKey = process.env.PAYSTACK_SECRET_KEY || "sk_test_f9e5be53d3b65af77fc8a7ab5d829e11dbd2e831";
-
-    if (!process.env.PAYSTACK_SECRET_KEY || secretKey === "sk_test_f9e5be53d3b65af77fc8a7ab5d829e11dbd2e831") {
-      console.log("[Mock Paystack] Bypassing verify API call, auto-approving transaction...");
-      
-      await db
-        .update(cooperativePayments)
-        .set({
-          status: "success",
-          metadata: { mock: true, verifiedAt: new Date() },
-          updatedAt: new Date(),
-        })
-        .where(eq(cooperativePayments.id, payment.id));
-
-      if (reference.startsWith("COOP-PAY-")) {
-        await db
-          .update(cooperativeMembers)
-          .set({
-            registrationFeePaid: "YES",
-            updatedAt: new Date(),
-          })
-          .where(eq(cooperativeMembers.id, payment.memberId));
-
-        // Publish event so user-service can auto-provision account if cooperative-only
-        await publishEvent("cooperative.payment_verified", {
-          memberId: member.id,
-          email: member.email,
-          firstName: member.firstName,
-          lastName: member.lastName,
-          phone: member.phone,
-          lga: member.lga,
-        });
-      }
-
-      const [coop] = await db
-        .select()
-        .from(cooperatives)
-        .where(eq(cooperatives.id, member.cooperativeId))
-        .limit(1);
-
-      return res.json({
-        status: "success",
-        whatsappLink: coop?.whatsappLink || "https://chat.whatsapp.com/default-placeholder-link",
-      });
+    const secretKey = process.env.PAYSTACK_SECRET_KEY;
+    if (!secretKey) {
+      console.error("[cooperative verify] Missing PAYSTACK_SECRET_KEY configuration.");
+      return res.status(500).json({ error: "Payment verification configuration error." });
     }
 
     // Call Paystack verification endpoint
-    const paystackResponse = await axios.get(
-      `https://api.paystack.co/transaction/verify/${reference}`,
-      {
-        headers: {
-          Authorization: `Bearer ${secretKey}`,
-        },
+    let data: any;
+    try {
+      const paystackResponse = await axios.get(
+        `https://api.paystack.co/transaction/verify/${reference}`,
+        {
+          headers: {
+            Authorization: `Bearer ${secretKey}`,
+          },
+          timeout: 8000,
+        }
+      );
+      data = paystackResponse.data?.data;
+    } catch (apiErr: any) {
+      console.error("[cooperative verify] Paystack verification error:", apiErr.response?.data || apiErr.message);
+      return res.status(400).json({ error: "Failed to verify transaction with payment provider." });
+    }
+
+    if (data && data.status === "success") {
+      // Validate expected amount in kobo
+      if (Number(data.amount) !== Number(payment.amount)) {
+        console.error(
+          `[SECURITY ALERT] Cooperative payment amount mismatch for ref ${reference}: Expected ${payment.amount}, got ${data.amount}`
+        );
+        return res.status(400).json({ error: "Payment verification failed: Amount mismatch." });
       }
-    );
 
-    const data = paystackResponse.data.data;
+      // Validate currency
+      if (data.currency?.toUpperCase() !== payment.currency.toUpperCase()) {
+        console.error(
+          `[SECURITY ALERT] Cooperative payment currency mismatch for ref ${reference}: Expected ${payment.currency}, got ${data.currency}`
+        );
+        return res.status(400).json({ error: "Payment verification failed: Currency mismatch." });
+      }
 
-    if (data.status === "success") {
+      // Detect duplicate successful payment for registration fee
+      if (reference.startsWith("COOP-PAY-") && member.registrationFeePaid === "YES") {
+        console.warn(
+          `[DUPLICATE PAYMENT ALERT] Member ${member.id} already paid registration fee! Second payment ${reference} verified.`
+        );
+
+        await db
+          .update(cooperativePayments)
+          .set({
+            status: "success",
+            metadata: { ...data, duplicateChargeDetected: true },
+            updatedAt: new Date(),
+          })
+          .where(eq(cooperativePayments.id, payment.id));
+
+        await db
+          .insert(payments)
+          .values({
+            reference,
+            category: "cooperative_registration_fee",
+            businessEntityId: member.id,
+            amountKobo: payment.amount,
+            currency: payment.currency,
+            customerEmail: member.email || "member@oriyoninternational.com",
+            status: "duplicate_paid_review",
+            provider: "paystack",
+            paystackTransactionId: String(data.id),
+            metadata: { ...data, duplicateChargeDetected: true },
+            verifiedAt: new Date(),
+            paidAt: new Date(data.paid_at || Date.now()),
+          })
+          .onConflictDoUpdate({
+            target: payments.reference,
+            set: {
+              status: "duplicate_paid_review",
+              paystackTransactionId: String(data.id),
+              metadata: { ...data, duplicateChargeDetected: true },
+              verifiedAt: new Date(),
+              updatedAt: new Date(),
+            },
+          });
+
+        const [coop] = await db
+          .select()
+          .from(cooperatives)
+          .where(eq(cooperatives.id, member.cooperativeId))
+          .limit(1);
+
+        return res.json({
+          status: "success",
+          duplicateDetected: true,
+          message: "Payment verified. Note: Registration fee was already active on your account.",
+          whatsappLink: coop?.whatsappLink || "https://chat.whatsapp.com/default-placeholder-link",
+        });
+      }
       // 1. Update payment status in db
       await db
         .update(cooperativePayments)
@@ -454,6 +513,35 @@ router.post("/payment/verify", async (req: Request, res: Response) => {
         .from(cooperatives)
         .where(eq(cooperatives.id, member.cooperativeId))
         .limit(1);
+
+      // Sync to unified payments master table
+      await db
+        .insert(payments)
+        .values({
+          reference,
+          category: reference.startsWith("COOP-CONTRIB-") ? "cooperative_contribution" : "cooperative_registration_fee",
+          businessEntityId: member.id,
+          amountKobo: payment.amount,
+          currency: payment.currency,
+          customerEmail: member.email || "member@oriyoninternational.com",
+          status: "success",
+          provider: "paystack",
+          paystackTransactionId: String(data.id),
+          metadata: data,
+          verifiedAt: new Date(),
+          paidAt: new Date(data.paid_at || Date.now()),
+        })
+        .onConflictDoUpdate({
+          target: payments.reference,
+          set: {
+            status: "success",
+            paystackTransactionId: String(data.id),
+            metadata: data,
+            verifiedAt: new Date(),
+            paidAt: new Date(data.paid_at || Date.now()),
+            updatedAt: new Date(),
+          },
+        });
 
       return res.json({
         status: "success",

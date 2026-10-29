@@ -1,3 +1,4 @@
+import { handleCentralPaystackWebhook } from "./payments";
 import { Router, Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
@@ -8,7 +9,7 @@ import { db } from "../index";
 import {
   workshops,
   workshopRegistrations,
-  workshopPayments,
+  workshopPayments, payments,
   workshopEmailChallenges,
   workshopWebhookEvents,
 } from "../db/schema";
@@ -564,6 +565,21 @@ router.post("/:slug/registrations/:id/payments", requireWorkshopSession, async (
       status: "pending",
     });
 
+    // Sync to master payments registry
+    await db
+      .insert(payments)
+      .values({
+        reference,
+        category: "workshop",
+        businessEntityId: registration.id,
+        amountKobo: registration.amount,
+        currency: registration.currency,
+        customerEmail: registration.email,
+        status: "pending",
+        provider: "paystack",
+      })
+      .onConflictDoNothing();
+
     // Check if test bypass is configured or mock secret key
     const isMock = !PAYSTACK_SECRET_KEY || PAYSTACK_SECRET_KEY.includes("mockkey");
     if (isMock) {
@@ -791,6 +807,35 @@ router.post("/:slug/payments/verify", async (req: Request, res: Response) => {
         })
         .where(eq(workshopRegistrations.id, registration.id));
 
+      // Sync to master payments registry
+      await db
+        .insert(payments)
+        .values({
+          reference: payment.reference,
+          category: "workshop",
+          businessEntityId: registration.id,
+          amountKobo: payment.amount,
+          currency: payment.currency,
+          customerEmail: registration.email,
+          status: "success",
+          provider: "paystack",
+          paystackTransactionId: String(paystackData.id),
+          metadata: paystackData,
+          verifiedAt: new Date(),
+          paidAt,
+        })
+        .onConflictDoUpdate({
+          target: payments.reference,
+          set: {
+            status: "success",
+            paystackTransactionId: String(paystackData.id),
+            metadata: paystackData,
+            verifiedAt: new Date(),
+            paidAt,
+            updatedAt: new Date(),
+          },
+        });
+
       // 4. Send Confirmation Email (Idempotent)
       sendRegistrationConfirmationEmail({
         to: registration.email,
@@ -942,8 +987,8 @@ export async function handlePaystackWebhook(req: Request, res: Response) {
   return res.status(200).json({ received: true });
 }
 
-router.post("/webhook", handlePaystackWebhook);
-router.post("/:slug/webhook", handlePaystackWebhook);
+router.post("/webhook", handleCentralPaystackWebhook);
+router.post("/:slug/webhook", handleCentralPaystackWebhook);
 
 // ─────────────────────────────────────────────
 // 10. GET /api/workshops/:slug/admin/registrations

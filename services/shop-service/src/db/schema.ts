@@ -6,6 +6,7 @@ import {
   timestamp,
   boolean,
   integer,
+  jsonb,
 } from "drizzle-orm/pg-core";
 
 export const products = pgTable("products", {
@@ -31,6 +32,11 @@ export const orders = pgTable("orders", {
   address: text("address").notNull(),
   total: integer("total").notNull(), // Total price in NGN
   status: varchar("status", { length: 50 }).notNull().default("Processing"), // Processing | In Transit | Delivered
+  paymentStatus: varchar("payment_status", { length: 50 }).notNull().default("pending"), // pending | paid | failed
+  paymentReference: varchar("payment_reference", { length: 120 }),
+  paystackTransactionId: varchar("paystack_transaction_id", { length: 100 }),
+  paidAt: timestamp("paid_at"),
+  metadata: jsonb("metadata"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

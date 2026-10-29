@@ -13,13 +13,21 @@ import applicationsRouter, { runAutoShortlistCheck } from "./routes/applications
 import cooperativeRouter, { runCooperativeMemberIdBackfill } from "./routes/cooperative";
 import complaintsRouter from "./routes/complaints";
 import workshopsRouter from "./routes/workshops";
+import paymentsRouter, { reconcilePendingPayments } from "./routes/payments";
 const app = express();
 const PORT = process.env.PORT || 3004;
 
 app.use(helmet());
 app.use(cors());
 app.use(morgan("dev"));
-app.use(express.json({ limit: "50mb" }));
+app.use(
+  express.json({
+    limit: "50mb",
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 app.get("/health", (_req, res) => {
@@ -33,6 +41,8 @@ app.use("/complaints", complaintsRouter);
 app.use("/api/complaints", complaintsRouter);
 app.use("/api/workshops", workshopsRouter);
 app.use("/workshops", workshopsRouter);
+app.use("/api/payments", paymentsRouter);
+app.use("/payments", paymentsRouter);
 
 async function ensureDbColumnsExist() {
   const client = postgres(process.env.DATABASE_URL!);
@@ -308,6 +318,76 @@ async function ensureDbColumnsExist() {
       );
 
       CREATE INDEX IF NOT EXISTS idx_workshop_webhook_events_id ON workshop_webhook_events(event_id);
+      CREATE TABLE IF NOT EXISTS payments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        reference VARCHAR(120) NOT NULL UNIQUE,
+        category VARCHAR(50) NOT NULL,
+        business_entity_id TEXT NOT NULL,
+        amount_kobo INTEGER NOT NULL,
+        currency VARCHAR(10) NOT NULL DEFAULT 'NGN',
+        customer_email VARCHAR(255) NOT NULL,
+        status VARCHAR(50) NOT NULL DEFAULT 'pending',
+        provider VARCHAR(50) NOT NULL DEFAULT 'paystack',
+        paystack_transaction_id VARCHAR(100),
+        authorization_url TEXT,
+        idempotency_key VARCHAR(120),
+        metadata JSONB,
+        initialized_at TIMESTAMP NOT NULL DEFAULT now(),
+        verified_at TIMESTAMP,
+        paid_at TIMESTAMP,
+        reconciled_at TIMESTAMP,
+        reconciliation_notes TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_payments_reference ON payments(reference);
+      CREATE INDEX IF NOT EXISTS idx_payments_category_status ON payments(category, status);
+      CREATE INDEX IF NOT EXISTS idx_payments_business_entity ON payments(business_entity_id);
+      CREATE INDEX IF NOT EXISTS idx_payments_customer_email ON payments(customer_email);
+      CREATE INDEX IF NOT EXISTS idx_payments_initialized_at ON payments(initialized_at);
+
+      -- Backfill historical workshop payments into unified ledger
+      INSERT INTO payments (reference, category, business_entity_id, amount_kobo, currency, customer_email, status, paystack_transaction_id, authorization_url, metadata, initialized_at, verified_at, paid_at, created_at, updated_at)
+      SELECT 
+        wp.reference,
+        'workshop',
+        wp.registration_id::text,
+        wp.amount,
+        wp.currency,
+        COALESCE(wr.email, 'unknown@oriyoninternational.com'),
+        wp.status::text,
+        wp.paystack_transaction_id,
+        wp.authorization_url,
+        wp.metadata,
+        wp.initialized_at,
+        wp.verified_at,
+        wp.paid_at,
+        wp.created_at,
+        wp.updated_at
+      FROM workshop_payments wp
+      LEFT JOIN workshop_registrations wr ON wr.id = wp.registration_id
+      ON CONFLICT (reference) DO NOTHING;
+
+      -- Backfill historical cooperative payments into unified ledger
+      INSERT INTO payments (reference, category, business_entity_id, amount_kobo, currency, customer_email, status, metadata, initialized_at, verified_at, created_at, updated_at)
+      SELECT 
+        cp.reference,
+        CASE WHEN cp.reference LIKE 'COOP-CONTRIB-%' THEN 'cooperative_contribution' ELSE 'cooperative_registration_fee' END,
+        cp.member_id::text,
+        cp.amount,
+        cp.currency,
+        COALESCE(cm.email, 'unknown@oriyoninternational.com'),
+        cp.status::text,
+        cp.metadata,
+        cp.created_at,
+        cp.updated_at,
+        cp.created_at,
+        cp.updated_at
+      FROM cooperative_payments cp
+      LEFT JOIN cooperative_members cm ON cm.id = cp.member_id
+      ON CONFLICT (reference) DO NOTHING;
+
     `);
     console.log("[applications-service] Database columns, workshop tables, and performance indexes verified successfully.");
   } catch (err) {

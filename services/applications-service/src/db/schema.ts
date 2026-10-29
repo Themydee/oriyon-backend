@@ -425,3 +425,48 @@ export const workshopWebhookEvents = pgTable("workshop_webhook_events", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// ─────────────────────────────────────────────
+// UNIFIED PLATFORM PAYMENTS REGISTRY
+// Master audit and reconciliation ledger for all business categories
+// ─────────────────────────────────────────────
+
+export const paymentCategoryEnum = pgEnum("payment_category", [
+  "workshop",
+  "cooperative_registration_fee",
+  "cooperative_contribution",
+  "shop_order",
+]);
+
+export const paymentLifecycleStatusEnum = pgEnum("payment_lifecycle_status", [
+  "pending",
+  "success",
+  "failed",
+  "abandoned",
+  "duplicate_paid_review",
+  "refunded",
+]);
+
+export const payments = pgTable("payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  reference: varchar("reference", { length: 120 }).notNull().unique(),
+  category: varchar("category", { length: 50 }).notNull(), // "workshop", "cooperative_registration_fee", "cooperative_contribution", "shop_order"
+  businessEntityId: text("business_entity_id").notNull(), // Links to registration.id, member.id, or order.ref
+  amountKobo: integer("amount_kobo").notNull(), // Immutable expected minor unit
+  currency: varchar("currency", { length: 10 }).notNull().default("NGN"),
+  customerEmail: varchar("customer_email", { length: 255 }).notNull(),
+  status: varchar("status", { length: 50 }).notNull().default("pending"),
+  provider: varchar("provider", { length: 50 }).notNull().default("paystack"),
+  paystackTransactionId: varchar("paystack_transaction_id", { length: 100 }),
+  authorizationUrl: text("authorization_url"),
+  idempotencyKey: varchar("idempotency_key", { length: 120 }),
+  metadata: jsonb("metadata"),
+  initializedAt: timestamp("initialized_at").notNull().defaultNow(),
+  verifiedAt: timestamp("verified_at"),
+  paidAt: timestamp("paid_at"),
+  reconciledAt: timestamp("reconciled_at"),
+  reconciliationNotes: text("reconciliation_notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+
