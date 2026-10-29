@@ -152,7 +152,8 @@ export class WorkshopEligibilityService {
         registrationFeePaid: coopRecord.registrationFeePaid || "NO",
         status: coopRecord.status,
       };
-      adminContactMessage = `You are registered as a member of ${cooperativeDetails.cooperativeName}, but your membership status has not yet been verified by the administrator. Please contact your administrator or coordinator at eewyla@oriyoninternational.com to verify your status to unlock your Free Pass.`;
+      const benefitLabel = workshop.memberPrice === 0 ? "unlock your Free Pass" : `unlock your subsidized member fee (₦${(workshop.memberPrice / 100).toLocaleString()})`;
+      adminContactMessage = `You are registered as a member of ${cooperativeDetails.cooperativeName}, but your membership status has not yet been verified by the administrator. Please contact your administrator or coordinator at eewyla@oriyoninternational.com to verify your status to ${benefitLabel}.`;
     } else if (isActiveCoopMember) {
       // 2. Active, verified cooperative member
       eligible = true;

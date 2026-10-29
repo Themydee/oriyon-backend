@@ -177,7 +177,7 @@ async function ensureDbColumnsExist() {
       CREATE INDEX IF NOT EXISTS idx_workshops_slug ON workshops(slug);
       CREATE INDEX IF NOT EXISTS idx_workshops_status ON workshops(status, registration_availability);
 
-      -- Physical Workshop (Free for verified members, 35,000 for non-members)
+      -- Physical Workshop (5,000 for members, 70,000 for non-members)
       INSERT INTO workshops (
         slug, title, description, currency, member_price, standard_price,
         status, registration_availability, venue, metadata
@@ -185,7 +185,7 @@ async function ensureDbColumnsExist() {
         'physical-goat-training',
         '1-Day Physical Goat Farming Workshop',
         'Hands-on physical masterclass on goat farming, housing, feed compounding, health, and value addition touring select LGAs across Oyo State.',
-        'NGN', 0, 3500000, 'published', true,
+        'NGN', 500000, 7000000, 'published', true,
         'Touring Select LGAs across Oyo State',
         '{"type": "physical", "certificateIncluded": true, "fieldPractical": true}'::jsonb
       )
@@ -197,7 +197,7 @@ async function ensureDbColumnsExist() {
         status = EXCLUDED.status,
         registration_availability = EXCLUDED.registration_availability;
 
-      -- Online Master Class (5,000 for members, 70,000 for non-members)
+      -- Online Master Class (Free for members, 35,000 for non-members)
       INSERT INTO workshops (
         slug, title, description, currency, member_price, standard_price,
         status, registration_availability, venue, metadata
@@ -205,7 +205,7 @@ async function ensureDbColumnsExist() {
         'online-goat-training',
         '1-Day Online Goat Farming Master Class',
         'Interactive online masterclass on fundamentals of goat farming, value-added products, and additional income streams.',
-        'NGN', 500000, 7000000, 'published', true,
+        'NGN', 0, 3500000, 'published', true,
         'Live Online Session (Zoom / Webinar)',
         '{"type": "online", "certificateIncluded": true, "recordingAvailable": true}'::jsonb
       )
@@ -225,7 +225,7 @@ async function ensureDbColumnsExist() {
         'eewyla-goat-training',
         '1-Day Physical Goat Farming Workshop',
         'Hands-on physical masterclass on goat farming touring select LGAs across Oyo State.',
-        'NGN', 0, 3500000, 'published', true,
+        'NGN', 500000, 7000000, 'published', true,
         'Touring Select LGAs across Oyo State',
         '{"type": "physical"}'::jsonb
       )
