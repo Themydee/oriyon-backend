@@ -182,6 +182,9 @@ router.post("/checkout/initialize", async (req: Request, res: Response) => {
 
     // Check if test bypass or mock mode
     if (!secretKey || secretKey.includes("mockkey")) {
+      if (process.env.NODE_ENV === "production") {
+        return res.status(503).json({ error: "Payment gateway is unavailable in production without valid credentials." });
+      }
       console.log("[Mock Paystack] Bypassing shop initialization API call...");
       return res.json({
         authorization_url: `${process.env.FRONTEND_URL || "http://localhost:3000"}/checkout/callback?reference=${paymentRef}`,
@@ -272,6 +275,9 @@ router.post("/checkout/verify", async (req: Request, res: Response) => {
     let paystackData: any;
 
     if (secretKey.includes("mockkey")) {
+      if (process.env.NODE_ENV === "production") {
+        return res.status(503).json({ error: "Payment verification unavailable in production without valid credentials." });
+      }
       console.log("[Mock Paystack] Auto-approving shop verification...");
       paystackData = {
         status: "success",
@@ -382,6 +388,13 @@ router.post("/checkout/verify", async (req: Request, res: Response) => {
 // Internal webhook fulfilment endpoint (called by central payments dispatcher)
 // ─────────────────────────────────────────────
 router.post("/orders/:ref/mark-paid", async (req: Request, res: Response) => {
+  const secret = process.env.INTERNAL_SERVICE_KEY || process.env.JWT_SECRET;
+  const providedSecret = req.headers["x-internal-secret"];
+
+  if (!secret || typeof providedSecret !== "string" || providedSecret !== secret) {
+    return res.status(401).json({ error: "Unauthorized: Invalid or missing internal service secret." });
+  }
+
   const reference = req.params.ref.trim();
   const { paystackTransactionId, paidAt } = req.body;
 

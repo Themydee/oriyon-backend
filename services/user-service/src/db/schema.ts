@@ -7,6 +7,7 @@ import {
   boolean,
   integer,
   pgEnum,
+  jsonb,
 } from "drizzle-orm/pg-core";
 
 export const roleEnum = pgEnum("role", ["trainee", "trainer", "coordinator", "lead_trainer", "admin", "sub_admin", "cooperative", "corper"]);
@@ -172,5 +173,33 @@ export const trainerTicketMessages = pgTable("trainer_ticket_messages", {
   // reply (visible to reporter) | internal_note (staff only) | event (status/assignment change)
   kind: varchar("kind", { length: 20 }).notNull().default("reply"),
   body: text("body").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ─── Support Live Chat ──────────────────────────────────────────────────────
+export const supportChatThreads = pgTable("support_chat_threads", {
+  id: varchar("id", { length: 128 }).primaryKey(),
+  visitorName: varchar("visitor_name", { length: 255 }).notNull(),
+  visitorEmail: varchar("visitor_email", { length: 255 }).notNull(),
+  visitorPhone: varchar("visitor_phone", { length: 50 }),
+  status: varchar("status", { length: 30 }).notNull().default("open"),
+  lastMessage: text("last_message"),
+  unreadCount: integer("unread_count").notNull().default(0),
+  agentTakenOver: boolean("agent_taken_over").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const supportChatMessages = pgTable("support_chat_messages", {
+  id: varchar("id", { length: 128 }).primaryKey(),
+  sessionId: varchar("session_id", { length: 128 })
+    .notNull()
+    .references(() => supportChatThreads.id, { onDelete: "cascade" }),
+  sender: varchar("sender", { length: 30 }).notNull(),
+  senderName: varchar("sender_name", { length: 255 }).notNull(),
+  text: text("text").notNull(),
+  isRead: boolean("is_read").notNull().default(false),
+  quickReplies: jsonb("quick_replies"),
+  actionLink: jsonb("action_link"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

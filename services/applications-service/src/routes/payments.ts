@@ -463,6 +463,7 @@ export async function handleCentralPaystackWebhook(req: Request, res: Response) 
 
         // 2. Dispatch internal fulfilment call to shop-service
         try {
+          const internalSecret = process.env.INTERNAL_SERVICE_KEY || process.env.JWT_SECRET || "";
           await axios.post(
             `${SHOP_SERVICE_URL}/orders/${reference}/mark-paid`,
             {
@@ -471,7 +472,12 @@ export async function handleCentralPaystackWebhook(req: Request, res: Response) 
               currency,
               paidAt: paidAt.toISOString(),
             },
-            { timeout: 8000 }
+            {
+              headers: {
+                "x-internal-secret": internalSecret,
+              },
+              timeout: 8000,
+            }
           );
           console.log(`[Central Webhook] Successfully notified shop-service for order ref ${reference}`);
         } catch (shopErr: any) {

@@ -8,7 +8,9 @@
     pgEnum,
     integer,
     jsonb,
+    uniqueIndex,
   } from "drizzle-orm/pg-core";
+  import { sql } from "drizzle-orm";
 
   export const applicationStatusEnum = pgEnum("application_status", [
     "pending",
@@ -129,7 +131,14 @@
     submittedAt: timestamp("submitted_at").notNull().defaultNow(),
 
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  });
+  }, (table) => ({
+    emailActiveIdx: uniqueIndex("applications_email_active_idx")
+      .on(table.email)
+      .where(sql`${table.isDeleted} = false`),
+    phoneActiveIdx: uniqueIndex("applications_phone_active_idx")
+      .on(table.phone)
+      .where(sql`${table.isDeleted} = false`),
+  }));
 
 
   export const cooperatives = pgTable("cooperatives", {

@@ -17,6 +17,7 @@ import {
   tutorialsRouter,
   practicalRouter,
   appealsRouter,
+  readingsRouter,
 } from "./routes/lms";
 import statsRouter from "./routes/stats";
 import communityRouter from "./routes/community";
@@ -49,6 +50,7 @@ app.use("/lms/week12", week12Router);
 app.use("/lms/tutorials", tutorialsRouter);
 app.use("/lms/practical", practicalRouter);
 app.use("/lms/appeals", appealsRouter);
+app.use("/lms/readings", readingsRouter);
 app.use("/lms/community", communityRouter);
 app.use("/api/lms/quizzes", quizzesRouter);
 app.use("/api/lms/exams", examsRouter);
@@ -61,29 +63,45 @@ app.use("/api/lms/stats", statsRouter);
 app.use("/api/lms/tutorials", tutorialsRouter);    
 app.use("/api/lms/practical", practicalRouter);    
 app.use("/api/lms/appeals", appealsRouter);
+app.use("/api/lms/readings", readingsRouter);
 app.use("/api/lms/community", communityRouter);    
 
 async function setupConsumers() {
-  // When a user is enrolled → seed empty progress records for all published lessons in that cohort
+  // When a user is enrolled → batch seed empty progress records for all published lessons in that cohort
   await consumeEvent(
     "user.enrolled",
     "lms-service.user.enrolled",
     async (payload) => {
       const { userId, cohortId } = payload as any;
+      if (!userId || !cohortId) return;
 
-      const cohortWeeks = await db.select().from(weeks).where(eq(weeks.cohortId, cohortId));
+      try {
+        // Single join query to fetch all lessons and weeks for this cohort
+        const cohortLessons = await db
+          .select({
+            lessonId: lessons.id,
+            weekId: lessons.weekId,
+          })
+          .from(lessons)
+          .innerJoin(weeks, eq(lessons.weekId, weeks.id))
+          .where(eq(weeks.cohortId, cohortId));
 
-      for (const week of cohortWeeks) {
-        const weekLessons = await db.select().from(lessons).where(eq(lessons.weekId, week.id));
-        for (const lesson of weekLessons) {
-          await db
-            .insert(progress)
-            .values({ userId, lessonId: lesson.id, weekId: week.id, cohortId, completed: false })
-            .onConflictDoNothing();
+        if (cohortLessons.length > 0) {
+          const progressRows = cohortLessons.map((l) => ({
+            userId,
+            lessonId: l.lessonId,
+            weekId: l.weekId,
+            cohortId,
+            completed: false,
+          }));
+
+          await db.insert(progress).values(progressRows).onConflictDoNothing();
         }
-      }
 
-      console.log(`[lms-service] Seeded progress records for user ${userId} in cohort ${cohortId}`);
+        console.log(`[lms-service] Batch seeded ${cohortLessons.length} progress records for user ${userId} in cohort ${cohortId}`);
+      } catch (err) {
+        console.error(`[lms-service] Error seeding progress records for user ${userId}:`, err);
+      }
     }
   );
 }
@@ -198,6 +216,28 @@ async function ensureDbColumns() {
         is_pinned boolean DEFAULT false,
         created_at timestamp NOT NULL DEFAULT now()
       );
+
+      CREATE TABLE IF NOT EXISTS readings (
+        id varchar(128) PRIMARY KEY,
+        recommended_week integer NOT NULL,
+        title varchar(255) NOT NULL,
+        subtitle text,
+        category varchar(100) NOT NULL DEFAULT 'Livestock Management',
+        author varchar(255) NOT NULL,
+        read_time varchar(50) NOT NULL DEFAULT '10 min read',
+        type varchar(50) NOT NULL DEFAULT 'Article',
+        chapter_reference text,
+        cover_image text,
+        summary text NOT NULL,
+        content text NOT NULL,
+        download_url text,
+        external_url text,
+        featured boolean DEFAULT false,
+        published_at timestamp NOT NULL DEFAULT now(),
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_readings_recommended_week ON readings (recommended_week);
     `);
     console.log("[lms-service] Auto-migration: ensured community tables & columns exist.");
   } catch (err) {

@@ -1,11 +1,36 @@
 import { Router, Request, Response } from "express";
 import { eq, and, isNull, sql, desc, inArray, lte, or, type InferModel } from "drizzle-orm";
 import { z } from "zod";
+import jwt from "jsonwebtoken";
 import { db } from "../index";
-import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, practicalCheckins, practicalCodes, exams, examQuestions, examSessions, examAnswers, examViolations, platformTutorials, appeals } from "../db/schema";
+import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, practicalCheckins, practicalCodes, exams, examQuestions, examSessions, examAnswers, examViolations, platformTutorials, appeals, readings } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 
 type WeekRow = InferModel<typeof weeks>;
+
+const STAFF_ROLES = ["admin", "sub_admin", "trainer", "lead_trainer"];
+
+export function isStaffRole(req: Request): boolean {
+  const headerRole = req.headers["x-user-role"];
+  if (typeof headerRole === "string" && STAFF_ROLES.includes(headerRole.trim().toLowerCase())) {
+    return true;
+  }
+
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ") && process.env.JWT_SECRET) {
+    try {
+      const token = authHeader.split(" ")[1];
+      const payload = jwt.verify(token, process.env.JWT_SECRET) as { role?: string };
+      if (payload?.role && STAFF_ROLES.includes(payload.role.toLowerCase())) {
+        return true;
+      }
+    } catch {
+      // Invalid token
+    }
+  }
+
+  return false;
+}
 
 
 export const weeksRouter = Router();
@@ -17,6 +42,7 @@ export const examsRouter = Router();
 export const tutorialsRouter = Router();
 export const practicalRouter = Router();
 export const appealsRouter = Router();
+export const readingsRouter = Router();
 // ─────────────────────────────────────────────
 // HELPER — fetch user from user-service
 // Gets email + firstName + lastName for notifications / verification
@@ -712,11 +738,20 @@ quizzesRouter.get("/week/:weekId", async (req: Request, res: Response) => {
       .where(eq(quizzes.weekId, req.params.weekId))
       .orderBy(desc(quizzes.isPublished), desc(quizzes.createdAt));
 
-    const normalized = all.map((q) => ({
-      ...q,
-      passingScore: 70,
-      isPublished: q.isPublished ?? true,
-    }));
+    const isStaff = isStaffRole(req);
+    const normalized = all.map((q) => {
+      const sanitizedQuestions = Array.isArray(q.questions)
+        ? isStaff
+          ? q.questions
+          : (q.questions as any[]).map(({ correctIndex: _stripped, ...item }) => item)
+        : [];
+      return {
+        ...q,
+        questions: sanitizedQuestions,
+        passingScore: 70,
+        isPublished: q.isPublished ?? true,
+      };
+    });
     return res.json(normalized);
   } catch {
     return res.status(500).json({ error: "Failed to fetch quizzes" });
@@ -732,7 +767,20 @@ quizzesRouter.get("/:id", async (req: Request, res: Response) => {
       .where(eq(quizzes.id, req.params.id))
       .limit(1);
     if (!quiz) return res.status(404).json({ error: "Quiz not found" });
-    return res.json({ ...quiz, passingScore: 70, isPublished: quiz.isPublished ?? true });
+
+    const isStaff = isStaffRole(req);
+    const sanitizedQuestions = Array.isArray(quiz.questions)
+      ? isStaff
+        ? quiz.questions
+        : (quiz.questions as any[]).map(({ correctIndex: _stripped, ...q }) => q)
+      : [];
+
+    return res.json({
+      ...quiz,
+      questions: sanitizedQuestions,
+      passingScore: 70,
+      isPublished: quiz.isPublished ?? true,
+    });
   } catch {
     return res.status(500).json({ error: "Failed to fetch quiz" });
   }
@@ -2243,7 +2291,7 @@ examsRouter.patch("/:id", async (req: Request, res: Response) => {
 // Pass ?admin=true to get full data.
 examsRouter.get("/:id/questions", async (req: Request, res: Response) => {
   try {
-    const isAdmin = req.query.admin === "true";
+    const isStaff = isStaffRole(req);
  
     const questions = await db
       .select()
@@ -2252,7 +2300,7 @@ examsRouter.get("/:id/questions", async (req: Request, res: Response) => {
       .orderBy(examQuestions.orderIndex);
  
     // Strip correct answer from trainee-facing responses
-    const sanitized = isAdmin
+    const sanitized = isStaff
       ? questions
       : questions.map(({ correctOptionIndex: _stripped, ...q }) => q);
  
@@ -2264,6 +2312,9 @@ examsRouter.get("/:id/questions", async (req: Request, res: Response) => {
  
 // POST /lms/exams/:id/questions — add a question
 examsRouter.post("/:id/questions", async (req: Request, res: Response) => {
+  if (!isStaffRole(req)) {
+    return res.status(403).json({ error: "Unauthorized. Staff access required." });
+  }
   const schema = z
     .object({
       type: z.enum(["mcq", "short_answer", "essay"]),
@@ -2322,6 +2373,9 @@ examsRouter.post("/:id/questions", async (req: Request, res: Response) => {
 examsRouter.patch(
   "/questions/:questionId",
   async (req: Request, res: Response) => {
+    if (!isStaffRole(req)) {
+      return res.status(403).json({ error: "Unauthorized. Staff access required." });
+    }
     const schema = z.object({
       questionText: z.string().min(1).optional(),
       options: z.array(z.string()).optional(),
@@ -2357,6 +2411,9 @@ examsRouter.patch(
 examsRouter.delete(
   "/questions/:questionId",
   async (req: Request, res: Response) => {
+    if (!isStaffRole(req)) {
+      return res.status(403).json({ error: "Unauthorized. Staff access required." });
+    }
     try {
       const [deleted] = await db
         .delete(examQuestions)
@@ -2925,6 +2982,9 @@ examsRouter.get("/:id/sessions", async (req: Request, res: Response) => {
 examsRouter.get(
   "/sessions/:sessionId/answers",
   async (req: Request, res: Response) => {
+    if (!isStaffRole(req)) {
+      return res.status(403).json({ error: "Unauthorized. Staff access required." });
+    }
     try {
       const rows = await db
         .select({
@@ -2958,6 +3018,9 @@ examsRouter.get(
 examsRouter.patch(
   "/answers/:answerId/mark",
   async (req: Request, res: Response) => {
+    if (!isStaffRole(req)) {
+      return res.status(403).json({ error: "Unauthorized. Staff access required." });
+    }
     const schema = z.object({
       marksAwarded: z.number().int().min(0),
       markedBy: z.string().uuid(),
@@ -3158,6 +3221,250 @@ tutorialsRouter.delete("/:id", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("[lms-service] Error deleting tutorial:", err);
     return res.status(500).json({ error: "Failed to delete video tutorial" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// RECOMMENDED READINGS ROUTER
+// ─────────────────────────────────────────────
+
+// GET /readings — List all readings (optional filter ?week=X, ?category=Y)
+readingsRouter.get("/", async (req: Request, res: Response) => {
+  try {
+    const { week, category } = req.query;
+    let query = db.select().from(readings);
+
+    const conditions = [];
+    if (week) {
+      const parsedWeek = parseInt(week as string, 10);
+      if (!isNaN(parsedWeek)) {
+        conditions.push(eq(readings.recommendedWeek, parsedWeek));
+      }
+    }
+    if (category && typeof category === "string") {
+      conditions.push(eq(readings.category, category));
+    }
+
+    const rows = conditions.length > 0
+      ? await query.where(and(...conditions)).orderBy(readings.recommendedWeek, desc(readings.publishedAt))
+      : await query.orderBy(readings.recommendedWeek, desc(readings.publishedAt));
+
+    return res.json(rows);
+  } catch (err) {
+    console.error("[lms-service] Error fetching readings:", err);
+    return res.status(500).json({ error: "Failed to fetch readings" });
+  }
+});
+
+// GET /readings/week/:weekNum — List readings for specific week
+readingsRouter.get("/week/:weekNum", async (req: Request, res: Response) => {
+  try {
+    const weekNum = parseInt(req.params.weekNum, 10);
+    if (isNaN(weekNum)) {
+      return res.status(400).json({ error: "Invalid week number" });
+    }
+
+    const rows = await db
+      .select()
+      .from(readings)
+      .where(eq(readings.recommendedWeek, weekNum))
+      .orderBy(desc(readings.publishedAt));
+
+    return res.json(rows);
+  } catch (err) {
+    console.error("[lms-service] Error fetching week readings:", err);
+    return res.status(500).json({ error: "Failed to fetch week readings" });
+  }
+});
+
+// GET /readings/:id — Get reading by ID
+readingsRouter.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const [row] = await db
+      .select()
+      .from(readings)
+      .where(eq(readings.id, req.params.id))
+      .limit(1);
+
+    if (!row) {
+      return res.status(404).json({ error: "Reading not found" });
+    }
+
+    return res.json(row);
+  } catch (err) {
+    console.error("[lms-service] Error fetching reading:", err);
+    return res.status(500).json({ error: "Failed to fetch reading" });
+  }
+});
+
+// POST /readings — Create recommended reading (Staff only)
+readingsRouter.post("/", async (req: Request, res: Response) => {
+  if (!isStaffRole(req)) {
+    return res.status(403).json({ error: "Unauthorized. Staff access required." });
+  }
+
+  const schema = z.object({
+    id: z.string().optional(),
+    recommendedWeek: z.number().int().min(1).max(20),
+    title: z.string().min(1),
+    subtitle: z.string().optional(),
+    category: z.string().default("Livestock Management"),
+    author: z.string().min(1),
+    readTime: z.string().default("10 min read"),
+    type: z.string().default("Article"),
+    chapterReference: z.string().optional(),
+    coverImage: z.string().optional(),
+    summary: z.string().min(1),
+    content: z.string().min(1),
+    downloadUrl: z.string().optional(),
+    externalUrl: z.string().optional(),
+    featured: z.boolean().optional().default(false),
+    publishedAt: z.string().optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.format() });
+  }
+
+  try {
+    const {
+      id,
+      recommendedWeek,
+      title,
+      subtitle,
+      category,
+      author,
+      readTime,
+      type,
+      chapterReference,
+      coverImage,
+      summary,
+      content,
+      downloadUrl,
+      externalUrl,
+      featured,
+      publishedAt,
+    } = parsed.data;
+
+    const readingId = id || `reading-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+    const [created] = await db
+      .insert(readings)
+      .values({
+        id: readingId,
+        recommendedWeek,
+        title,
+        subtitle: subtitle ?? null,
+        category,
+        author,
+        readTime,
+        type,
+        chapterReference: chapterReference ?? null,
+        coverImage: coverImage ?? null,
+        summary,
+        content,
+        downloadUrl: downloadUrl ?? null,
+        externalUrl: externalUrl ?? null,
+        featured: featured ?? false,
+        publishedAt: publishedAt ? new Date(publishedAt) : new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    return res.status(201).json(created);
+  } catch (err) {
+    console.error("[lms-service] Error creating reading:", err);
+    return res.status(500).json({ error: "Failed to create reading" });
+  }
+});
+
+// PATCH /readings/:id — Update recommended reading (Staff only)
+readingsRouter.patch("/:id", async (req: Request, res: Response) => {
+  if (!isStaffRole(req)) {
+    return res.status(403).json({ error: "Unauthorized. Staff access required." });
+  }
+
+  const schema = z.object({
+    recommendedWeek: z.number().int().min(1).max(20).optional(),
+    title: z.string().min(1).optional(),
+    subtitle: z.string().optional().nullable(),
+    category: z.string().optional(),
+    author: z.string().min(1).optional(),
+    readTime: z.string().optional(),
+    type: z.string().optional(),
+    chapterReference: z.string().optional().nullable(),
+    coverImage: z.string().optional().nullable(),
+    summary: z.string().min(1).optional(),
+    content: z.string().min(1).optional(),
+    downloadUrl: z.string().optional().nullable(),
+    externalUrl: z.string().optional().nullable(),
+    featured: z.boolean().optional(),
+    publishedAt: z.string().optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.format() });
+  }
+
+  try {
+    const data = parsed.data;
+    const [updated] = await db
+      .update(readings)
+      .set({
+        ...(data.recommendedWeek !== undefined && { recommendedWeek: data.recommendedWeek }),
+        ...(data.title !== undefined && { title: data.title }),
+        ...(data.subtitle !== undefined && { subtitle: data.subtitle }),
+        ...(data.category !== undefined && { category: data.category }),
+        ...(data.author !== undefined && { author: data.author }),
+        ...(data.readTime !== undefined && { readTime: data.readTime }),
+        ...(data.type !== undefined && { type: data.type }),
+        ...(data.chapterReference !== undefined && { chapterReference: data.chapterReference }),
+        ...(data.coverImage !== undefined && { coverImage: data.coverImage }),
+        ...(data.summary !== undefined && { summary: data.summary }),
+        ...(data.content !== undefined && { content: data.content }),
+        ...(data.downloadUrl !== undefined && { downloadUrl: data.downloadUrl }),
+        ...(data.externalUrl !== undefined && { externalUrl: data.externalUrl }),
+        ...(data.featured !== undefined && { featured: data.featured }),
+        ...(data.publishedAt !== undefined && { publishedAt: new Date(data.publishedAt) }),
+        updatedAt: new Date(),
+      })
+      .where(eq(readings.id, req.params.id))
+      .returning();
+
+    if (!updated) {
+      return res.status(404).json({ error: "Reading not found" });
+    }
+
+    return res.json(updated);
+  } catch (err) {
+    console.error("[lms-service] Error updating reading:", err);
+    return res.status(500).json({ error: "Failed to update reading" });
+  }
+});
+
+// DELETE /readings/:id — Delete recommended reading (Staff only)
+readingsRouter.delete("/:id", async (req: Request, res: Response) => {
+  if (!isStaffRole(req)) {
+    return res.status(403).json({ error: "Unauthorized. Staff access required." });
+  }
+
+  try {
+    const [deleted] = await db
+      .delete(readings)
+      .where(eq(readings.id, req.params.id))
+      .returning();
+
+    if (!deleted) {
+      return res.status(404).json({ error: "Reading not found" });
+    }
+
+    return res.json({ success: true, id: deleted.id });
+  } catch (err) {
+    console.error("[lms-service] Error deleting reading:", err);
+    return res.status(500).json({ error: "Failed to delete reading" });
   }
 });
  

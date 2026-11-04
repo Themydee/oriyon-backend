@@ -83,9 +83,10 @@ app.use(
 );
 app.use(morgan("combined"));
 
-// Identity headers are set only by the authenticate middleware. Drop any the
-// client sent so downstream services can never be handed a forged role.
+// Identity & internal secret headers are protected. Drop any the
+// client sent so downstream services can never be handed forged roles or internal access.
 app.use((req, _res, next) => {
+  delete req.headers["x-internal-secret"];
   for (const header of Object.keys(req.headers)) {
     if (header.startsWith("x-user-")) delete req.headers[header];
   }
@@ -1432,6 +1433,7 @@ app.get(
 app.get(
   "/api/lms/exams/sessions/:sessionId/answers",
   authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
@@ -1456,18 +1458,21 @@ app.post(
 app.patch(
   "/api/lms/exams/questions/:questionId",
   authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
 app.delete(
   "/api/lms/exams/questions/:questionId",
   authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
 app.patch(
   "/api/lms/exams/answers/:answerId/mark",
   authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
@@ -1505,6 +1510,7 @@ app.get(
 app.post(
   "/api/lms/exams/:id/questions",
   authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
@@ -1677,6 +1683,36 @@ app.delete(
 );
 
 // ─────────────────────────────────────────────
+// RECOMMENDED READINGS
+// ─────────────────────────────────────────────
+app.get(
+  "/api/lms/readings*",
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.post(
+  "/api/lms/readings",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.patch(
+  "/api/lms/readings/:id",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.delete(
+  "/api/lms/readings/:id",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+
+// ─────────────────────────────────────────────
 // TRAINER SUPPORT TICKETS (user-service) — signed-in users only;
 // the service decides who is staff from the role the gateway sets
 // ─────────────────────────────────────────────
@@ -1697,6 +1733,15 @@ app.get(
 app.use(
   "/api/tickets",
   authenticate,
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+
+// ─────────────────────────────────────────────
+// SUPPORT LIVE CHAT (user-service)
+// ─────────────────────────────────────────────
+app.use(
+  "/api/support-chat",
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );

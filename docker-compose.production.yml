@@ -45,8 +45,8 @@ services:
       dockerfile: Dockerfile
     container_name: oriyon-auth-service
     restart: unless-stopped
-    ports:
-      - "3001:3001"
+    expose:
+      - "3001"
     environment:
       PORT: 3001
       DATABASE_URL: ${AUTH_DATABASE_URL}
@@ -66,8 +66,8 @@ services:
       dockerfile: Dockerfile
     container_name: oriyon-user-service
     restart: unless-stopped
-    ports:
-      - "3002:3002"
+    expose:
+      - "3002"
     environment:
       PORT: 3002
       DATABASE_URL: ${USER_DATABASE_URL}
@@ -83,8 +83,8 @@ services:
       dockerfile: Dockerfile
     container_name: oriyon-lms-service
     restart: unless-stopped
-    ports:
-      - "3003:3003"
+    expose:
+      - "3003"
     environment:
       PORT: 3003
       DATABASE_URL: ${LMS_DATABASE_URL}
@@ -100,8 +100,8 @@ services:
       dockerfile: Dockerfile
     container_name: oriyon-applications-service
     restart: unless-stopped
-    ports:
-      - "3004:3004"
+    expose:
+      - "3004"
     environment:
       PORT: 3004
       DATABASE_URL: ${APPLICATIONS_DATABASE_URL}
@@ -116,8 +116,8 @@ services:
       dockerfile: Dockerfile
     container_name: oriyon-notifications-service
     restart: unless-stopped
-    ports:
-      - "3005:3005"
+    expose:
+      - "3005"
     environment:
       PORT: 3005
       DATABASE_URL: ${NOTIFICATIONS_DATABASE_URL}
@@ -135,8 +135,8 @@ services:
       dockerfile: Dockerfile
     container_name: oriyon-shop-service
     restart: unless-stopped
-    ports:
-      - "3006:3006"
+    expose:
+      - "3006"
     environment:
       PORT: 3006
       DATABASE_URL: ${SHOP_DATABASE_URL}

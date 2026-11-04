@@ -30,8 +30,19 @@ function normalizeUserRow(user: any) {
   const rawActive = user.isActive ?? user.is_active;
   const isActive = rawActive === true || rawActive === "true" || rawActive === 1;
 
+  // Clean out redundant large base64 string duplicates from user object
+  const {
+    passport_picture: _p1,
+    passport_url: _p2,
+    avatar_url: _p3,
+    photo: _p4,
+    avatarUrl: _p5,
+    id_document: _id1,
+    ...cleanUser
+  } = user;
+
   return {
-    ...user,
+    ...cleanUser,
     id: user.id,
     email: user.email,
     firstName,
@@ -54,7 +65,6 @@ function normalizeUserRow(user: any) {
     idType,
     id_type: idType,
     idDocument,
-    id_document: idDocument,
     idDocumentUrl: idDocument,
     idFilename,
     id_filename: idFilename,
@@ -68,11 +78,6 @@ function normalizeUserRow(user: any) {
     kyc_rejection_reason: kycRejectionReason,
     passportPicture,
     passportUrl: passportPicture,
-    avatarUrl: passportPicture,
-    photo: passportPicture,
-    passport_picture: passportPicture,
-    passport_url: passportPicture,
-    avatar_url: passportPicture,
   };
 }
 
@@ -183,28 +188,26 @@ userRouter.get("/", async (req: Request, res: Response) => {
     } catch (drizzleErr) {
       console.error("Drizzle select /users failed, using raw SQL fallback:", drizzleErr);
       try {
-        let rawQuery = `SELECT * FROM users`;
-        const rawConditions: string[] = [];
+        const conditions: any[] = [];
 
         if (search) {
-          const escapedSearch = search.replace(/'/g, "''");
-          rawConditions.push(`(first_name ILIKE '%${escapedSearch}%' OR last_name ILIKE '%${escapedSearch}%' OR email ILIKE '%${escapedSearch}%')`);
+          const searchPattern = `%${search}%`;
+          conditions.push(sql`(first_name ILIKE ${searchPattern} OR last_name ILIKE ${searchPattern} OR email ILIKE ${searchPattern})`);
         }
         if (roleFilter && roleFilter !== "all") {
-          const escapedRole = roleFilter.replace(/'/g, "''");
-          rawConditions.push(`role = '${escapedRole}'`);
+          conditions.push(sql`role = ${roleFilter}`);
         }
 
-        if (rawConditions.length > 0) {
-          rawQuery += ` WHERE ` + rawConditions.join(" AND ");
-        }
+        const whereSql = conditions.length > 0 ? sql`WHERE ${sql.join(conditions, sql` AND `)}` : sql``;
+        const safeLimit = Math.max(1, Math.min(1000, Number(limit) || 10));
+        const safeOffset = Math.max(0, Number(offset) || 0);
 
-        const countQuery = `SELECT count(*)::int AS count FROM (${rawQuery}) sub`;
-        rawQuery += ` ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+        const usersQuery = sql`SELECT * FROM users ${whereSql} ORDER BY created_at DESC LIMIT ${safeLimit} OFFSET ${safeOffset}`;
+        const countQuery = sql`SELECT count(*)::int AS count FROM users ${whereSql}`;
 
         const [rawUsersRes, rawCountRes] = await Promise.all([
-          db.execute(sql.raw(rawQuery)),
-          db.execute(sql.raw(countQuery)),
+          db.execute(usersQuery),
+          db.execute(countQuery),
         ]);
 
         allUsers = (rawUsersRes as any)?.rows || (Array.isArray(rawUsersRes) ? rawUsersRes : []);

@@ -389,6 +389,18 @@ async function ensureDbColumnsExist() {
       ON CONFLICT (reference) DO NOTHING;
 
     `);
+
+    // Safe partial unique indexes on active applications (non-fatal if duplicates exist on live DB)
+    try {
+      await client.unsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS applications_email_active_idx ON applications (email) WHERE is_deleted = false;
+        CREATE UNIQUE INDEX IF NOT EXISTS applications_phone_active_idx ON applications (phone) WHERE is_deleted = false;
+      `);
+      console.log("[applications-service] Safe partial unique indexes on applications (email/phone) verified.");
+    } catch (idxErr: any) {
+      console.warn("[applications-service] Note: Unique index creation on applications (email/phone) deferred:", idxErr.message);
+    }
+
     console.log("[applications-service] Database columns, workshop tables, and performance indexes verified successfully.");
   } catch (err) {
     console.error("[applications-service] Migration error:", err);

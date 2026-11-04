@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { eq, and, sql, count } from "drizzle-orm";
+import { eq, and, sql, count, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import postgres from "postgres";
@@ -266,26 +266,27 @@ router.post("/", async (req: Request, res: Response) => {
     const [dupPhone] = await db
       .select({ id: applications.id })
       .from(applications)
-      .where(eq(applications.phone, parsed.data.phone))
+      .where(and(eq(applications.phone, parsed.data.phone), eq(applications.isDeleted, false)))
       .limit(1);
     if (dupPhone) {
       return res.status(409).json({ error: "An application with this phone number already exists." });
     }
 
-    // Duplicate name check (regular & inversed, case-insensitive)
+    // Duplicate name check (flag for reviewer visibility rather than hard-rejecting distinct applicants)
     const fNameLower = parsed.data.firstName.toLowerCase();
     const lNameLower = parsed.data.lastName.toLowerCase();
     const [dupName] = await db
       .select({ id: applications.id })
       .from(applications)
       .where(
-        sql`(LOWER(${applications.firstName}) = ${fNameLower} AND LOWER(${applications.lastName}) = ${lNameLower}) OR 
-            (LOWER(${applications.firstName}) = ${lNameLower} AND LOWER(${applications.lastName}) = ${fNameLower})`
+        and(
+          eq(applications.isDeleted, false),
+          sql`(LOWER(${applications.firstName}) = ${fNameLower} AND LOWER(${applications.lastName}) = ${lNameLower}) OR 
+              (LOWER(${applications.firstName}) = ${lNameLower} AND LOWER(${applications.lastName}) = ${fNameLower})`
+        )
       )
       .limit(1);
-    if (dupName) {
-      return res.status(409).json({ error: "An application with this applicant name already exists." });
-    }
+    const hasNameMatch = Boolean(dupName);
 
     const passesAutoShortlist = evaluateAutoShortlist(parsed.data);
     const calculatedStatus: ApplicationStatus = passesAutoShortlist ? "shortlisted" : "pending";
@@ -297,6 +298,9 @@ router.post("/", async (req: Request, res: Response) => {
       ...cleanParsedData,
       cohortId: targetCohortId || undefined,
       status: calculatedStatus,
+      reviewNotes: hasNameMatch
+        ? "Note: Another applicant with the same or inverted name exists. Verified unique email & phone."
+        : undefined,
       refereeDeclarationConfirmed: true,
       refereeDeclarationTimestamp: new Date(),
       refereeVerificationStatus: "in_progress",
@@ -358,62 +362,98 @@ router.post("/", async (req: Request, res: Response) => {
       status: application.status,
     });
   } catch (err: any) {
+    if (err?.code === "23505" || err?.message?.includes("unique")) {
+      return res.status(409).json({ error: "An application with this email or phone number already exists." });
+    }
     console.error("[POST /applications Error]:", err);
     return res.status(500).json({ error: err?.message || "Failed to submit application" });
   }
 });
 
 // ─────────────────────────────────────────────
-// AUTO-SHORTLIST BATCH RUNNER
+// AUTO-SHORTLIST BATCH RUNNER (Optimized projection & batch update)
 // ─────────────────────────────────────────────
-export async function runAutoShortlistCheck() {
+export async function runAutoShortlistCheck(batchLimit = 200) {
   try {
     const activePendingApplications = await db
-      .select()
+      .select({
+        id: applications.id,
+        email: applications.email,
+        firstName: applications.firstName,
+        lastName: applications.lastName,
+        age: applications.age,
+        address: applications.address,
+        whyJoin: applications.whyJoin,
+        dependantsDetail: applications.dependantsDetail,
+        isBreadwinner: applications.isBreadwinner,
+        hasDependants: applications.hasDependants,
+        educationLevel: applications.educationLevel,
+        fieldOfStudy: applications.fieldOfStudy,
+        devices: applications.devices,
+        isDigitallyLiterate: applications.isDigitallyLiterate,
+        internetUsage: applications.internetUsage,
+        ownsGoatFarm: applications.ownsGoatFarm,
+        hasGoatExperience: applications.hasGoatExperience,
+        goatExperienceRating: applications.goatExperienceRating,
+        committedFullTraining: applications.committedFullTraining,
+        declarationConfirmed: applications.declarationConfirmed,
+        isCoop: applications.isCoop,
+        isCommunityMember: applications.isCommunityMember,
+        biggestChallenge: applications.biggestChallenge,
+        hasAccess: applications.hasAccess,
+      })
       .from(applications)
       .where(
         and(
           eq(applications.status, "pending"),
           eq(applications.isDeleted, false)
         )
-      );
+      )
+      .limit(batchLimit);
 
-    let processedCount = 0;
+    if (activePendingApplications.length === 0) {
+      return {
+        totalPendingScanned: 0,
+        automaticallyShortlistedCount: 0,
+      };
+    }
+
+    const qualifying: typeof activePendingApplications = [];
 
     for (const app of activePendingApplications) {
-      // Normalize null database values out into JavaScript undefined structures
-      const sanitizeNulls = Object.fromEntries(
-        Object.entries(app).map(([key, val]) => [key, val === null ? undefined : val])
-      );
-
       const typedPayload = {
-        ...sanitizeNulls,
+        ...app,
         devices: app.devices ? JSON.parse(app.devices) : [],
         biggestChallenge: app.biggestChallenge ? JSON.parse(app.biggestChallenge) : [],
         hasAccess: app.hasAccess ? JSON.parse(app.hasAccess) : [],
       } as unknown as z.infer<typeof submitSchema>;
 
       if (evaluateAutoShortlist(typedPayload)) {
-        await db
-          .update(applications)
-          .set({ status: "shortlisted" as any, updatedAt: new Date() })
-          .where(eq(applications.id, app.id));
+        qualifying.push(app);
+      }
+    }
 
-        await publishEvent("application.shortlisted", {
+    if (qualifying.length > 0) {
+      const qualifyingIds = qualifying.map((q) => q.id);
+      await db
+        .update(applications)
+        .set({ status: "shortlisted" as any, updatedAt: new Date() })
+        .where(inArray(applications.id, qualifyingIds));
+
+      for (const app of qualifying) {
+        publishEvent("application.shortlisted", {
           applicationId: app.id,
           email: app.email,
           firstName: app.firstName,
           lastName: app.lastName,
           isAutomatedBatchMigration: true,
-        });
-
-        processedCount++;
+        }).catch((e) => console.error("[Auto-shortlist event error]:", e));
       }
     }
 
     return {
       totalPendingScanned: activePendingApplications.length,
-      automaticallyShortlistedCount: processedCount,
+      automaticallyShortlistedCount: qualifying.length,
     };
   } catch (err) {
     console.error("[Auto Shortlist Check Error]:", err);

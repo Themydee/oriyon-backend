@@ -10,6 +10,7 @@ import { userRouter, cohortRouter } from "./routes/users";
 import adminRouter from "./routes/admin";
 import idDocumentRouter from "./routes/id-document";
 import { ticketsRouter } from "./routes/tickets";
+import { chatRouter } from "./routes/chat";
 import { users, cohortMembers, groupMembers } from "./db/schema";
 import { eq } from "drizzle-orm";
 
@@ -85,6 +86,39 @@ queryClient`
   console.error("[user-service] Role migration warning:", err)
 );
 
+queryClient`
+  CREATE TABLE IF NOT EXISTS support_chat_threads (
+    id VARCHAR(128) PRIMARY KEY,
+    visitor_name VARCHAR(255) NOT NULL,
+    visitor_email VARCHAR(255) NOT NULL,
+    visitor_phone VARCHAR(50),
+    status VARCHAR(30) NOT NULL DEFAULT 'open',
+    last_message TEXT,
+    unread_count INTEGER NOT NULL DEFAULT 0,
+    agent_taken_over BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now()
+  );
+
+  CREATE TABLE IF NOT EXISTS support_chat_messages (
+    id VARCHAR(128) PRIMARY KEY,
+    session_id VARCHAR(128) NOT NULL REFERENCES support_chat_threads(id) ON DELETE CASCADE,
+    sender VARCHAR(30) NOT NULL,
+    sender_name VARCHAR(255) NOT NULL,
+    text TEXT NOT NULL,
+    is_read BOOLEAN NOT NULL DEFAULT false,
+    quick_replies JSONB,
+    action_link JSONB,
+    created_at TIMESTAMP NOT NULL DEFAULT now()
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_support_chat_threads_status ON support_chat_threads(status);
+  CREATE INDEX IF NOT EXISTS idx_support_chat_threads_updated ON support_chat_threads(updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_support_chat_messages_session ON support_chat_messages(session_id);
+`.catch((err) =>
+  console.error("[user-service] support chat table migration warning:", err)
+);
+
 // ─────────────────────────────────────────────
 // MIDDLEWARE
 // ─────────────────────────────────────────────
@@ -109,6 +143,8 @@ app.use("/api/users", userRouter);
 app.use("/api/cohorts", cohortRouter);
 app.use("/tickets", ticketsRouter);
 app.use("/api/tickets", ticketsRouter);
+app.use("/support-chat", chatRouter);
+app.use("/api/support-chat", chatRouter);
 
 // ─────────────────────────────────────────────
 // RABBITMQ CONSUMERS

@@ -1,3 +1,4 @@
+
 import { handleCentralPaystackWebhook } from "./payments";
 import { Router, Request, Response, NextFunction } from "express";
 import crypto from "crypto";
@@ -583,6 +584,9 @@ router.post("/:slug/registrations/:id/payments", requireWorkshopSession, async (
     // Check if test bypass is configured or mock secret key
     const isMock = !PAYSTACK_SECRET_KEY || PAYSTACK_SECRET_KEY.includes("mockkey");
     if (isMock) {
+      if (process.env.NODE_ENV === "production") {
+        return res.status(503).json({ error: "Payment gateway is unavailable in production without valid credentials." });
+      }
       console.log("[Mock Paystack] Bypassing initialization, returning direct callback URL");
       return res.json({
         authorization_url: callbackUrl,
@@ -749,6 +753,9 @@ router.post("/:slug/payments/verify", async (req: Request, res: Response) => {
     let paystackData: any;
 
     if (isMock) {
+      if (process.env.NODE_ENV === "production") {
+        return res.status(503).json({ error: "Payment verification unavailable in production without valid credentials." });
+      }
       console.log("[Mock Paystack] Auto-approving verify API call");
       paystackData = {
         status: "success",

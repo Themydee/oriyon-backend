@@ -1,30 +1,97 @@
 import amqplib, { Channel, ChannelModel } from "amqplib";
 
 const EXCHANGE = "oriyon.events";
+const DLX_EXCHANGE = "oriyon.events.dlx";
+
 let channel: Channel | null = null;
 let connection: ChannelModel | null = null;
+let isReconnecting = false;
+
+interface RegisteredConsumer {
+  routingKey: string;
+  queueName: string;
+  handler: (payload: Record<string, unknown>) => Promise<void>;
+}
+
+const consumerRegistry: RegisteredConsumer[] = [];
+
+async function bindAndConsume(
+  ch: Channel,
+  routingKey: string,
+  queueName: string,
+  handler: (payload: Record<string, unknown>) => Promise<void>
+) {
+  await ch.assertExchange(DLX_EXCHANGE, "topic", { durable: true });
+  await ch.assertQueue(`${queueName}.dlq`, { durable: true });
+  await ch.bindQueue(`${queueName}.dlq`, DLX_EXCHANGE, routingKey);
+
+  await ch.assertQueue(queueName, {
+    durable: true,
+    deadLetterExchange: DLX_EXCHANGE,
+    deadLetterRoutingKey: routingKey,
+  });
+  await ch.bindQueue(queueName, EXCHANGE, routingKey);
+  ch.prefetch(1);
+
+  ch.consume(queueName, async (msg) => {
+    if (!msg) return;
+    try {
+      const payload = JSON.parse(msg.content.toString());
+      await handler(payload);
+      ch.ack(msg);
+    } catch (err) {
+      console.error(`[lms-service][RabbitMQ] Handler error on ${routingKey}:`, err);
+      ch.nack(msg, false, false);
+    }
+  });
+
+  console.log(`[lms-service][RabbitMQ] Consumer active → ${routingKey} (queue: ${queueName})`);
+}
 
 export async function connectRabbitMQ(url: string) {
   let retries = 10;
   while (retries > 0) {
     try {
       connection = await amqplib.connect(url);
-      channel = await connection.createChannel();
-      await channel.assertExchange(EXCHANGE, "topic", { durable: true });
+      const ch = await connection.createChannel();
+      channel = ch;
+      await ch.assertExchange(EXCHANGE, "topic", { durable: true });
+
       connection.on("close", () => {
-        console.error("[lms-service][RabbitMQ] Connection closed. Reconnecting...");
+        console.error("[lms-service][RabbitMQ] Connection closed. Reconnecting & re-attaching consumers...");
         channel = null;
-        setTimeout(() => connectRabbitMQ(url), 5000);
+        connection = null;
+        if (!isReconnecting) {
+          isReconnecting = true;
+          setTimeout(async () => {
+            try {
+              await connectRabbitMQ(url);
+              isReconnecting = false;
+            } catch (recErr) {
+              console.error("[lms-service][RabbitMQ] Reconnection failed:", recErr);
+              isReconnecting = false;
+            }
+          }, 5000);
+        }
       });
-      console.log("[lms-service][RabbitMQ] Connected");
+
+      for (const reg of consumerRegistry) {
+        try {
+          await bindAndConsume(ch, reg.routingKey, reg.queueName, reg.handler);
+        } catch (regErr) {
+          console.error(`[lms-service][RabbitMQ] Failed to re-register consumer for ${reg.routingKey}:`, regErr);
+        }
+      }
+
+      console.log(`[lms-service][RabbitMQ] Connected successfully. Active consumers: ${consumerRegistry.length}`);
       return channel;
-    } catch {
+    } catch (err) {
       retries--;
-      console.error(`[lms-service][RabbitMQ] Retrying... (${retries} left)`);
+      console.error(`[lms-service][RabbitMQ] Retrying... (${retries} left)`, err);
       await new Promise((r) => setTimeout(r, 5000));
     }
   }
-  throw new Error("RabbitMQ connection failed");
+  throw new Error("RabbitMQ connection failed after maximum retries");
 }
 
 export async function publishEvent(routingKey: string, payload: Record<string, unknown>) {
@@ -41,20 +108,14 @@ export async function consumeEvent(
   queueName: string,
   handler: (payload: Record<string, unknown>) => Promise<void>
 ) {
-  if (!channel) throw new Error("RabbitMQ channel not ready");
-  await channel.assertQueue(queueName, { durable: true });
-  await channel.bindQueue(queueName, EXCHANGE, routingKey);
-  channel.prefetch(1);
-  channel.consume(queueName, async (msg) => {
-    if (!msg) return;
-    try {
-      const payload = JSON.parse(msg.content.toString());
-      await handler(payload);
-      channel!.ack(msg);
-    } catch (err) {
-      console.error(`[lms-service][RabbitMQ] Handler error on ${routingKey}:`, err);
-      channel!.nack(msg, false, false);
-    }
-  });
-  console.log(`[lms-service][RabbitMQ] Consuming → ${routingKey} (queue: ${queueName})`);
+  if (!consumerRegistry.some((c) => c.queueName === queueName && c.routingKey === routingKey)) {
+    consumerRegistry.push({ routingKey, queueName, handler });
+  }
+
+  if (!channel) {
+    console.warn(`[lms-service][RabbitMQ] Channel not ready yet for ${routingKey}, saved in registry.`);
+    return;
+  }
+
+  await bindAndConsume(channel, routingKey, queueName, handler);
 }
