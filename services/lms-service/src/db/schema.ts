@@ -47,28 +47,6 @@ export const weeks = pgTable("weeks", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
 // ─── Lessons ──────────────────────────────────────────────────────────────────
 
 export const lessons = pgTable("lessons", {
@@ -86,28 +64,6 @@ export const lessons = pgTable("lessons", {
   durationMinutes: integer("duration_minutes"),
   order: integer("order").notNull().default(0),
   isPublished: boolean("is_published").notNull().default(false),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -143,28 +99,6 @@ export const quizzes = pgTable("quizzes", {
   questions: jsonb("questions").notNull().default([]),
   passingScore: integer("passing_score").notNull().default(70),
   isPublished: boolean("is_published").notNull().default(false),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -238,28 +172,6 @@ export const practicalCodes = pgTable("practical_codes", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
 // ─── Physical Sessions ────────────────────────────────────────────────────────
 
 export const physicalSessions = pgTable("physical_sessions", {
@@ -272,28 +184,6 @@ export const physicalSessions = pgTable("physical_sessions", {
   location: text("location"),
   scheduledAt: timestamp("scheduled_at"),
   durationMinutes: integer("duration_minutes"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -323,28 +213,6 @@ export const exams = pgTable("exams", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
 // ─── Exam Questions ───────────────────────────────────────────────────────────
 export const examQuestions = pgTable("exam_questions", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -359,28 +227,6 @@ export const examQuestions = pgTable("exam_questions", {
   correctOptionIndex: integer("correct_option_index"),
   marks: integer("marks").notNull().default(1),
   orderIndex: integer("order_index").notNull().default(0),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -407,28 +253,6 @@ export const examSessions = pgTable("exam_sessions", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
 // ─── Exam Answers ─────────────────────────────────────────────────────────────
 export const examAnswers = pgTable("exam_answers", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -447,28 +271,6 @@ export const examAnswers = pgTable("exam_answers", {
   marksAwarded: integer("marks_awarded"),
   markedBy: uuid("marked_by"),
   markedAt: timestamp("marked_at"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -499,28 +301,6 @@ export const platformTutorials = pgTable("platform_tutorials", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
 // ─── LMS Community Q&A & Live Chat ──────────────────────────────────────────
 
 export const communityQuestions = pgTable("community_questions", {
@@ -542,28 +322,6 @@ export const communityQuestions = pgTable("community_questions", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
 export const communityAnswers = pgTable("community_answers", {
   id: uuid("id").primaryKey().defaultRandom(),
   questionId: uuid("question_id")
@@ -577,28 +335,6 @@ export const communityAnswers = pgTable("community_answers", {
   isVerified: boolean("is_verified").notNull().default(false),
   upvotes: integer("upvotes").notNull().default(0),
   upvotedBy: jsonb("upvoted_by").$type<string[]>().default([]),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -652,28 +388,6 @@ export const appeals = pgTable("appeals", {
 export const readings = pgTable("readings", {
   id: varchar("id", { length: 128 }).primaryKey(),
   recommendedWeek: integer("recommended_week").notNull(),
-  title: varchar("title", { length: 255 }).notNull(),
-  subtitle: text("subtitle"),
-  category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
-  author: varchar("author", { length: 255 }).notNull(),
-  readTime: varchar("read_time", { length: 50 }).notNull().default("10 min read"),
-  type: varchar("type", { length: 50 }).notNull().default("Article"),
-  chapterReference: text("chapter_reference"),
-  coverImage: text("cover_image"),
-  summary: text("summary").notNull(),
-  content: text("content").notNull(),
-  downloadUrl: text("download_url"),
-  externalUrl: text("external_url"),
-  featured: boolean("featured").default(false),
-  publishedAt: timestamp("published_at").notNull().defaultNow(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-// ─── Recommended Readings ───────────────────────────────────────────────────
-export const readings = pgTable("readings", {
-  id: varchar("id", { length: 128 }).primaryKey(),
-  recommendedWeek: integer("recommended_week").notNull(), // 1 to 12
   title: varchar("title", { length: 255 }).notNull(),
   subtitle: text("subtitle"),
   category: varchar("category", { length: 100 }).notNull().default("Livestock Management"),
