@@ -14,6 +14,38 @@ export const cohortRouter = Router();
 // USERS
 // ─────────────────────────────────────────────
 
+const userListProjection = {
+  id: users.id,
+  email: users.email,
+  firstName: users.firstName,
+  lastName: users.lastName,
+  phone: users.phone,
+  address: users.address,
+  role: users.role,
+  gender: users.gender,
+  age: users.age,
+  dateOfBirth: users.dateOfBirth,
+  assignedState: users.assignedState,
+  assignedLga: users.assignedLga,
+  assignedZone: users.assignedZone,
+  physicalSiteId: users.physicalSiteId,
+  isCooperativeOnly: users.isCooperativeOnly,
+  isActive: users.isActive,
+  blacklistReason: users.blacklistReason,
+  approvedRole: users.approvedRole,
+  specialization: users.specialization,
+  idType: users.idType,
+  idFilename: users.idFilename,
+  idMimeType: users.idMimeType,
+  idUploadedAt: users.idUploadedAt,
+  kycStatus: users.kycStatus,
+  kycRejectionReason: users.kycRejectionReason,
+  passportUrl: users.passportUrl,
+  avatarUrl: users.avatarUrl,
+  createdAt: users.createdAt,
+  updatedAt: users.updatedAt,
+};
+
 function normalizeUserRow(user: any) {
   if (!user) return null;
   const firstName = user.firstName || user.first_name || "";
@@ -172,7 +204,7 @@ userRouter.get("/", async (req: Request, res: Response) => {
     try {
       const [usersRows, countRes] = await Promise.all([
         db
-          .select()
+          .select(userListProjection)
           .from(users)
           .where(whereClause)
           .orderBy(desc(users.createdAt))
@@ -202,7 +234,17 @@ userRouter.get("/", async (req: Request, res: Response) => {
         const safeLimit = Math.max(1, Math.min(1000, Number(limit) || 10));
         const safeOffset = Math.max(0, Number(offset) || 0);
 
-        const usersQuery = sql`SELECT * FROM users ${whereSql} ORDER BY created_at DESC LIMIT ${safeLimit} OFFSET ${safeOffset}`;
+        const usersQuery = sql`
+          SELECT 
+            id, email, first_name, last_name, phone, address, role, gender, age, 
+            date_of_birth, assigned_state, assigned_lga, assigned_zone, physical_site_id, 
+            is_cooperative_only, is_active, blacklist_reason, approved_role, specialization, 
+            id_type, id_filename, id_mime_type, id_uploaded_at, kyc_status, 
+            kyc_rejection_reason, passport_url, avatar_url, created_at, updated_at
+          FROM users ${whereSql} 
+          ORDER BY created_at DESC 
+          LIMIT ${safeLimit} OFFSET ${safeOffset}
+        `;
         const countQuery = sql`SELECT count(*)::int AS count FROM users ${whereSql}`;
 
         const [rawUsersRes, rawCountRes] = await Promise.all([
