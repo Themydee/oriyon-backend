@@ -17,7 +17,15 @@ const PORT = process.env.PORT || 3001;
 // ─────────────────────────────────────────────
 // DATABASE
 // ─────────────────────────────────────────────
-const queryClient = postgres(process.env.DATABASE_URL!);
+const queryClient = postgres(process.env.DATABASE_URL!, {
+  max: 30,
+  idle_timeout: 20,
+  connect_timeout: 10,
+  connection: {
+    statement_timeout: 15, // Max 15s per query to prevent hung connections
+    lock_timeout: 5,       // Max 5s waiting for a lock before failing safely
+  },
+});
 export const db = drizzle(queryClient);
 
 queryClient`
@@ -77,15 +85,19 @@ app.use("/api/auth", authRouter);
 // START
 // ─────────────────────────────────────────────
 async function bootstrap() {
-  await connectRabbitMQ(process.env.RABBITMQ_URL!);
-
-  // Register RabbitMQ listeners
-  await subscribeToEvent("user.created", handleUserCreated);
-  await subscribeToEvent("user.deactivated", handleUserDeactivated);
-  await subscribeToEvent("user.updated", handleUserUpdated);
-
   app.listen(PORT, () => {
     console.log(`[auth-service] Running on port ${PORT}`);
+
+    if (process.env.RABBITMQ_URL) {
+      connectRabbitMQ(process.env.RABBITMQ_URL)
+        .then(async () => {
+          // Register RabbitMQ listeners
+          await subscribeToEvent("user.created", handleUserCreated);
+          await subscribeToEvent("user.deactivated", handleUserDeactivated);
+          await subscribeToEvent("user.updated", handleUserUpdated);
+        })
+        .catch((err) => console.error("[auth-service] RabbitMQ connection error:", err));
+    }
   });
 
   // Prune old login_events rows used by the monitoring report

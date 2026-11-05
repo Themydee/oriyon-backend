@@ -5,7 +5,15 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-const queryClient = postgres(process.env.DATABASE_URL!);
+const queryClient = postgres(process.env.DATABASE_URL!, {
+  max: 30,
+  idle_timeout: 20,
+  connect_timeout: 10,
+  connection: {
+    statement_timeout: 15, // Max 15s per query to prevent hung connections
+    lock_timeout: 5,       // Max 5s waiting for a lock before failing safely
+  },
+});
 export const db = drizzle(queryClient);
 
 import { connectRabbitMQ } from "./rabbitmq";
@@ -410,28 +418,32 @@ async function ensureDbColumnsExist() {
 }
 
 async function bootstrap() {
-  await ensureDbColumnsExist();
-  await connectRabbitMQ(process.env.RABBITMQ_URL!);
-
-  // Run backfill for existing cooperative members missing IDs
-  runCooperativeMemberIdBackfill().catch(err => {
-    console.error("[Cooperative ID Backfill Error]:", err);
-  });
-
-  // Run auto-shortlist check once on startup, then every 10 minutes
-  runAutoShortlistCheck().catch(err => {
-    console.error("[Auto-Shortlist Startup Error]:", err);
-  });
-
-  const TEN_MINUTES = 10 * 60 * 1000;
-  setInterval(() => {
-    runAutoShortlistCheck().catch(err => {
-      console.error("[Auto-Shortlist Scheduler Error]:", err);
-    });
-  }, TEN_MINUTES);
-
   app.listen(PORT, () => {
     console.log(`[applications-service] Running on port ${PORT}`);
+
+    ensureDbColumnsExist().catch(err => console.error("[applications-service] DB schema init error:", err));
+
+    if (process.env.RABBITMQ_URL) {
+      connectRabbitMQ(process.env.RABBITMQ_URL)
+        .catch(err => console.error("[applications-service] RabbitMQ connection error:", err));
+    }
+
+    // Run backfill for existing cooperative members missing IDs
+    runCooperativeMemberIdBackfill().catch(err => {
+      console.error("[Cooperative ID Backfill Error]:", err);
+    });
+
+    // Run auto-shortlist check once on startup, then every 10 minutes
+    runAutoShortlistCheck().catch(err => {
+      console.error("[Auto-Shortlist Startup Error]:", err);
+    });
+
+    const TEN_MINUTES = 10 * 60 * 1000;
+    setInterval(() => {
+      runAutoShortlistCheck().catch(err => {
+        console.error("[Auto-Shortlist Scheduler Error]:", err);
+      });
+    }, TEN_MINUTES);
   });
 }
 

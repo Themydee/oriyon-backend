@@ -27,7 +27,15 @@ import { eq } from "drizzle-orm";
 const app = express();
 const PORT = process.env.PORT || 3003;
 
-const queryClient = postgres(process.env.DATABASE_URL!);
+const queryClient = postgres(process.env.DATABASE_URL!, {
+  max: 30,
+  idle_timeout: 20,
+  connect_timeout: 10,
+  connection: {
+    statement_timeout: 15, // Max 15s per query to prevent hung connections
+    lock_timeout: 5,       // Max 5s waiting for a lock before failing safely
+  },
+});
 export const db = drizzle(queryClient);
 
 app.use(helmet());
@@ -246,11 +254,16 @@ async function ensureDbColumns() {
 }
 
 async function bootstrap() {
-  await ensureDbColumns();
-  await connectRabbitMQ(process.env.RABBITMQ_URL!);
-  await setupConsumers();
   app.listen(PORT, () => {
     console.log(`[lms-service] Running on port ${PORT}`);
+
+    ensureDbColumns().catch((err) => console.error("[lms-service] DB schema init error:", err));
+
+    if (process.env.RABBITMQ_URL) {
+      connectRabbitMQ(process.env.RABBITMQ_URL)
+        .then(() => setupConsumers())
+        .catch((err) => console.error("[lms-service] RabbitMQ connection error:", err));
+    }
   });
 }
 

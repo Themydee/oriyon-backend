@@ -353,7 +353,7 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
     // 1. Try fetching user by ID using Drizzle
     try {
       const rows = await db
-        .select()
+        .select(userListProjection)
         .from(users)
         .where(eq(users.id, id))
         .limit(1);
@@ -361,7 +361,15 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
     } catch (drizzleErr) {
       console.error(`Drizzle select by ID failed, falling back to raw SQL:`, drizzleErr);
       try {
-        const rawRes = await db.execute(sql`SELECT * FROM users WHERE id = ${id}::uuid LIMIT 1`);
+        const rawRes = await db.execute(sql`
+          SELECT 
+            id, email, first_name, last_name, phone, address, role, gender, age, 
+            date_of_birth, assigned_state, assigned_lga, assigned_zone, physical_site_id, 
+            is_cooperative_only, is_active, blacklist_reason, approved_role, specialization, 
+            id_type, id_filename, id_mime_type, id_uploaded_at, kyc_status, 
+            kyc_rejection_reason, passport_url, avatar_url, created_at, updated_at
+          FROM users WHERE id = ${id}::uuid LIMIT 1
+        `);
         const rows = (rawRes as any)?.rows || (Array.isArray(rawRes) ? rawRes : []);
         user = rows[0] || null;
       } catch (rawErr) {
@@ -373,7 +381,7 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
     if (!user && headerEmail) {
       try {
         const rows = await db
-          .select()
+          .select(userListProjection)
           .from(users)
           .where(eq(users.email, headerEmail))
           .limit(1);
@@ -381,7 +389,15 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
       } catch (emailErr) {
         console.error(`Drizzle select by email failed, falling back to raw SQL:`, emailErr);
         try {
-          const rawRes = await db.execute(sql`SELECT * FROM users WHERE email = ${headerEmail} LIMIT 1`);
+          const rawRes = await db.execute(sql`
+            SELECT 
+              id, email, first_name, last_name, phone, address, role, gender, age, 
+              date_of_birth, assigned_state, assigned_lga, assigned_zone, physical_site_id, 
+              is_cooperative_only, is_active, blacklist_reason, approved_role, specialization, 
+              id_type, id_filename, id_mime_type, id_uploaded_at, kyc_status, 
+              kyc_rejection_reason, passport_url, avatar_url, created_at, updated_at
+            FROM users WHERE email = ${headerEmail} LIMIT 1
+          `);
           const rows = (rawRes as any)?.rows || (Array.isArray(rawRes) ? rawRes : []);
           user = rows[0] || null;
         } catch (rawErr) {
