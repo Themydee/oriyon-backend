@@ -24,6 +24,10 @@ const queryClient = postgres(process.env.DATABASE_URL!, {
   max: 30,
   idle_timeout: 20,
   connect_timeout: 10,
+  connection: {
+    statement_timeout: 15, // Max 15s per query to prevent hung connections
+    lock_timeout: 5,       // Max 5s waiting for a lock before failing safely
+  },
 });
 export const db = drizzle(queryClient);
 
@@ -295,164 +299,12 @@ async function setupConsumers() {
   );
 }
 
-async function ensureDbColumns() {
-  try {
-    await queryClient`
-      ALTER TABLE users 
-        ADD COLUMN IF NOT EXISTS specialization text,
-        ADD COLUMN IF NOT EXISTS address text,
-        ADD COLUMN IF NOT EXISTS gender varchar(20),
-        ADD COLUMN IF NOT EXISTS age integer,
-        ADD COLUMN IF NOT EXISTS date_of_birth timestamp,
-        ADD COLUMN IF NOT EXISTS passport_picture text,
-        ADD COLUMN IF NOT EXISTS passport_url text,
-        ADD COLUMN IF NOT EXISTS avatar_url text,
-        ADD COLUMN IF NOT EXISTS photo text,
-        ADD COLUMN IF NOT EXISTS id_type varchar(60),
-        ADD COLUMN IF NOT EXISTS id_document text,
-        ADD COLUMN IF NOT EXISTS id_filename varchar(255),
-        ADD COLUMN IF NOT EXISTS id_mime_type varchar(60),
-        ADD COLUMN IF NOT EXISTS id_uploaded_at timestamp,
-        ADD COLUMN IF NOT EXISTS kyc_status varchar(30),
-        ADD COLUMN IF NOT EXISTS kyc_rejection_reason text,
-        ADD COLUMN IF NOT EXISTS is_cooperative_only boolean DEFAULT false,
-        ADD COLUMN IF NOT EXISTS approved_role varchar(255),
-        ADD COLUMN IF NOT EXISTS physical_site_id varchar(100),
-        ADD COLUMN IF NOT EXISTS assigned_state varchar(100),
-        ADD COLUMN IF NOT EXISTS assigned_lga varchar(100),
-        ADD COLUMN IF NOT EXISTS assigned_zone varchar(150);
-    `;
-    console.log("[user-service] Auto-migration: ensured all user columns exist.");
-  } catch (err) {
-    console.error("[user-service] Failed to ensure user columns:", err);
-  }
-
-  try {
-    await queryClient`
-      CREATE TABLE IF NOT EXISTS group_trainers (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-        trainer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        assigned_at TIMESTAMP DEFAULT NOW() NOT NULL
-      );
-    `;
-    await queryClient`ALTER TABLE group_trainers ADD COLUMN IF NOT EXISTS assigned_day varchar(100);`;
-  } catch (err) {
-    console.error("[user-service] group_trainers table migration warning:", err);
-  }
-
-  try {
-    await queryClient`
-      DO $$
-      BEGIN
-        IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'role') THEN
-          BEGIN
-            ALTER TYPE role ADD VALUE IF NOT EXISTS 'sub_admin';
-          EXCEPTION WHEN OTHERS THEN NULL;
-          END;
-          BEGIN
-            ALTER TYPE role ADD VALUE IF NOT EXISTS 'cooperative';
-          EXCEPTION WHEN OTHERS THEN NULL;
-          END;
-          BEGIN
-            ALTER TYPE role ADD VALUE IF NOT EXISTS 'state_coordinator';
-          EXCEPTION WHEN OTHERS THEN NULL;
-          END;
-          BEGIN
-            ALTER TYPE role ADD VALUE IF NOT EXISTS 'zonal_coordinator';
-          EXCEPTION WHEN OTHERS THEN NULL;
-          END;
-          BEGIN
-            ALTER TYPE role ADD VALUE IF NOT EXISTS 'lga_coordinator';
-          EXCEPTION WHEN OTHERS THEN NULL;
-          END;
-        END IF;
-
-        BEGIN
-          ALTER TABLE users ALTER COLUMN role TYPE varchar(50) USING role::text;
-        EXCEPTION WHEN OTHERS THEN NULL;
-        END;
-      END $$;
-    `;
-  } catch (err) {
-    console.error("[user-service] Role migration warning:", err);
-  }
-
-  try {
-    await queryClient`
-      CREATE TABLE IF NOT EXISTS support_chat_threads (
-        id VARCHAR(128) PRIMARY KEY,
-        visitor_name VARCHAR(255) NOT NULL,
-        visitor_email VARCHAR(255) NOT NULL,
-        visitor_phone VARCHAR(50),
-        status VARCHAR(30) NOT NULL DEFAULT 'open',
-        last_message TEXT,
-        unread_count INTEGER NOT NULL DEFAULT 0,
-        agent_taken_over BOOLEAN NOT NULL DEFAULT false,
-        created_at TIMESTAMP NOT NULL DEFAULT now(),
-        updated_at TIMESTAMP NOT NULL DEFAULT now()
-      );
-
-      CREATE TABLE IF NOT EXISTS support_chat_messages (
-        id VARCHAR(128) PRIMARY KEY,
-        session_id VARCHAR(128) NOT NULL REFERENCES support_chat_threads(id) ON DELETE CASCADE,
-        sender VARCHAR(30) NOT NULL,
-        sender_name VARCHAR(255) NOT NULL,
-        text TEXT NOT NULL,
-        is_read BOOLEAN NOT NULL DEFAULT false,
-        quick_replies JSONB,
-        action_link JSONB,
-        created_at TIMESTAMP NOT NULL DEFAULT now()
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_support_chat_threads_status ON support_chat_threads(status);
-      CREATE INDEX IF NOT EXISTS idx_support_chat_threads_updated ON support_chat_threads(updated_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_support_chat_messages_session ON support_chat_messages(session_id);
-    `;
-  } catch (err) {
-    console.error("[user-service] support chat table migration warning:", err);
-  }
-}
-
-// Indexes for the admin user list (GET /users sorts by created_at and then
-// loads cohort/group memberships for the page of users). Built with
-// CONCURRENTLY so writes are not blocked, in the background after the service
-// is up so startup is not delayed. A build that was interrupted leaves an
-// INVALID index behind; that one is dropped and rebuilt.
-const USER_LIST_INDEXES: { name: string; ddl: string }[] = [
-  { name: "users_created_at_idx", ddl: "CREATE INDEX CONCURRENTLY IF NOT EXISTS users_created_at_idx ON users (created_at DESC)" },
-  { name: "users_role_idx", ddl: "CREATE INDEX CONCURRENTLY IF NOT EXISTS users_role_idx ON users (role)" },
-  { name: "cohort_members_user_id_idx", ddl: "CREATE INDEX CONCURRENTLY IF NOT EXISTS cohort_members_user_id_idx ON cohort_members (user_id)" },
-  { name: "group_members_user_id_idx", ddl: "CREATE INDEX CONCURRENTLY IF NOT EXISTS group_members_user_id_idx ON group_members (user_id)" },
-];
-
-async function ensureUserListIndexes() {
-  for (const { name, ddl } of USER_LIST_INDEXES) {
-    try {
-      const invalid = await queryClient`
-        SELECT 1 FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
-        WHERE c.relname = ${name} AND NOT i.indisvalid`;
-      if (invalid.length > 0) {
-        await queryClient.unsafe(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
-      }
-      await queryClient.unsafe(ddl);
-    } catch (err) {
-      console.error(`[user-service] Failed to build index ${name}:`, err);
-    }
-  }
-}
-
 // ─────────────────────────────────────────────
 // START
 // ─────────────────────────────────────────────
 async function bootstrap() {
   app.listen(PORT, () => {
     console.log(`[user-service] Running on port ${PORT}`);
-
-    // Background schema & index updates (non-blocking for HTTP traffic)
-    ensureDbColumns()
-      .then(() => ensureUserListIndexes())
-      .catch((err) => console.error("[user-service] DB background init error:", err));
 
     if (process.env.RABBITMQ_URL) {
       connectRabbitMQ(process.env.RABBITMQ_URL)
