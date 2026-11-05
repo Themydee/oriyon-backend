@@ -213,28 +213,39 @@ weeksRouter.get("/", async (req: Request, res: Response) => {
       : eq(weeks.isPublished, true);
 
     const allWeeks = condition
-      ? await db.select().from(weeks).where(condition)
-      : await db.select().from(weeks);
+      ? await db.select().from(weeks).where(condition).orderBy(weeks.weekNumber)
+      : await db.select().from(weeks).orderBy(weeks.weekNumber);
 
-    const weeksWithLessons = await Promise.all(
-      allWeeks.map(async (week) => {
-        const lessonCondition = includeAll
-          ? eq(lessons.weekId, week.id)
-          : and(eq(lessons.weekId, week.id), eq(lessons.isPublished, true));
+    if (!allWeeks || allWeeks.length === 0) {
+      return res.json([]);
+    }
 
-        const weekLessons = await db
-          .select()
-          .from(lessons)
-          .where(lessonCondition)
-          .orderBy(lessons.order);
+    const weekIds = allWeeks.map((w) => w.id);
+    const lessonCondition = includeAll
+      ? inArray(lessons.weekId, weekIds)
+      : and(inArray(lessons.weekId, weekIds), eq(lessons.isPublished, true));
 
-        return { ...week, lessons: weekLessons };
-      })
-    );
+    const allLessons = await db
+      .select()
+      .from(lessons)
+      .where(lessonCondition)
+      .orderBy(lessons.order);
+
+    const lessonsByWeek = new Map<string, any[]>();
+    for (const l of allLessons) {
+      const list = lessonsByWeek.get(l.weekId) || [];
+      list.push(l);
+      lessonsByWeek.set(l.weekId, list);
+    }
+
+    const weeksWithLessons = allWeeks.map((week) => ({
+      ...week,
+      lessons: lessonsByWeek.get(week.id) || [],
+    }));
 
     return res.json(weeksWithLessons);
   } catch (err) {
-    console.error(err);
+    console.error("GET /lms/weeks error:", err);
     return res.status(500).json({ error: "Failed to fetch weeks" });
   }
 });
@@ -553,12 +564,19 @@ progressRouter.post("/", async (req: Request, res: Response) => {
 // GET /lms/progress/:userId
 progressRouter.get("/:userId", async (req: Request, res: Response) => {
   try {
+    const userId = req.params.userId;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+    if (!isUuid) {
+      return res.status(400).json({ error: "Invalid user ID format" });
+    }
+
     const all = await db
       .select()
       .from(progress)
-      .where(eq(progress.userId, req.params.userId));
+      .where(eq(progress.userId, userId));
     return res.json(all);
-  } catch {
+  } catch (err) {
+    console.error("[lms] GET /progress/:userId error:", err);
     return res.status(500).json({ error: "Failed to fetch progress" });
   }
 });
@@ -566,12 +584,19 @@ progressRouter.get("/:userId", async (req: Request, res: Response) => {
 // GET /lms/progress/cohort/:cohortId
 progressRouter.get("/cohort/:cohortId", async (req: Request, res: Response) => {
   try {
+    const cohortId = req.params.cohortId;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cohortId);
+    if (!isUuid) {
+      return res.status(400).json({ error: "Invalid cohort ID format" });
+    }
+
     const all = await db
       .select()
       .from(progress)
-      .where(eq(progress.cohortId, req.params.cohortId));
+      .where(eq(progress.cohortId, cohortId));
     return res.json(all);
-  } catch {
+  } catch (err) {
+    console.error("[lms] GET /progress/cohort/:cohortId error:", err);
     return res.status(500).json({ error: "Failed to fetch cohort progress" });
   }
 });
@@ -988,6 +1013,12 @@ quizzesRouter.get("/:id/attempts/:userId", async (req: Request, res: Response) =
 // GET /lms/quizzes/user/:userId/passed — get all passed quiz and week IDs for a user
 quizzesRouter.get("/user/:userId/passed", async (req: Request, res: Response) => {
   try {
+    const userId = req.params.userId;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+    if (!isUuid) {
+      return res.status(400).json({ error: "Invalid user ID format" });
+    }
+
     const passedAttempts = await db
       .select({
         quizId: quizAttempts.quizId,
@@ -996,7 +1027,7 @@ quizzesRouter.get("/user/:userId/passed", async (req: Request, res: Response) =>
       .from(quizAttempts)
       .where(
         and(
-          eq(quizAttempts.userId, req.params.userId),
+          eq(quizAttempts.userId, userId),
           eq(quizAttempts.passed, true)
         )
       );
@@ -1006,7 +1037,7 @@ quizzesRouter.get("/user/:userId/passed", async (req: Request, res: Response) =>
 
     return res.json({ passedWeekIds, passedQuizIds });
   } catch (err) {
-    console.error(err);
+    console.error("[lms] GET /quizzes/user/:userId/passed error:", err);
     return res.status(500).json({ error: "Failed to fetch user passed quizzes" });
   }
 });
@@ -1421,12 +1452,19 @@ practicalRouter.post("/checkins", async (req: Request, res: Response) => {
 // GET /lms/practical/checkins/user/:userId
 practicalRouter.get("/checkins/user/:userId", async (req: Request, res: Response) => {
   try {
+    const userId = req.params.userId;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+    if (!isUuid) {
+      return res.status(400).json({ error: "Invalid user ID format" });
+    }
+
     const list = await db
       .select()
       .from(practicalCheckins)
-      .where(eq(practicalCheckins.userId, req.params.userId));
+      .where(eq(practicalCheckins.userId, userId));
     return res.json(list);
   } catch (err) {
+    console.error("[lms] GET /practical/checkins/user/:userId error:", err);
     return res.status(500).json({ error: "Failed to fetch user checkins" });
   }
 });

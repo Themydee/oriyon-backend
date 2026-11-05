@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../index";
 import { users } from "../db/schema";
@@ -38,6 +38,12 @@ function normalizeIdType(raw: string): string {
 // idDocument = base64 data URI or raw base64 string
 // ─────────────────────────────────────────────
 router.patch("/:id/id-document", async (req: Request, res: Response) => {
+  const id = req.params.id;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  if (!isUuid) {
+    return res.status(400).json({ error: "Invalid user ID format" });
+  }
+
   const docPayload = req.body.idDocument || req.body.idDocumentUrl;
   const rawIdType = req.body.idType || req.body.id_type || "National ID (NIN)";
   const idType = normalizeIdType(rawIdType);
@@ -62,7 +68,7 @@ router.patch("/:id/id-document", async (req: Request, res: Response) => {
     const [user] = await db
       .select({ id: users.id })
       .from(users)
-      .where(eq(users.id, req.params.id))
+      .where(eq(users.id, id))
       .limit(1);
 
     if (!user) return res.status(404).json({ error: "User not found" });
@@ -79,7 +85,7 @@ router.patch("/:id/id-document", async (req: Request, res: Response) => {
         kycRejectionReason: null,
         updatedAt: new Date(),
       })
-      .where(eq(users.id, req.params.id))
+      .where(eq(users.id, id))
       .returning({
         id:           users.id,
         idType:       users.idType,
@@ -107,30 +113,60 @@ router.patch("/:id/id-document", async (req: Request, res: Response) => {
 // ─────────────────────────────────────────────
 router.get("/:id/id-document/meta", async (req: Request, res: Response) => {
   try {
-    const [user] = await db
-      .select({
-        id:           users.id,
-        idType:       users.idType,
-        idFilename:   users.idFilename,
-        idMimeType:   users.idMimeType,
-        idUploadedAt: users.idUploadedAt,
-        kycStatus:    users.kycStatus,
-        kycRejectionReason: users.kycRejectionReason,
-      })
-      .from(users)
-      .where(eq(users.id, req.params.id))
-      .limit(1);
+    const id = req.params.id;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (!isUuid) {
+      return res.status(400).json({ error: "Invalid user ID format" });
+    }
+
+    let user: any = null;
+    try {
+      const [u] = await db
+        .select({
+          id:           users.id,
+          idType:       users.idType,
+          idFilename:   users.idFilename,
+          idMimeType:   users.idMimeType,
+          idUploadedAt: users.idUploadedAt,
+          kycStatus:    users.kycStatus,
+          kycRejectionReason: users.kycRejectionReason,
+        })
+        .from(users)
+        .where(eq(users.id, id))
+        .limit(1);
+      user = u;
+    } catch (drizzleErr) {
+      console.error("[users] id-document meta Drizzle select error, falling back to raw SQL:", drizzleErr);
+      try {
+        const rawRes = await db.execute(sql`
+          SELECT 
+            id, id_type, id_filename, id_mime_type, id_uploaded_at, kyc_status, kyc_rejection_reason
+          FROM users WHERE id = ${id}::uuid LIMIT 1
+        `);
+        const rows = (rawRes as any)?.rows || (Array.isArray(rawRes) ? rawRes : []);
+        user = rows[0] || null;
+      } catch (rawErr) {
+        console.error("[users] id-document meta raw SQL query error:", rawErr);
+      }
+    }
 
     if (!user) return res.status(404).json({ error: "User not found" });
 
+    const idType = user.idType || user.id_type || null;
+    const idFilename = user.idFilename || user.id_filename || null;
+    const idMimeType = user.idMimeType || user.id_mime_type || null;
+    const idUploadedAt = user.idUploadedAt || user.id_uploaded_at || null;
+    const kycStatus = user.kycStatus || user.kyc_status || null;
+    const kycRejectionReason = user.kycRejectionReason || user.kyc_rejection_reason || null;
+
     return res.json({
-      hasDocument:  !!(user.idType || user.idUploadedAt || user.idFilename),
-      idType:       user.idType,
-      idFilename:   user.idFilename,
-      idMimeType:   user.idMimeType,
-      idUploadedAt: user.idUploadedAt,
-      kycStatus:    user.kycStatus,
-      kycRejectionReason: user.kycRejectionReason,
+      hasDocument:  !!(idType || idUploadedAt || idFilename),
+      idType,
+      idFilename,
+      idMimeType,
+      idUploadedAt,
+      kycStatus,
+      kycRejectionReason,
     });
   } catch (err) {
     console.error("[users] id-document meta error:", err);
@@ -144,24 +180,50 @@ router.get("/:id/id-document/meta", async (req: Request, res: Response) => {
 // ─────────────────────────────────────────────
 router.get("/:id/id-document", async (req: Request, res: Response) => {
   try {
-    const [user] = await db
-      .select({
-        idDocument:  users.idDocument,
-        idFilename:  users.idFilename,
-        idMimeType:  users.idMimeType,
-      })
-      .from(users)
-      .where(eq(users.id, req.params.id))
-      .limit(1);
+    const id = req.params.id;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (!isUuid) {
+      return res.status(400).json({ error: "Invalid user ID format" });
+    }
 
-    if (!user)             return res.status(404).json({ error: "User not found" });
-    if (!user.idDocument)  return res.status(404).json({ error: "No ID document uploaded yet" });
+    let user: any = null;
+    try {
+      const [u] = await db
+        .select({
+          idDocument:  users.idDocument,
+          idFilename:  users.idFilename,
+          idMimeType:  users.idMimeType,
+        })
+        .from(users)
+        .where(eq(users.id, id))
+        .limit(1);
+      user = u;
+    } catch (drizzleErr) {
+      console.error("[users] id-document download Drizzle error, falling back to raw SQL:", drizzleErr);
+      try {
+        const rawRes = await db.execute(sql`
+          SELECT id_document, id_filename, id_mime_type
+          FROM users WHERE id = ${id}::uuid LIMIT 1
+        `);
+        const rows = (rawRes as any)?.rows || (Array.isArray(rawRes) ? rawRes : []);
+        user = rows[0] || null;
+      } catch (rawErr) {
+        console.error("[users] id-document download raw SQL error:", rawErr);
+      }
+    }
 
-    const base64Data = user.idDocument.replace(/^data:[^;]+;base64,/, "");
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const idDoc = user.idDocument || user.id_document;
+    if (!idDoc) return res.status(404).json({ error: "No ID document uploaded yet" });
+
+    const base64Data = idDoc.replace(/^data:[^;]+;base64,/, "");
     const buffer     = Buffer.from(base64Data, "base64");
 
-    res.setHeader("Content-Type", user.idMimeType ?? "application/octet-stream");
-    res.setHeader("Content-Disposition", `attachment; filename="${user.idFilename ?? "id-document"}"`);
+    const mimeType = user.idMimeType || user.id_mime_type || "application/octet-stream";
+    const filename = user.idFilename || user.id_filename || "id-document";
+
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("Content-Length", buffer.length);
     return res.send(buffer);
   } catch (err) {
@@ -176,6 +238,12 @@ router.get("/:id/id-document", async (req: Request, res: Response) => {
 // Body: { status: "approved" | "rejected", rejectionReason?: string }
 // ─────────────────────────────────────────────
 router.post("/:id/kyc-verify", async (req: Request, res: Response) => {
+  const id = req.params.id;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  if (!isUuid) {
+    return res.status(400).json({ error: "Invalid user ID format" });
+  }
+
   const schema = z.object({
     status: z.enum(["approved", "rejected"]),
     rejectionReason: z.string().optional().nullable(),
@@ -192,7 +260,7 @@ router.post("/:id/kyc-verify", async (req: Request, res: Response) => {
     const [user] = await db
       .select({ id: users.id })
       .from(users)
-      .where(eq(users.id, req.params.id))
+      .where(eq(users.id, id))
       .limit(1);
 
     if (!user) return res.status(404).json({ error: "User not found" });
@@ -204,7 +272,7 @@ router.post("/:id/kyc-verify", async (req: Request, res: Response) => {
         kycRejectionReason: status === "rejected" ? rejectionReason || "ID details did not match or file was unreadable." : null,
         updatedAt: new Date(),
       })
-      .where(eq(users.id, req.params.id))
+      .where(eq(users.id, id))
       .returning({
         id: users.id,
         kycStatus: users.kycStatus,

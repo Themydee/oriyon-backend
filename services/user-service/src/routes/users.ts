@@ -1263,17 +1263,24 @@ cohortRouter.get("/", async (_req: Request, res: Response) => {
   try {
     const all = await db.select().from(cohorts).orderBy(cohorts.createdAt);
     return res.json(all);
-  } catch {
+  } catch (err) {
+    console.error("GET /cohorts error:", err);
     return res.status(500).json({ error: "Failed to fetch cohorts" });
   }
 });
 
 cohortRouter.get("/groups/:id", async (req: Request, res: Response) => {
   try {
+    const id = req.params.id;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (!isUuid) {
+      return res.status(400).json({ error: "Invalid group ID format" });
+    }
+
     const [group] = await db
       .select()
       .from(groups)
-      .where(eq(groups.id, req.params.id))
+      .where(eq(groups.id, id))
       .limit(1);
 
     if (!group) return res.status(404).json({ error: "Group not found" });
@@ -1292,17 +1299,24 @@ cohortRouter.get("/groups/:id", async (req: Request, res: Response) => {
       .where(eq(groupMembers.groupId, group.id));
 
     return res.json({ ...group, members });
-  } catch {
+  } catch (err) {
+    console.error("GET /cohorts/groups/:id error:", err);
     return res.status(500).json({ error: "Failed to fetch group" });
   }
 });
 
 cohortRouter.get("/:id", async (req: Request, res: Response) => {
   try {
+    const id = req.params.id;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (!isUuid) {
+      return res.status(400).json({ error: "Invalid cohort ID format" });
+    }
+
     const [cohort] = await db
       .select()
       .from(cohorts)
-      .where(eq(cohorts.id, req.params.id))
+      .where(eq(cohorts.id, id))
       .limit(1);
     if (!cohort) return res.status(404).json({ error: "Cohort not found" });
 
@@ -1320,10 +1334,11 @@ cohortRouter.get("/:id", async (req: Request, res: Response) => {
       })
       .from(cohortMembers)
       .innerJoin(users, eq(users.id, cohortMembers.userId))
-      .where(eq(cohortMembers.cohortId, req.params.id));
+      .where(eq(cohortMembers.cohortId, id));
 
     return res.json({ ...cohort, members });
-  } catch {
+  } catch (err) {
+    console.error("GET /cohorts/:id error:", err);
     return res.status(500).json({ error: "Failed to fetch cohort" });
   }
 });
@@ -1454,60 +1469,97 @@ cohortRouter.delete("/:cohortId/groups/:groupId", async (req: Request, res: Resp
 
 cohortRouter.get("/:id/groups", async (req: Request, res: Response) => {
   try {
+    const id = req.params.id;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (!isUuid) {
+      return res.status(400).json({ error: "Invalid cohort ID format" });
+    }
+
     const allGroups = await db
       .select()
       .from(groups)
-      .where(eq(groups.cohortId, req.params.id))
+      .where(eq(groups.cohortId, id))
       .orderBy(groups.createdAt)
       .catch((e) => {
         console.error("[GET /cohorts/:id/groups] Error fetching groups:", e);
         return [];
       });
 
-    const groupsWithMembers = await Promise.all(
-      allGroups.map(async (group) => {
-        const members = await db
-          .select({
-            id: users.id,
-            firstName: users.firstName,
-            lastName: users.lastName,
-            email: users.email,
-            phone: users.phone,
-            physicalSiteId: users.physicalSiteId,
-            joinedAt: groupMembers.joinedAt,
-          })
-          .from(groupMembers)
-          .innerJoin(users, eq(users.id, groupMembers.userId))
-          .where(eq(groupMembers.groupId, group.id))
-          .catch((e) => {
-            console.error("[GET /cohorts/:id/groups] Error fetching members:", e);
-            return [];
-          });
+    if (!allGroups || allGroups.length === 0) {
+      return res.json([]);
+    }
 
-        const trainers = await db
-          .select({
-            id: users.id,
-            assignmentId: groupTrainers.id,
-            assignedDay: groupTrainers.assignedDay,
-            firstName: users.firstName,
-            lastName: users.lastName,
-            email: users.email,
-            phone: users.phone,
-            specialization: users.specialization,
-            passportPicture: users.passportPicture,
-            assignedAt: groupTrainers.assignedAt,
-          })
-          .from(groupTrainers)
-          .innerJoin(users, eq(users.id, groupTrainers.trainerId))
-          .where(eq(groupTrainers.groupId, group.id))
-          .catch((e) => {
-            console.error("[GET /cohorts/:id/groups] Error fetching trainers:", e);
-            return [];
-          });
+    const groupIds = allGroups.map((g) => g.id);
 
-        return { ...group, memberCount: members.length, members, trainers };
+    // Batch fetch all members for these groups in 1 query
+    const allMembers = await db
+      .select({
+        groupId: groupMembers.groupId,
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        phone: users.phone,
+        physicalSiteId: users.physicalSiteId,
+        joinedAt: groupMembers.joinedAt,
       })
-    );
+      .from(groupMembers)
+      .innerJoin(users, eq(users.id, groupMembers.userId))
+      .where(inArray(groupMembers.groupId, groupIds))
+      .catch((e) => {
+        console.error("[GET /cohorts/:id/groups] Error batch fetching members:", e);
+        return [];
+      });
+
+    // Batch fetch all trainers for these groups in 1 query
+    const allTrainers = await db
+      .select({
+        groupId: groupTrainers.groupId,
+        id: users.id,
+        assignmentId: groupTrainers.id,
+        assignedDay: groupTrainers.assignedDay,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        phone: users.phone,
+        specialization: users.specialization,
+        passportPicture: users.passportPicture,
+        passportUrl: users.passportUrl,
+        avatarUrl: users.avatarUrl,
+        assignedAt: groupTrainers.assignedAt,
+      })
+      .from(groupTrainers)
+      .innerJoin(users, eq(users.id, groupTrainers.trainerId))
+      .where(inArray(groupTrainers.groupId, groupIds))
+      .catch((e) => {
+        console.error("[GET /cohorts/:id/groups] Error batch fetching trainers:", e);
+        return [];
+      });
+
+    const membersByGroup = new Map<string, any[]>();
+    for (const m of allMembers) {
+      const list = membersByGroup.get(m.groupId) || [];
+      list.push(m);
+      membersByGroup.set(m.groupId, list);
+    }
+
+    const trainersByGroup = new Map<string, any[]>();
+    for (const t of allTrainers) {
+      const list = trainersByGroup.get(t.groupId) || [];
+      list.push(t);
+      trainersByGroup.set(t.groupId, list);
+    }
+
+    const groupsWithMembers = allGroups.map((group) => {
+      const members = membersByGroup.get(group.id) || [];
+      const trainers = trainersByGroup.get(group.id) || [];
+      return {
+        ...group,
+        memberCount: members.length,
+        members,
+        trainers,
+      };
+    });
 
     return res.json(groupsWithMembers);
   } catch (err: any) {
