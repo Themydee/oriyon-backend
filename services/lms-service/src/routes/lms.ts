@@ -60,6 +60,8 @@ export async function fetchUser(userId: string): Promise<{ id?: string; email: s
 }
 
 export async function isWeek12AttendanceComplete(userId: string, cohortId?: string): Promise<boolean> {
+  const isUuid = (str: any) => typeof str === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+  if (!isUuid(userId)) return false;
   try {
     // 1. Check if user has an approved appeal for Week 12 physical attendance
     const [approvedAppeal] = await db
@@ -1384,18 +1386,25 @@ week12Router.get("/checkins/:cohortId/:userId", async (req: Request, res: Respon
 practicalRouter.get("/checkins/:cohortId", async (req: Request, res: Response) => {
   const { cohortId } = req.params;
   const { week } = req.query;
+
+  const isUuid = (str: any) => typeof str === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+  if (!isUuid(cohortId)) {
+    return res.status(400).json({ error: "Invalid cohortId format (must be UUID)" });
+  }
+
   try {
+    const conditions = [eq(practicalCheckins.cohortId, cohortId)];
+    if (week) {
+      const wNum = Number(week);
+      if (Number.isInteger(wNum) && wNum > 0) {
+        conditions.push(eq(practicalCheckins.weekNumber, wNum));
+      }
+    }
+
     const list = await db
       .select()
       .from(practicalCheckins)
-      .where(
-        week
-          ? and(
-              eq(practicalCheckins.cohortId, cohortId),
-              eq(practicalCheckins.weekNumber, Number(week))
-            )
-          : eq(practicalCheckins.cohortId, cohortId)
-      );
+      .where(and(...conditions));
     return res.json(list);
   } catch (err) {
     console.error("Fetch practical checkins error:", err);
@@ -1411,6 +1420,17 @@ practicalRouter.post("/checkins", async (req: Request, res: Response) => {
   }
 
   const isUuid = (str: any) => typeof str === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+  if (!isUuid(cohortId)) {
+    return res.status(400).json({ error: "Invalid cohortId format (must be UUID)" });
+  }
+  if (!isUuid(userId)) {
+    return res.status(400).json({ error: "Invalid userId format (must be UUID)" });
+  }
+  const wNum = Number(weekNumber);
+  if (!Number.isInteger(wNum) || wNum < 1 || wNum > 52) {
+    return res.status(400).json({ error: "Invalid weekNumber (must be integer between 1 and 52)" });
+  }
+
   const headerUserId = req.headers["x-user-id"] as string | undefined;
   const validVerifiedBy = isUuid(verifiedBy) ? verifiedBy : (isUuid(headerUserId) ? headerUserId : null);
 
@@ -1422,12 +1442,12 @@ practicalRouter.post("/checkins", async (req: Request, res: Response) => {
         and(
           eq(practicalCheckins.cohortId, cohortId),
           eq(practicalCheckins.userId, userId),
-          eq(practicalCheckins.weekNumber, Number(weekNumber))
+          eq(practicalCheckins.weekNumber, wNum)
         )
       );
 
     if (existing) {
-      return res.json({ message: "User already checked in for this week", checkin: existing });
+      return res.status(200).json({ message: "User already checked in for this week", checkin: existing });
     }
 
     const [inserted] = await db
@@ -1435,15 +1455,45 @@ practicalRouter.post("/checkins", async (req: Request, res: Response) => {
       .values({
         cohortId,
         userId,
-        groupId: groupId || null,
-        weekNumber: Number(weekNumber),
-        codeSubmitted: codeSubmitted || "VERIFIED",
+        groupId: typeof groupId === "string" ? groupId.slice(0, 128) : null,
+        weekNumber: wNum,
+        codeSubmitted: typeof codeSubmitted === "string" && codeSubmitted.trim() ? codeSubmitted.trim().slice(0, 128) : "VERIFIED",
         verifiedBy: validVerifiedBy,
       })
+      .onConflictDoNothing()
       .returning();
 
+    if (!inserted) {
+      const [recheck] = await db
+        .select()
+        .from(practicalCheckins)
+        .where(
+          and(
+            eq(practicalCheckins.cohortId, cohortId),
+            eq(practicalCheckins.userId, userId),
+            eq(practicalCheckins.weekNumber, wNum)
+          )
+        );
+      return res.status(200).json({ message: "User already checked in for this week", checkin: recheck || null });
+    }
+
     return res.status(201).json({ message: "Checkin recorded successfully", checkin: inserted });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.code === "23505") {
+      try {
+        const [recheck] = await db
+          .select()
+          .from(practicalCheckins)
+          .where(
+            and(
+              eq(practicalCheckins.cohortId, cohortId),
+              eq(practicalCheckins.userId, userId),
+              eq(practicalCheckins.weekNumber, wNum)
+            )
+          );
+        return res.status(200).json({ message: "User already checked in for this week", checkin: recheck || null });
+      } catch {}
+    }
     console.error("Record practical checkin error:", err);
     return res.status(500).json({ error: "Failed to record practical checkin" });
   }
@@ -1474,12 +1524,20 @@ practicalRouter.delete("/checkins/:cohortId", async (req: Request, res: Response
   const { cohortId } = req.params;
   const { week, userId } = req.query;
 
+  const isUuid = (str: any) => typeof str === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+  if (!isUuid(cohortId)) {
+    return res.status(400).json({ error: "Invalid cohortId format (must be UUID)" });
+  }
+
   try {
     const conditions = [eq(practicalCheckins.cohortId, cohortId)];
     if (week) {
-      conditions.push(eq(practicalCheckins.weekNumber, Number(week)));
+      const wNum = Number(week);
+      if (Number.isInteger(wNum) && wNum > 0) {
+        conditions.push(eq(practicalCheckins.weekNumber, wNum));
+      }
     }
-    if (userId && typeof userId === "string") {
+    if (userId && typeof userId === "string" && isUuid(userId)) {
       conditions.push(eq(practicalCheckins.userId, userId));
     }
 
@@ -1504,10 +1562,18 @@ practicalRouter.delete("/checkins/user/:userId", async (req: Request, res: Respo
   const { userId } = req.params;
   const { week } = req.query;
 
+  const isUuid = (str: any) => typeof str === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+  if (!isUuid(userId)) {
+    return res.status(400).json({ error: "Invalid userId format (must be UUID)" });
+  }
+
   try {
     const conditions = [eq(practicalCheckins.userId, userId)];
     if (week) {
-      conditions.push(eq(practicalCheckins.weekNumber, Number(week)));
+      const wNum = Number(week);
+      if (Number.isInteger(wNum) && wNum > 0) {
+        conditions.push(eq(practicalCheckins.weekNumber, wNum));
+      }
     }
 
     const deleted = await db
@@ -1819,6 +1885,10 @@ practicalRouter.post("/verify-code", async (req: Request, res: Response) => {
     const headerAdminId = req.headers["x-user-id"] as string | undefined;
     const verifiedBy = isUuid(headerAdminId) ? headerAdminId : null;
 
+    if (!isUuid(matchedCode.userId)) {
+      return res.status(400).json({ error: "Invalid user ID associated with code (must be UUID)" });
+    }
+
     let targetCohortId = matchedCode.cohortId;
     if (!isUuid(targetCohortId)) {
       if (cohortId && isUuid(cohortId)) {
@@ -1838,13 +1908,28 @@ practicalRouter.post("/verify-code", async (req: Request, res: Response) => {
         codeSubmitted: matchedCode.code,
         verifiedBy,
       })
+      .onConflictDoNothing()
       .returning();
 
-    return res.status(201).json({
+    const resultCheckin = newCheckin || (await db
+      .select()
+      .from(practicalCheckins)
+      .where(
+        and(
+          eq(practicalCheckins.cohortId, targetCohortId),
+          eq(practicalCheckins.userId, matchedCode.userId),
+          eq(practicalCheckins.weekNumber, matchedCode.weekNumber)
+        )
+      )
+      .then((r) => r[0]));
+
+    return res.status(200).json({
       success: true,
-      message: `✅ Verified! ${traineeName} marked PRESENT for Week ${matchedCode.weekNumber} Practical Session!`,
-      alreadyCheckedIn: false,
-      checkin: newCheckin,
+      message: newCheckin
+        ? `✅ Verified! ${traineeName} marked PRESENT for Week ${matchedCode.weekNumber} Practical Session!`
+        : `Trainee ${traineeName} is ALREADY marked PRESENT for Week ${matchedCode.weekNumber} Practical Session.`,
+      alreadyCheckedIn: !newCheckin,
+      checkin: resultCheckin,
       user: {
         id: matchedCode.userId,
         firstName: trainee?.firstName || "Trainee",
