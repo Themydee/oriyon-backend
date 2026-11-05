@@ -9,7 +9,13 @@ export async function connectRabbitMQ(url: string) {
   while (retries > 0) {
     try {
       connection = await amqplib.connect(url);
+      connection.on("error", (err) => {
+        console.error("[applications-service][RabbitMQ] Connection error:", err);
+      });
       channel = await connection.createChannel();
+      channel.on("error", (err) => {
+        console.error("[applications-service][RabbitMQ] Channel error:", err);
+      });
       await channel.assertExchange(EXCHANGE, "topic", { durable: true });
       connection.on("close", () => {
         console.error("[applications-service][RabbitMQ] Connection closed. Reconnecting...");

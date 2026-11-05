@@ -56,7 +56,13 @@ export async function connectRabbitMQ(url: string) {
   while (retries > 0) {
     try {
       connection = await amqplib.connect(url);
+      connection.on("error", (err) => {
+        console.error("[notifications-service][RabbitMQ] Connection error:", err);
+      });
       const ch = await connection.createChannel();
+      ch.on("error", (err) => {
+        console.error("[notifications-service][RabbitMQ] Channel error:", err);
+      });
       channel = ch;
       await ch.assertExchange(EXCHANGE, "topic", { durable: true });
 
