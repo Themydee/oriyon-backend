@@ -107,11 +107,18 @@ export interface WorkshopConfirmationPayload {
   to: string;
   participantName: string;
   workshopTitle: string;
+  workshopSlug?: string;
+  workshopType?: "physical" | "online" | string;
+  venue?: string | null;
+  startDate?: string | Date | null;
+  endDate?: string | Date | null;
+  metadata?: any;
   registrationReference: string;
   paystackReference: string;
   amountKobo: number;
   currency: string;
   paidAt: string | Date;
+  isFreePass?: boolean;
 }
 
 export async function sendRegistrationConfirmationEmail(payload: WorkshopConfirmationPayload): Promise<void> {
@@ -119,17 +126,32 @@ export async function sendRegistrationConfirmationEmail(payload: WorkshopConfirm
     to,
     participantName,
     workshopTitle,
+    workshopSlug,
+    workshopType,
+    venue,
+    startDate,
+    metadata,
     registrationReference,
     paystackReference,
     amountKobo,
     currency,
     paidAt,
+    isFreePass,
   } = payload;
 
-  const displayAmount = (amountKobo / 100).toLocaleString("en-NG", {
-    style: "currency",
-    currency: currency || "NGN",
-  });
+  const isFree = isFreePass || amountKobo === 0;
+  const isOnline =
+    workshopType === "online" ||
+    workshopSlug === "online-goat-training" ||
+    metadata?.type === "online" ||
+    (workshopTitle && workshopTitle.toLowerCase().includes("online"));
+
+  const displayAmount = isFree
+    ? "FREE (Verified Member Pass)"
+    : (amountKobo / 100).toLocaleString("en-NG", {
+        style: "currency",
+        currency: currency || "NGN",
+      });
 
   const formattedDate = new Date(paidAt).toLocaleDateString("en-GB", {
     day: "numeric",
@@ -139,14 +161,58 @@ export async function sendRegistrationConfirmationEmail(payload: WorkshopConfirm
     minute: "2-digit",
   });
 
-  const subject = `Confirmed: Registration for ${workshopTitle}`;
+  const sessionDateStr =
+    (metadata?.date as string) ||
+    (startDate ? new Date(startDate).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : null);
+
+  const sessionTimeStr = (metadata?.time as string) || null;
+
+  const subject = isFree
+    ? `Confirmed: Free Member Pass for ${workshopTitle}`
+    : `Confirmed: Registration & Payment for ${workshopTitle}`;
+
+  const greetingHeader = isFree
+    ? "Registration & Seat Confirmed (Free Member Pass)"
+    : "Registration & Payment Confirmed";
+
+  const greetingIntro = isFree
+    ? `Congratulations! Your cooperative member free pass for the <strong>${escapeHtml(workshopTitle)}</strong> has been verified. Your seat is confirmed.`
+    : `Congratulations! Your payment for the <strong>${escapeHtml(workshopTitle)}</strong> has been verified successfully. Your seat is confirmed.`;
+
+  const formatRow = isOnline
+    ? `<tr><td class="label">Course Modality</td><td class="value">💻 Live Interactive Webinar (Online)</td></tr>`
+    : `<tr><td class="label">Course Modality</td><td class="value">📍 In-Person Field Practical</td></tr>`;
+
+  const venueOrSessionRow = isOnline
+    ? `<tr><td class="label">Session Schedule</td><td class="value">${escapeHtml(sessionDateStr || "Scheduled Session")}${sessionTimeStr ? ` • ${escapeHtml(sessionTimeStr)}` : ""}</td></tr>`
+    : `<tr><td class="label">Practical Venue</td><td class="value">${escapeHtml(venue || "Touring Select LGAs across Oyo State")}</td></tr>`;
+
+  const nextStepsHtml = isOnline
+    ? `
+      <h3 style="color:#1E3F20;">Online Master Class Next Steps</h3>
+      <ul style="padding-left:20px; line-height:1.7;">
+        <li>Keep your registration reference (<strong>${escapeHtml(registrationReference)}</strong>) for your records.</li>
+        <li><strong>Webinar Broadcast Access:</strong> Your secure Zoom/webinar broadcast link and calendar invitation will be delivered directly to this email address (<strong>${escapeHtml(to)}</strong>) prior to the scheduled live session.</li>
+        <li><strong>Digital Certification:</strong> A verifiable Certificate of Participation will be issued to you upon successful completion of the live master class.</li>
+        <li><strong>Session Replays & Materials:</strong> The full session recording, slide decks, and derivative goat products handbook will be made available to all confirmed attendees.</li>
+      </ul>
+    `
+    : `
+      <h3 style="color:#1E3F20;">Physical Field Practical Next Steps</h3>
+      <ul style="padding-left:20px; line-height:1.7;">
+        <li>Keep your registration reference (<strong>${escapeHtml(registrationReference)}</strong>) handy for check-in on the field.</li>
+        <li><strong>Venue & Itinerary:</strong> Our field training coordinators will contact you via phone/WhatsApp with specific LGA assembly points and directions ahead of the practical tour.</li>
+        <li><strong>Field Preparation:</strong> Practical field training gear recommendations (boots, comfortable outdoor farm clothing) and live demonstration schedules will be communicated via email.</li>
+      </ul>
+    `;
+
   const html = baseLayout(`
-    <h2 style="margin-top:0; color:#1E3F20;">Registration & Payment Confirmed</h2>
+    <h2 style="margin-top:0; color:#1E3F20;">${greetingHeader}</h2>
     <p>Dear <strong>${escapeHtml(participantName)}</strong>,</p>
-    <p>Congratulations! Your payment for the <strong>${escapeHtml(workshopTitle)}</strong> has been verified successfully. Your seat is confirmed.</p>
+    <p>${greetingIntro}</p>
     
     <div style="background:#fbfbee; border:1px solid #d4e0ce; border-radius:8px; padding:20px; margin:24px 0;">
-      <h3 style="margin-top:0; color:#2D5A27;">Registration Receipt</h3>
+      <h3 style="margin-top:0; color:#2D5A27;">Registration Summary</h3>
       <table class="receipt-table">
         <tr>
           <td class="label">Participant Name</td>
@@ -157,9 +223,11 @@ export async function sendRegistrationConfirmationEmail(payload: WorkshopConfirm
           <td class="value">${escapeHtml(to)}</td>
         </tr>
         <tr>
-          <td class="label">Workshop</td>
+          <td class="label">Course / Workshop</td>
           <td class="value">${escapeHtml(workshopTitle)}</td>
         </tr>
+        ${formatRow}
+        ${venueOrSessionRow}
         <tr>
           <td class="label">Registration Ref</td>
           <td class="value"><strong>${escapeHtml(registrationReference)}</strong></td>
@@ -169,7 +237,7 @@ export async function sendRegistrationConfirmationEmail(payload: WorkshopConfirm
           <td class="value">${escapeHtml(paystackReference)}</td>
         </tr>
         <tr>
-          <td class="label">Amount Paid</td>
+          <td class="label">Amount</td>
           <td class="value" style="color:#2D5A27; font-size:16px;"><strong>${displayAmount}</strong></td>
         </tr>
         <tr>
@@ -179,14 +247,9 @@ export async function sendRegistrationConfirmationEmail(payload: WorkshopConfirm
       </table>
     </div>
 
-    <h3 style="color:#1E3F20;">Next Steps</h3>
-    <ul style="padding-left:20px;">
-      <li>Keep your registration reference (<strong>${escapeHtml(registrationReference)}</strong>) safe for check-in at the venue.</li>
-      <li>Our training team will contact you with specific timetable and venue directions ahead of the workshop commencement.</li>
-      <li>Practical field training gear recommendations and curriculum briefs will be sent via email.</li>
-    </ul>
+    ${nextStepsHtml}
 
-    <p style="margin-top:24px;">We look forward to welcoming you to the workshop!</p>
+    <p style="margin-top:24px;">We look forward to welcoming you to the training program!</p>
   `);
 
   // 1. Publish to RabbitMQ for notifications-service processing
@@ -206,6 +269,70 @@ export async function sendRegistrationConfirmationEmail(payload: WorkshopConfirm
     console.log(`[Workshop Email] Registration confirmed event published to RabbitMQ for ${to}`);
   } catch (err: any) {
     console.warn(`[Workshop Email] RabbitMQ publish failed, falling back to direct Resend send:`, err.message);
+    await sendEmailDirect(to, subject, html);
+  }
+}
+
+export interface WaitlistConfirmationPayload {
+  to: string;
+  fullName: string;
+  courseTitle: string;
+  courseSlug?: string;
+}
+
+export async function sendWaitlistConfirmationEmail(
+  payload: WaitlistConfirmationPayload
+): Promise<void> {
+  const { to, fullName, courseTitle } = payload;
+  const participantName = fullName;
+  const subject = `You are on the Priority Waitlist: ${courseTitle}`;
+  const html = baseLayout(`
+    <h2 style="margin-top:0; color:#1E3F20;">Priority Waitlist Confirmed</h2>
+    <p>Dear <strong>${escapeHtml(participantName)}</strong>,</p>
+    <p>Thank you for expressing interest in the upcoming <strong>${escapeHtml(courseTitle)}</strong> under the Oriyon International EEWYLA Agricultural Program.</p>
+    
+    <div style="background:#fbfbee; border:1px solid #d4e0ce; border-radius:8px; padding:20px; margin:24px 0;">
+      <h3 style="margin-top:0; color:#2D5A27;">Waitlist Details</h3>
+      <table class="receipt-table">
+        <tr>
+          <td class="label">Course Title</td>
+          <td class="value"><strong>${escapeHtml(courseTitle)}</strong></td>
+        </tr>
+        <tr>
+          <td class="label">Applicant Name</td>
+          <td class="value">${escapeHtml(participantName)}</td>
+        </tr>
+        <tr>
+          <td class="label">Registered Email</td>
+          <td class="value">${escapeHtml(to)}</td>
+        </tr>
+        <tr>
+          <td class="label">Status</td>
+          <td class="value" style="color:#2D5A27; font-weight:bold;">Priority Waitlist Reserved</td>
+        </tr>
+      </table>
+    </div>
+
+    <h3 style="color:#1E3F20;">What Happens Next?</h3>
+    <ul style="padding-left:20px; line-height:1.7;">
+      <li>Admissions for the upcoming cohort of <strong>${escapeHtml(courseTitle)}</strong> are currently finalizing dates and curriculum updates.</li>
+      <li>As a priority waitlist member, you will receive first notification and priority registration before general public admission opens.</li>
+      <li>Subsidized tuition opportunities for verified cooperative members and early registrants will be communicated directly to your email.</li>
+    </ul>
+
+    <p style="margin-top:24px;">Thank you for your dedication to agricultural innovation and excellence!</p>
+  `);
+
+  try {
+    await publishEvent("workshop.waitlist_confirmed", {
+      email: to,
+      participantName,
+      courseTitle,
+      subject,
+      html,
+    });
+  } catch (err: any) {
+    console.warn(`[Workshop Waitlist Email] RabbitMQ publish failed, falling back to direct Resend send:`, err.message);
     await sendEmailDirect(to, subject, html);
   }
 }

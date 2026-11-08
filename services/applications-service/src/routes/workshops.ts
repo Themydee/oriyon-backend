@@ -13,11 +13,13 @@ import {
   workshopPayments, payments,
   workshopEmailChallenges,
   workshopWebhookEvents,
+  courseWaitlist,
 } from "../db/schema";
 import { WorkshopEligibilityService } from "../services/workshopEligibility";
 import {
   sendVerificationChallengeEmail,
   sendRegistrationConfirmationEmail,
+  sendWaitlistConfirmationEmail,
 } from "../services/workshopEmails";
 
 const router = Router();
@@ -77,11 +79,125 @@ export function requireWorkshopSession(req: Request, res: Response, next: NextFu
 }
 
 // ─────────────────────────────────────────────
+// 0. COURSE WAITLIST ENDPOINTS
+// ─────────────────────────────────────────────
+const waitlistSchema = z.object({
+  courseTitle: z.string().min(2, "Course title is required"),
+  courseSlug: z.string().min(2, "Course slug is required"),
+  fullName: z.string().min(2, "Full name is required"),
+  email: z.string().email("Valid email address is required"),
+  phone: z.string().optional().nullable(),
+  metadata: z.record(z.any()).optional().nullable(),
+});
+
+router.post("/waitlist", async (req: Request, res: Response) => {
+  try {
+    const parseResult = waitlistSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: "Validation error",
+        details: parseResult.error.flatten().fieldErrors,
+      });
+    }
+
+    const { courseTitle, courseSlug, fullName, phone, metadata } = parseResult.data;
+    const email = parseResult.data.email.trim().toLowerCase();
+
+    // Check existing registration on waitlist
+    const [existing] = await db
+      .select()
+      .from(courseWaitlist)
+      .where(
+        and(
+          eq(courseWaitlist.courseSlug, courseSlug),
+          eq(courseWaitlist.email, email)
+        )
+      )
+      .limit(1);
+
+    if (existing) {
+      return res.status(200).json({
+        success: true,
+        alreadyJoined: true,
+        message: `You are already registered on the priority waitlist for ${courseTitle}. We'll notify you as soon as enrollment opens!`,
+        waitlistId: existing.id,
+      });
+    }
+
+    const [created] = await db
+      .insert(courseWaitlist)
+      .values({
+        courseTitle,
+        courseSlug,
+        fullName: fullName.trim(),
+        email,
+        phone: phone ? phone.trim() : null,
+        metadata: metadata || null,
+        status: "active",
+      })
+      .returning();
+
+    // Send confirmation email asynchronously
+    sendWaitlistConfirmationEmail({
+      to: email,
+      fullName: fullName.trim(),
+      courseTitle,
+      courseSlug,
+    }).catch((err) => console.error("[waitlist] confirmation email error:", err));
+
+    return res.status(201).json({
+      success: true,
+      alreadyJoined: false,
+      message: `You're on the list! We've added you to the priority waitlist for ${courseTitle}. You will receive a confirmation email shortly.`,
+      waitlistId: created.id,
+    });
+  } catch (err) {
+    console.error("[workshops] waitlist error:", err);
+    return res.status(500).json({ error: "Failed to join waitlist. Please try again later." });
+  }
+});
+
+router.get("/waitlist", async (req: Request, res: Response) => {
+  let userRole = req.headers["x-user-role"] as string;
+
+  if (!userRole && req.headers.authorization?.startsWith("Bearer ")) {
+    try {
+      const token = req.headers.authorization.split(" ")[1];
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      if (decoded && decoded.role) {
+        userRole = decoded.role;
+      }
+    } catch {
+      // invalid token
+    }
+  }
+
+  if (!userRole || !["admin", "super_admin", "sub_admin", "coordinator"].includes(userRole)) {
+    return res.status(403).json({ error: "Access forbidden: Administrator privileges required." });
+  }
+
+  try {
+    const list = await db
+      .select()
+      .from(courseWaitlist)
+      .orderBy(desc(courseWaitlist.createdAt));
+
+    return res.json({ waitlist: list, total: list.length });
+  } catch (err) {
+    console.error("[workshops] waitlist list error:", err);
+    return res.status(500).json({ error: "Failed to fetch waitlist entries." });
+  }
+});
+
+// ─────────────────────────────────────────────
 // 1. GET /api/workshops/:slug
 // Public — Retrieve workshop details & availability
 // ─────────────────────────────────────────────
-router.get("/:slug", async (req: Request, res: Response) => {
+router.get("/:slug", async (req: Request, res: Response, next: NextFunction) => {
   const { slug } = req.params;
+  if (slug === "waitlist" || slug === "webhook") {
+    return next();
+  }
   try {
     const [workshop] = await db
       .select({
@@ -429,11 +545,18 @@ router.post("/:slug/registrations", requireWorkshopSession, async (req: Request,
           to: updated.email,
           participantName: updated.participantName,
           workshopTitle: workshop.title,
+          workshopSlug: workshop.slug,
+          workshopType: (workshop.metadata as any)?.type || (workshop.slug.includes("online") ? "online" : "physical"),
+          venue: workshop.venue,
+          startDate: workshop.startDate,
+          endDate: workshop.endDate,
+          metadata: workshop.metadata,
           registrationReference: `REG-${updated.id.slice(0, 8).toUpperCase()}`,
           paystackReference: "FREE-PASS-MEMBER",
           amountKobo: 0,
           currency: updated.currency,
           paidAt: new Date().toISOString(),
+          isFreePass: true,
         }).catch(err => console.error("[workshops] free pass confirmation email error:", err));
 
         return res.json({
@@ -490,11 +613,18 @@ router.post("/:slug/registrations", requireWorkshopSession, async (req: Request,
         to: created.email,
         participantName: created.participantName,
         workshopTitle: workshop.title,
+        workshopSlug: workshop.slug,
+        workshopType: (workshop.metadata as any)?.type || (workshop.slug.includes("online") ? "online" : "physical"),
+        venue: workshop.venue,
+        startDate: workshop.startDate,
+        endDate: workshop.endDate,
+        metadata: workshop.metadata,
         registrationReference: `REG-${created.id.slice(0, 8).toUpperCase()}`,
         paystackReference: "FREE-PASS-MEMBER",
         amountKobo: 0,
         currency: created.currency,
         paidAt: new Date().toISOString(),
+        isFreePass: true,
       }).catch(err => console.error("[workshops] free pass confirmation email error:", err));
     }
 
@@ -848,11 +978,18 @@ router.post("/:slug/payments/verify", async (req: Request, res: Response) => {
         to: registration.email,
         participantName: registration.participantName,
         workshopTitle: workshop?.title || "EEWYLA Goat Training Workshop",
+        workshopSlug: workshop?.slug,
+        workshopType: (workshop?.metadata as any)?.type || (workshop?.slug?.includes("online") ? "online" : "physical"),
+        venue: workshop?.venue,
+        startDate: workshop?.startDate,
+        endDate: workshop?.endDate,
+        metadata: workshop?.metadata,
         registrationReference: `REG-${registration.id.slice(0, 8).toUpperCase()}`,
         paystackReference: payment.reference,
         amountKobo: payment.amount,
         currency: payment.currency,
         paidAt,
+        isFreePass: payment.amount === 0,
       }).catch(err => console.error("[workshops] confirmation email error:", err));
 
       return res.json({
@@ -968,22 +1105,63 @@ export async function handlePaystackWebhook(req: Request, res: Response) {
             })
             .where(eq(workshopRegistrations.id, payment.registrationId));
 
-          const [registration] = await db
-            .select()
+          // Sync to master payments platform ledger
+          await db
+            .insert(payments)
+            .values({
+              reference: payment.reference,
+              category: "workshop",
+              businessEntityId: payment.registrationId,
+              amountKobo: payment.amount,
+              currency: payment.currency,
+              customerEmail: data.customer?.email || "",
+              status: "success",
+              provider: "paystack",
+              paystackTransactionId: String(data.id),
+              metadata: data,
+              verifiedAt: new Date(),
+              paidAt,
+            })
+            .onConflictDoUpdate({
+              target: payments.reference,
+              set: {
+                status: "success",
+                paystackTransactionId: String(data.id),
+                metadata: data,
+                verifiedAt: new Date(),
+                paidAt,
+                updatedAt: new Date(),
+              },
+            });
+
+          const [regWithWorkshop] = await db
+            .select({
+              registration: workshopRegistrations,
+              workshop: workshops,
+            })
             .from(workshopRegistrations)
+            .innerJoin(workshops, eq(workshopRegistrations.workshopId, workshops.id))
             .where(eq(workshopRegistrations.id, payment.registrationId))
             .limit(1);
 
-          if (registration) {
+          if (regWithWorkshop) {
+            const { registration, workshop } = regWithWorkshop;
             sendRegistrationConfirmationEmail({
               to: registration.email,
               participantName: registration.participantName,
-              workshopTitle: "EEWYLA Goat Training Workshop",
+              workshopTitle: workshop.title,
+              workshopSlug: workshop.slug,
+              workshopType: (workshop.metadata as any)?.type || (workshop.slug.includes("online") ? "online" : "physical"),
+              venue: workshop.venue,
+              startDate: workshop.startDate,
+              endDate: workshop.endDate,
+              metadata: workshop.metadata,
               registrationReference: `REG-${registration.id.slice(0, 8).toUpperCase()}`,
               paystackReference: payment.reference,
               amountKobo: payment.amount,
               currency: payment.currency,
               paidAt,
+              isFreePass: payment.amount === 0,
             }).catch(e => console.error("[Webhook] confirmation email error:", e));
           }
         }
@@ -999,7 +1177,7 @@ router.post("/:slug/webhook", handleCentralPaystackWebhook);
 
 // ─────────────────────────────────────────────
 // 10. GET /api/workshops/:slug/admin/registrations
-// Administrative visibility of all registrations
+// Administrative visibility of all registrations (single workshop or combined)
 // ─────────────────────────────────────────────
 router.get("/:slug/admin/registrations", async (req: Request, res: Response) => {
   let userRole = req.headers["x-user-role"] as string;
@@ -1021,11 +1199,13 @@ router.get("/:slug/admin/registrations", async (req: Request, res: Response) => 
   }
 
   const { slug } = req.params;
+  const isCombinedView = !slug || slug === "all" || slug === "eewyla-goat-training";
 
   try {
-    const list = await db
+    const baseQuery = db
       .select({
         id: workshopRegistrations.id,
+        workshopId: workshopRegistrations.workshopId,
         participantName: workshopRegistrations.participantName,
         email: workshopRegistrations.email,
         phone: workshopRegistrations.phone,
@@ -1036,13 +1216,22 @@ router.get("/:slug/admin/registrations", async (req: Request, res: Response) => 
         currency: workshopRegistrations.currency,
         status: workshopRegistrations.status,
         paymentStatus: workshopRegistrations.paymentStatus,
+        additionalDetails: workshopRegistrations.additionalDetails,
+        workshopTitle: workshops.title,
+        workshopSlug: workshops.slug,
+        workshopVenue: workshops.venue,
+        workshopStartDate: workshops.startDate,
+        workshopEndDate: workshops.endDate,
+        workshopMetadata: workshops.metadata,
         createdAt: workshopRegistrations.createdAt,
         updatedAt: workshopRegistrations.updatedAt,
       })
       .from(workshopRegistrations)
-      .innerJoin(workshops, eq(workshopRegistrations.workshopId, workshops.id))
-      .where(eq(workshops.slug, slug))
-      .orderBy(desc(workshopRegistrations.createdAt));
+      .innerJoin(workshops, eq(workshopRegistrations.workshopId, workshops.id));
+
+    const list = isCombinedView
+      ? await baseQuery.orderBy(desc(workshopRegistrations.createdAt))
+      : await baseQuery.where(eq(workshops.slug, slug)).orderBy(desc(workshopRegistrations.createdAt));
 
     return res.json({ registrations: list, total: list.length });
   } catch (err) {
@@ -1053,7 +1242,7 @@ router.get("/:slug/admin/registrations", async (req: Request, res: Response) => 
 
 // ─────────────────────────────────────────────
 // 11. POST /api/workshops/:slug/payments/reconcile
-// Administrative payment reconciliation against Paystack
+// Administrative payment reconciliation against Paystack (single or combined)
 // ─────────────────────────────────────────────
 router.post("/:slug/payments/reconcile", async (req: Request, res: Response) => {
   let userRole = req.headers["x-user-role"] as string;
@@ -1075,20 +1264,25 @@ router.post("/:slug/payments/reconcile", async (req: Request, res: Response) => 
   }
 
   const { slug } = req.params;
+  const isCombinedView = !slug || slug === "all" || slug === "eewyla-goat-training";
 
   try {
-    const [workshop] = await db
-      .select()
-      .from(workshops)
-      .where(eq(workshops.slug, slug))
-      .limit(1);
+    let workshop = null;
+    if (!isCombinedView) {
+      const [foundWorkshop] = await db
+        .select()
+        .from(workshops)
+        .where(eq(workshops.slug, slug))
+        .limit(1);
 
-    if (!workshop) {
-      return res.status(404).json({ error: "Workshop not found." });
+      if (!foundWorkshop) {
+        return res.status(404).json({ error: "Workshop not found." });
+      }
+      workshop = foundWorkshop;
     }
 
-    // Find pending payments for this workshop
-    const pendingPayments = await db
+    // Find pending payments for this workshop or all workshops
+    const baseQuery = db
       .select({
         paymentId: workshopPayments.id,
         reference: workshopPayments.reference,
@@ -1097,34 +1291,63 @@ router.post("/:slug/payments/reconcile", async (req: Request, res: Response) => 
         registrationId: workshopPayments.registrationId,
         participantName: workshopRegistrations.participantName,
         email: workshopRegistrations.email,
+        workshopId: workshops.id,
+        workshopTitle: workshops.title,
+        workshopSlug: workshops.slug,
+        workshopVenue: workshops.venue,
+        workshopStartDate: workshops.startDate,
+        workshopEndDate: workshops.endDate,
+        workshopMetadata: workshops.metadata,
       })
       .from(workshopPayments)
       .innerJoin(
         workshopRegistrations,
         eq(workshopPayments.registrationId, workshopRegistrations.id)
       )
-      .where(
-        and(
-          eq(workshopRegistrations.workshopId, workshop.id),
-          eq(workshopPayments.status, "pending")
-        )
-      )
-      .limit(50);
+      .innerJoin(
+        workshops,
+        eq(workshopRegistrations.workshopId, workshops.id)
+      );
 
-    let updatedCount = 0;
+    const pendingPayments = isCombinedView
+      ? await baseQuery
+          .where(eq(workshopPayments.status, "pending"))
+          .limit(100)
+      : await baseQuery
+          .where(
+            and(
+              eq(workshopRegistrations.workshopId, workshop!.id),
+              eq(workshopPayments.status, "pending")
+            )
+          )
+          .limit(100);
+
+    let reconciled = 0;
+    let failed = 0;
+    let stillPending = 0;
+    let skipped = 0;
     const isMock = !PAYSTACK_SECRET_KEY || PAYSTACK_SECRET_KEY.includes("mockkey");
+
+    if (isMock) {
+      return res.json({
+        success: true,
+        message: `Mock environment: Skipped Paystack verification for ${pendingPayments.length} pending payment(s).`,
+        checked: pendingPayments.length,
+        reconciled: 0,
+        updated: 0,
+        stillPending: pendingPayments.length,
+        failed: 0,
+        skipped: pendingPayments.length,
+      });
+    }
 
     for (const payment of pendingPayments) {
       try {
-        if (isMock) {
-          continue;
-        }
-
         const paystackRes = await axios.get(
-          "https://api.paystack.co/transaction/verify/" + payment.reference,
+          "https://api.paystack.co/transaction/verify/" + encodeURIComponent(payment.reference),
           {
             headers: { Authorization: "Bearer " + PAYSTACK_SECRET_KEY },
-            timeout: 5000,
+            timeout: 8000,
           }
         );
         const paystackData = paystackRes.data?.data;
@@ -1153,19 +1376,59 @@ router.post("/:slug/payments/reconcile", async (req: Request, res: Response) => 
             })
             .where(eq(workshopRegistrations.id, payment.registrationId));
 
-          updatedCount++;
+          // Sync to master payments platform ledger
+          await db
+            .insert(payments)
+            .values({
+              reference: payment.reference,
+              category: "workshop",
+              businessEntityId: payment.registrationId,
+              amountKobo: payment.amount,
+              currency: payment.currency,
+              customerEmail: payment.email,
+              status: "success",
+              provider: "paystack",
+              paystackTransactionId: String(paystackData.id),
+              metadata: paystackData,
+              verifiedAt: new Date(),
+              paidAt,
+              reconciledAt: new Date(),
+              reconciliationNotes: "Reconciled via admin batch check",
+            })
+            .onConflictDoUpdate({
+              target: payments.reference,
+              set: {
+                status: "success",
+                paystackTransactionId: String(paystackData.id),
+                metadata: paystackData,
+                verifiedAt: new Date(),
+                paidAt,
+                reconciledAt: new Date(),
+                reconciliationNotes: "Reconciled via admin batch check",
+                updatedAt: new Date(),
+              },
+            });
+
+          reconciled++;
 
           sendRegistrationConfirmationEmail({
             to: payment.email,
             participantName: payment.participantName,
-            workshopTitle: workshop.title,
-            registrationReference: payment.registrationId,
+            workshopTitle: payment.workshopTitle,
+            workshopSlug: payment.workshopSlug,
+            workshopType: (payment.workshopMetadata as any)?.type || (payment.workshopSlug?.includes("online") ? "online" : "physical"),
+            venue: payment.workshopVenue,
+            startDate: payment.workshopStartDate,
+            endDate: payment.workshopEndDate,
+            metadata: payment.workshopMetadata,
+            registrationReference: `REG-${payment.registrationId.slice(0, 8).toUpperCase()}`,
             paystackReference: payment.reference,
             amountKobo: payment.amount,
             currency: payment.currency,
             paidAt,
+            isFreePass: payment.amount === 0,
           }).catch((e) => console.error("[Reconcile] confirmation email error:", e));
-        } else if (paystackData?.status === "failed") {
+        } else if (paystackData?.status === "failed" || paystackData?.status === "abandoned") {
           await db
             .update(workshopPayments)
             .set({
@@ -1174,17 +1437,25 @@ router.post("/:slug/payments/reconcile", async (req: Request, res: Response) => 
               updatedAt: new Date(),
             })
             .where(eq(workshopPayments.id, payment.paymentId));
+          failed++;
+        } else {
+          stillPending++;
         }
       } catch (checkErr) {
         console.warn("[Reconcile] Could not verify reference " + payment.reference);
+        skipped++;
       }
     }
 
     return res.json({
       success: true,
-      message: "Reconciliation completed. " + updatedCount + " payment(s) reconciled out of " + pendingPayments.length + " pending attempt(s).",
+      message: `Reconciliation completed: ${reconciled} reconciled, ${stillPending} still pending, ${failed} failed across ${pendingPayments.length} payment attempt(s).`,
       checked: pendingPayments.length,
-      updated: updatedCount,
+      reconciled,
+      updated: reconciled,
+      stillPending,
+      failed,
+      skipped,
     });
   } catch (err) {
     console.error("[workshops] reconcile error:", err);

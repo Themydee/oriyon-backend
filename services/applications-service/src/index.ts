@@ -21,6 +21,7 @@ import applicationsRouter, { runAutoShortlistCheck } from "./routes/applications
 import cooperativeRouter, { runCooperativeMemberIdBackfill } from "./routes/cooperative";
 import complaintsRouter from "./routes/complaints";
 import workshopsRouter from "./routes/workshops";
+import eventsRouter from "./routes/events";
 import paymentsRouter, { reconcilePendingPayments } from "./routes/payments";
 const app = express();
 const PORT = process.env.PORT || 3004;
@@ -49,10 +50,12 @@ app.use("/complaints", complaintsRouter);
 app.use("/api/complaints", complaintsRouter);
 app.use("/api/workshops", workshopsRouter);
 app.use("/workshops", workshopsRouter);
+app.use("/api/events", eventsRouter);
+app.use("/events", eventsRouter);
 app.use("/api/payments", paymentsRouter);
 app.use("/payments", paymentsRouter);
 
-async function ensureDbColumnsExist() {
+export async function ensureDbColumnsExist() {
   const client = postgres(process.env.DATABASE_URL!);
   try {
     await client.unsafe(`
@@ -326,6 +329,22 @@ async function ensureDbColumnsExist() {
       );
 
       CREATE INDEX IF NOT EXISTS idx_workshop_webhook_events_id ON workshop_webhook_events(event_id);
+
+      CREATE TABLE IF NOT EXISTS course_waitlist (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        course_title VARCHAR(255) NOT NULL,
+        course_slug VARCHAR(255) NOT NULL,
+        full_name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        phone VARCHAR(50),
+        status VARCHAR(50) NOT NULL DEFAULT 'active',
+        metadata JSONB,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_course_waitlist_course_email ON course_waitlist (course_slug, email);
+      CREATE INDEX IF NOT EXISTS idx_course_waitlist_status ON course_waitlist (status);
       CREATE TABLE IF NOT EXISTS payments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         reference VARCHAR(120) NOT NULL UNIQUE,
@@ -395,6 +414,24 @@ async function ensureDbColumnsExist() {
       FROM cooperative_payments cp
       LEFT JOIN cooperative_members cm ON cm.id = cp.member_id
       ON CONFLICT (reference) DO NOTHING;
+
+      -- EEWYLA Public Events (Week 12 Agribusiness Guest Seminars)
+      CREATE TABLE IF NOT EXISTS event_registrations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_slug VARCHAR(100) NOT NULL,
+        registration_reference VARCHAR(100) NOT NULL UNIQUE,
+        full_name VARCHAR(255) NOT NULL,
+        gender VARCHAR(50) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        age INTEGER NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_event_registrations_slug_email ON event_registrations (event_slug, email);
+      CREATE INDEX IF NOT EXISTS idx_event_registrations_slug ON event_registrations (event_slug);
+      CREATE INDEX IF NOT EXISTS idx_event_registrations_created_at ON event_registrations (created_at DESC);
+
 
     `);
 

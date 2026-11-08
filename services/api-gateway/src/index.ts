@@ -733,6 +733,29 @@ app.use(
   }),
 );
 
+// ─────────────────────────────────────────────
+// EEWYLA PUBLIC EVENTS & REGISTRATIONS (applications-service)
+// ─────────────────────────────────────────────
+app.get(
+  "/api/events/:eventSlug/admin/registrations",
+  authenticate,
+  requireRole("admin", "sub_admin", "coordinator"),
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
+app.use(
+  "/api/events",
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
 // Central Payments & Webhooks
 app.use(
   "/api/payments",

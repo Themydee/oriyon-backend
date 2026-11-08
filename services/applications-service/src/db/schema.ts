@@ -434,6 +434,19 @@ export const workshopWebhookEvents = pgTable("workshop_webhook_events", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const courseWaitlist = pgTable("course_waitlist", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  courseTitle: varchar("course_title", { length: 255 }).notNull(),
+  courseSlug: varchar("course_slug", { length: 255 }).notNull(),
+  fullName: varchar("full_name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 255 }).notNull(),
+  phone: varchar("phone", { length: 50 }),
+  status: varchar("status", { length: 50 }).notNull().default("active"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // ─────────────────────────────────────────────
 // UNIFIED PLATFORM PAYMENTS REGISTRY
 // Master audit and reconciliation ledger for all business categories
@@ -477,5 +490,31 @@ export const payments = pgTable("payments", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+// ─────────────────────────────────────────────
+// PUBLIC EVENT REGISTRATIONS
+// EEWYLA Week 12 Guest Seminars & Public Community Gatherings
+// ─────────────────────────────────────────────
+export const eventRegistrations = pgTable(
+  "event_registrations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventSlug: varchar("event_slug", { length: 100 }).notNull(),
+    registrationReference: varchar("registration_reference", { length: 100 }).notNull().unique(),
+    fullName: varchar("full_name", { length: 255 }).notNull(),
+    gender: varchar("gender", { length: 50 }).notNull(), // "Male" | "Female" | "Prefer not to say"
+    email: varchar("email", { length: 255 }).notNull(),
+    age: integer("age").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    eventEmailUniqueIdx: uniqueIndex("idx_event_registrations_slug_email").on(
+      table.eventSlug,
+      table.email
+    ),
+  })
+);
+
 
 
