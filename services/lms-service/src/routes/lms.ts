@@ -1,4 +1,4 @@
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import { eq, and, isNull, sql, desc, inArray, lte, or, type InferModel } from "drizzle-orm";
 import { z } from "zod";
 import jwt from "jsonwebtoken";
@@ -785,8 +785,111 @@ quizzesRouter.get("/week/:weekId", async (req: Request, res: Response) => {
   }
 });
 
+// ADMIN — list all quiz attempts with quiz title
+// GET /lms/quizzes/admin/attempts
+quizzesRouter.get("/admin/attempts", async (req: Request, res: Response) => {
+  const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+
+  try {
+    if (page || limit) {
+      const pageNum = page && page > 0 ? page : 1;
+      const limitNum = limit && limit > 0 ? limit : 25;
+      const offsetNum = (pageNum - 1) * limitNum;
+
+      const [countRes, paginated] = await Promise.all([
+        db.select({ count: sql<number>`count(*)::int` }).from(quizAttempts),
+        db
+          .select({
+            attemptId: quizAttempts.id,
+            userId: quizAttempts.userId,
+            quizId: quizAttempts.quizId,
+            weekId: quizAttempts.weekId,
+            cohortId: quizAttempts.cohortId,
+            score: quizAttempts.score,
+            passed: quizAttempts.passed,
+            attemptedAt: quizAttempts.attemptedAt,
+            quizTitle: quizzes.title,
+          })
+          .from(quizAttempts)
+          .leftJoin(quizzes, eq(quizAttempts.quizId, quizzes.id))
+          .orderBy(desc(quizAttempts.attemptedAt))
+          .limit(limitNum)
+          .offset(offsetNum),
+      ]);
+
+      const total = Number(countRes?.[0]?.count || 0);
+      return res.json({
+        data: paginated,
+        attempts: paginated,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum) || 1,
+      });
+    }
+
+    const all = await db
+      .select({
+        attemptId: quizAttempts.id,
+        userId: quizAttempts.userId,
+        quizId: quizAttempts.quizId,
+        weekId: quizAttempts.weekId,
+        cohortId: quizAttempts.cohortId,
+        score: quizAttempts.score,
+        passed: quizAttempts.passed,
+        attemptedAt: quizAttempts.attemptedAt,
+        quizTitle: quizzes.title,
+      })
+      .from(quizAttempts)
+      .leftJoin(quizzes, eq(quizAttempts.quizId, quizzes.id))
+      .orderBy(desc(quizAttempts.attemptedAt));
+
+    return res.json(all);
+  } catch (err) {
+    console.error("GET /lms/quizzes/admin/attempts error:", err);
+    return res.status(500).json({ error: "Failed to fetch admin quiz attempts" });
+  }
+});
+
+// ADMIN — delete an individual quiz attempt
+// DELETE /lms/quizzes/admin/attempts/:id
+quizzesRouter.delete("/admin/attempts/:id", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const [deleted] = await db
+      .delete(quizAttempts)
+      .where(eq(quizAttempts.id, id))
+      .returning();
+
+    if (!deleted) {
+      return res.status(404).json({ error: "Quiz attempt not found" });
+    }
+
+    return res.json({ message: "Quiz attempt deleted successfully", attemptId: id, deleted });
+  } catch (err) {
+    console.error("DELETE /lms/quizzes/admin/attempts/:id error:", err);
+    return res.status(500).json({ error: "Failed to delete quiz attempt" });
+  }
+});
+
+// ADMIN — clear all quiz attempts
+// DELETE /lms/quizzes/admin/attempts
+quizzesRouter.delete("/admin/attempts", async (req: Request, res: Response) => {
+  try {
+    await db.delete(quizAttempts);
+    return res.json({ message: "All quiz attempts cleared successfully" });
+  } catch (err) {
+    console.error("DELETE /lms/quizzes/admin/attempts error:", err);
+    return res.status(500).json({ error: "Failed to clear quiz attempts" });
+  }
+});
+
 // GET /lms/quizzes/:id
-quizzesRouter.get("/:id", async (req: Request, res: Response) => {
+quizzesRouter.get("/:id", async (req: Request, res: Response, next: NextFunction) => {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id);
+  if (!isUuid) return next();
+
   try {
     const [quiz] = await db
       .select() 
@@ -1044,106 +1147,7 @@ quizzesRouter.get("/user/:userId/passed", async (req: Request, res: Response) =>
   }
 });
 
-// ADMIN — list all quiz attempts with quiz title
-// GET /lms/quizzes/admin/attempts
-quizzesRouter.get("/admin/attempts", async (req: Request, res: Response) => {
-  const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
-  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
 
-  try {
-    const baseQuery = db
-      .select({
-        attemptId: quizAttempts.id,
-        userId: quizAttempts.userId,
-        quizId: quizAttempts.quizId,
-        weekId: quizAttempts.weekId,
-        cohortId: quizAttempts.cohortId,
-        score: quizAttempts.score,
-        passed: quizAttempts.passed,
-        attemptedAt: quizAttempts.attemptedAt,
-        quizTitle: quizzes.title,
-      })
-      .from(quizAttempts)
-      .innerJoin(quizzes, eq(quizAttempts.quizId, quizzes.id))
-      .orderBy(quizAttempts.attemptedAt);
-
-    if (page || limit) {
-      const pageNum = page && page > 0 ? page : 1;
-      const limitNum = limit && limit > 0 ? limit : 25;
-      const offsetNum = (pageNum - 1) * limitNum;
-
-      const [allMatched, paginated] = await Promise.all([
-        baseQuery,
-        db
-          .select({
-            attemptId: quizAttempts.id,
-            userId: quizAttempts.userId,
-            quizId: quizAttempts.quizId,
-            weekId: quizAttempts.weekId,
-            cohortId: quizAttempts.cohortId,
-            score: quizAttempts.score,
-            passed: quizAttempts.passed,
-            attemptedAt: quizAttempts.attemptedAt,
-            quizTitle: quizzes.title,
-          })
-          .from(quizAttempts)
-          .innerJoin(quizzes, eq(quizAttempts.quizId, quizzes.id))
-          .orderBy(quizAttempts.attemptedAt)
-          .limit(limitNum)
-          .offset(offsetNum),
-      ]);
-
-      const total = allMatched.length;
-      return res.json({
-        data: paginated,
-        attempts: paginated,
-        total,
-        page: pageNum,
-        limit: limitNum,
-        totalPages: Math.ceil(total / limitNum),
-      });
-    }
-
-    const all = await baseQuery;
-    return res.json(all);
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to fetch admin quiz attempts" });
-  }
-});
-
-// ADMIN — delete an individual quiz attempt
-// DELETE /lms/quizzes/admin/attempts/:id
-quizzesRouter.delete("/admin/attempts/:id", async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const [deleted] = await db
-      .delete(quizAttempts)
-      .where(eq(quizAttempts.id, id))
-      .returning();
-
-    if (!deleted) {
-      return res.status(404).json({ error: "Quiz attempt not found" });
-    }
-
-    return res.json({ message: "Quiz attempt deleted successfully", attemptId: id, deleted });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to delete quiz attempt" });
-  }
-});
-
-// ADMIN — clear all quiz attempts
-// DELETE /lms/quizzes/admin/attempts
-quizzesRouter.delete("/admin/attempts", async (req: Request, res: Response) => {
-  try {
-    await db.delete(quizAttempts);
-    return res.json({ message: "All quiz attempts cleared successfully" });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to clear quiz attempts" });
-  }
-});
 
 // ─────────────────────────────────────────────
 // WEEK 12 CODES

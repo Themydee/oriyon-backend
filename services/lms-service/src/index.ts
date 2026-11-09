@@ -32,8 +32,8 @@ const queryClient = postgres(process.env.DATABASE_URL!, {
   idle_timeout: 20,
   connect_timeout: 10,
   connection: {
-    statement_timeout: 15, // Max 15s per query to prevent hung connections
-    lock_timeout: 5,       // Max 5s waiting for a lock before failing safely
+    statement_timeout: 30000, // Max 30s per query in ms to prevent hung connections
+    lock_timeout: 10000,      // Max 10s waiting for a lock in ms before failing safely
   },
 });
 export const db = drizzle(queryClient);
