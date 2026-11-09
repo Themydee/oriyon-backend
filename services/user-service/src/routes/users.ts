@@ -1386,23 +1386,45 @@ cohortRouter.patch("/:id", async (req: Request, res: Response) => {
 });
 
 cohortRouter.post("/:id/enrol", async (req: Request, res: Response) => {
-  const { userId } = req.body;
-  if (!userId) return res.status(400).json({ error: "userId required" });
+  const { userId, email } = req.body;
+  if (!userId && !email) return res.status(400).json({ error: "userId or email required" });
 
   try {
+    let targetUserId = userId;
+    if (!targetUserId && email) {
+      const [foundUser] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(sql`LOWER(${users.email})`, String(email).toLowerCase().trim()))
+        .limit(1);
+      if (!foundUser) return res.status(404).json({ error: "User with this email not found" });
+      targetUserId = foundUser.id;
+    }
+
+    const [existing] = await db
+      .select()
+      .from(cohortMembers)
+      .where(and(eq(cohortMembers.userId, targetUserId), eq(cohortMembers.cohortId, req.params.id)))
+      .limit(1);
+
+    if (existing) {
+      return res.status(200).json({ message: "User already enrolled in cohort", enrolment: existing });
+    }
+
     const [enrolment] = await db
       .insert(cohortMembers)
-      .values({ userId, cohortId: req.params.id })
+      .values({ userId: targetUserId, cohortId: req.params.id })
       .returning();
 
     await publishEvent("user.enrolled", {
-      userId,
+      userId: targetUserId,
       cohortId: req.params.id,
       enrolledAt: new Date().toISOString(),
     });
 
     return res.status(201).json(enrolment);
   } catch (err) {
+    console.error("POST /cohorts/:id/enrol error:", err);
     return res.status(500).json({ error: "Failed to enrol user" });
   }
 });
@@ -1583,8 +1605,18 @@ cohortRouter.post("/:cohortId/groups/:groupId/members", async (req: Request, res
       .where(and(eq(cohortMembers.userId, userId), eq(cohortMembers.cohortId, cohortId)))
       .limit(1);
 
+    // Auto-enrol user into cohort if not already enrolled
     if (!cohortMember) {
-      return res.status(400).json({ error: "User must be enrolled in this cohort before joining a group" });
+      try {
+        await db.insert(cohortMembers).values({ cohortId, userId });
+        await publishEvent("user.enrolled", {
+          userId,
+          cohortId,
+          enrolledAt: new Date().toISOString(),
+        });
+      } catch (enrolErr) {
+        console.error("Auto-enrolling into cohort before group assignment notice:", enrolErr);
+      }
     }
 
     const [group] = await db
@@ -1604,7 +1636,7 @@ cohortRouter.post("/:cohortId/groups/:groupId/members", async (req: Request, res
       .limit(1);
 
     if (alreadyMember) {
-      return res.status(409).json({ error: "User is already a member of this group" });
+      return res.status(200).json({ message: "User is already a member of this group", member: alreadyMember });
     }
 
     const [member] = await db
