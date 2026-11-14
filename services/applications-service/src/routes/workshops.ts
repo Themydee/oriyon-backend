@@ -5,7 +5,7 @@ import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import axios from "axios";
-import { eq, and, sql, desc, or, gt, lt } from "drizzle-orm";
+import { eq, and, sql, desc, or, gt, lt, inArray } from "drizzle-orm";
 import { db } from "../index";
 import {
   workshops,
@@ -61,7 +61,13 @@ export function requireWorkshopSession(req: Request, res: Response, next: NextFu
     }
 
     const currentSlug = req.params.slug;
-    if (currentSlug && decoded.workshopSlug !== currentSlug) {
+    const isMatchingSlug =
+      !currentSlug ||
+      decoded.workshopSlug === currentSlug ||
+      (decoded.workshopSlug === "physical-goat-training" && currentSlug === "eewyla-goat-training") ||
+      (decoded.workshopSlug === "eewyla-goat-training" && currentSlug === "physical-goat-training");
+
+    if (!isMatchingSlug) {
       return res.status(403).json({
         error: "Session is not authorized for this workshop.",
         code: "SLUG_MISMATCH",
@@ -199,6 +205,13 @@ router.get("/:slug", async (req: Request, res: Response, next: NextFunction) => 
     return next();
   }
   try {
+    const targetSlugs =
+      slug === "physical-goat-training"
+        ? ["physical-goat-training", "eewyla-goat-training"]
+        : slug === "eewyla-goat-training"
+        ? ["eewyla-goat-training", "physical-goat-training"]
+        : [slug];
+
     const [workshop] = await db
       .select({
         id: workshops.id,
@@ -216,7 +229,7 @@ router.get("/:slug", async (req: Request, res: Response, next: NextFunction) => 
         metadata: workshops.metadata,
       })
       .from(workshops)
-      .where(eq(workshops.slug, slug))
+      .where(or(...targetSlugs.map((s) => eq(workshops.slug, s))))
       .limit(1);
 
     if (!workshop) {
@@ -249,10 +262,17 @@ router.post("/:slug/email-challenges", async (req: Request, res: Response) => {
 
   try {
     // Verify workshop status
+    const targetSlugs =
+      slug === "physical-goat-training"
+        ? ["physical-goat-training", "eewyla-goat-training"]
+        : slug === "eewyla-goat-training"
+        ? ["eewyla-goat-training", "physical-goat-training"]
+        : [slug];
+
     const [workshop] = await db
       .select()
       .from(workshops)
-      .where(eq(workshops.slug, slug))
+      .where(or(...targetSlugs.map((s) => eq(workshops.slug, s))))
       .limit(1);
 
     if (!workshop) {
@@ -271,7 +291,7 @@ router.post("/:slug/email-challenges", async (req: Request, res: Response) => {
       .where(
         and(
           eq(workshopEmailChallenges.email, normalizedEmail),
-          eq(workshopEmailChallenges.workshopSlug, slug),
+          inArray(workshopEmailChallenges.workshopSlug, targetSlugs),
           gt(workshopEmailChallenges.createdAt, tenMinutesAgo)
         )
       );
@@ -338,6 +358,13 @@ router.post("/:slug/email-challenges/verify", async (req: Request, res: Response
   const rawCode = parsed.data.code.trim();
 
   try {
+    const targetSlugs =
+      slug === "physical-goat-training"
+        ? ["physical-goat-training", "eewyla-goat-training"]
+        : slug === "eewyla-goat-training"
+        ? ["eewyla-goat-training", "physical-goat-training"]
+        : [slug];
+
     // Find latest unused challenge for this email and workshop
     const [challenge] = await db
       .select()
@@ -345,7 +372,7 @@ router.post("/:slug/email-challenges/verify", async (req: Request, res: Response
       .where(
         and(
           eq(workshopEmailChallenges.email, normalizedEmail),
-          eq(workshopEmailChallenges.workshopSlug, slug),
+          inArray(workshopEmailChallenges.workshopSlug, targetSlugs),
           eq(workshopEmailChallenges.used, false)
         )
       )
@@ -487,18 +514,32 @@ router.post("/:slug/registrations", requireWorkshopSession, async (req: Request,
   const { participantName, phone, additionalDetails } = parsed.data;
 
   try {
+    const targetSlugs =
+      slug === "physical-goat-training"
+        ? ["physical-goat-training", "eewyla-goat-training"]
+        : slug === "eewyla-goat-training"
+        ? ["eewyla-goat-training", "physical-goat-training"]
+        : [slug];
+
     // 1. Authoritative eligibility check on the backend
     const decision = await WorkshopEligibilityService.determineEligibility(session.sub, slug);
 
     const [workshop] = await db
       .select()
       .from(workshops)
-      .where(eq(workshops.slug, slug))
+      .where(or(...targetSlugs.map((s) => eq(workshops.slug, s))))
       .limit(1);
 
     if (!workshop || workshop.status === "closed" || !workshop.registrationAvailability) {
       return res.status(400).json({ error: "Workshop is not open for registration." });
     }
+
+    const matchedWorkshops = await db
+      .select({ id: workshops.id })
+      .from(workshops)
+      .where(or(...targetSlugs.map((s) => eq(workshops.slug, s))));
+
+    const matchedWorkshopIds = matchedWorkshops.map((w) => w.id);
 
     // 2. Check for existing registration for (workshopId, session.sub)
     const [existing] = await db
@@ -506,7 +547,7 @@ router.post("/:slug/registrations", requireWorkshopSession, async (req: Request,
       .from(workshopRegistrations)
       .where(
         and(
-          eq(workshopRegistrations.workshopId, workshop.id),
+          inArray(workshopRegistrations.workshopId, matchedWorkshopIds),
           sql`LOWER(TRIM(${workshopRegistrations.email})) = ${session.sub}`
         )
       )
@@ -1199,7 +1240,14 @@ router.get("/:slug/admin/registrations", async (req: Request, res: Response) => 
   }
 
   const { slug } = req.params;
-  const isCombinedView = !slug || slug === "all" || slug === "eewyla-goat-training";
+  const isCombinedView = !slug || slug === "all";
+  const isPhysical =
+    slug === "physical-goat-training" ||
+    slug === "eewyla-goat-training" ||
+    slug === "physical";
+  const isOnline =
+    slug === "online-goat-training" ||
+    slug === "online";
 
   try {
     const baseQuery = db
@@ -1217,9 +1265,9 @@ router.get("/:slug/admin/registrations", async (req: Request, res: Response) => 
         status: workshopRegistrations.status,
         paymentStatus: workshopRegistrations.paymentStatus,
         additionalDetails: workshopRegistrations.additionalDetails,
-        workshopTitle: workshops.title,
-        workshopSlug: workshops.slug,
-        workshopVenue: workshops.venue,
+        workshopTitle: sql<string>`COALESCE(${workshops.title}, ${workshopRegistrations.additionalDetails}->>'workshopTitle', 'Goat Training Workshop')`,
+        workshopSlug: sql<string>`COALESCE(${workshops.slug}, ${workshopRegistrations.additionalDetails}->>'workshopSlug', CASE WHEN (${workshopRegistrations.additionalDetails}->>'workshopType') = 'online' THEN 'online-goat-training' ELSE 'physical-goat-training' END)`,
+        workshopVenue: sql<string>`COALESCE(${workshops.venue}, ${workshopRegistrations.additionalDetails}->>'venue', 'Touring Select LGAs across Oyo State')`,
         workshopStartDate: workshops.startDate,
         workshopEndDate: workshops.endDate,
         workshopMetadata: workshops.metadata,
@@ -1227,11 +1275,45 @@ router.get("/:slug/admin/registrations", async (req: Request, res: Response) => 
         updatedAt: workshopRegistrations.updatedAt,
       })
       .from(workshopRegistrations)
-      .innerJoin(workshops, eq(workshopRegistrations.workshopId, workshops.id));
+      .leftJoin(workshops, eq(workshopRegistrations.workshopId, workshops.id));
 
-    const list = isCombinedView
-      ? await baseQuery.orderBy(desc(workshopRegistrations.createdAt))
-      : await baseQuery.where(eq(workshops.slug, slug)).orderBy(desc(workshopRegistrations.createdAt));
+    let queryWithFilter;
+
+    if (isCombinedView) {
+      queryWithFilter = baseQuery.orderBy(desc(workshopRegistrations.createdAt));
+    } else if (isPhysical) {
+      queryWithFilter = baseQuery
+        .where(
+          or(
+            inArray(workshops.slug, ["physical-goat-training", "eewyla-goat-training"]),
+            sql`(${workshops.metadata}->>'type') = 'physical'`,
+            sql`LOWER(${workshops.title}) LIKE '%physical%'`,
+            sql`(${workshopRegistrations.additionalDetails}->>'workshopType') = 'physical'`,
+            sql`(${workshopRegistrations.additionalDetails}->>'format') = 'physical'`,
+            sql`(${workshopRegistrations.additionalDetails}->>'venue') ILIKE '%oyo%'`,
+            sql`(${workshopRegistrations.additionalDetails}->>'lga') IS NOT NULL`
+          )
+        )
+        .orderBy(desc(workshopRegistrations.createdAt));
+    } else if (isOnline) {
+      queryWithFilter = baseQuery
+        .where(
+          or(
+            eq(workshops.slug, "online-goat-training"),
+            sql`(${workshops.metadata}->>'type') = 'online'`,
+            sql`LOWER(${workshops.title}) LIKE '%online%'`,
+            sql`(${workshopRegistrations.additionalDetails}->>'workshopType') = 'online'`,
+            sql`(${workshopRegistrations.additionalDetails}->>'format') = 'online'`
+          )
+        )
+        .orderBy(desc(workshopRegistrations.createdAt));
+    } else {
+      queryWithFilter = baseQuery
+        .where(eq(workshops.slug, slug))
+        .orderBy(desc(workshopRegistrations.createdAt));
+    }
+
+    const list = await queryWithFilter;
 
     return res.json({ registrations: list, total: list.length });
   } catch (err) {
@@ -1264,23 +1346,16 @@ router.post("/:slug/payments/reconcile", async (req: Request, res: Response) => 
   }
 
   const { slug } = req.params;
-  const isCombinedView = !slug || slug === "all" || slug === "eewyla-goat-training";
+  const isCombinedView = !slug || slug === "all";
+  const isPhysical =
+    slug === "physical-goat-training" ||
+    slug === "eewyla-goat-training" ||
+    slug === "physical";
+  const isOnline =
+    slug === "online-goat-training" ||
+    slug === "online";
 
   try {
-    let workshop = null;
-    if (!isCombinedView) {
-      const [foundWorkshop] = await db
-        .select()
-        .from(workshops)
-        .where(eq(workshops.slug, slug))
-        .limit(1);
-
-      if (!foundWorkshop) {
-        return res.status(404).json({ error: "Workshop not found." });
-      }
-      workshop = foundWorkshop;
-    }
-
     // Find pending payments for this workshop or all workshops
     const baseQuery = db
       .select({
@@ -1309,18 +1384,39 @@ router.post("/:slug/payments/reconcile", async (req: Request, res: Response) => 
         eq(workshopRegistrations.workshopId, workshops.id)
       );
 
-    const pendingPayments = isCombinedView
-      ? await baseQuery
-          .where(eq(workshopPayments.status, "pending"))
-          .limit(100)
-      : await baseQuery
-          .where(
-            and(
-              eq(workshopRegistrations.workshopId, workshop!.id),
-              eq(workshopPayments.status, "pending")
-            )
+    let pendingPayments;
+    if (isCombinedView) {
+      pendingPayments = await baseQuery
+        .where(eq(workshopPayments.status, "pending"))
+        .limit(100);
+    } else if (isPhysical) {
+      pendingPayments = await baseQuery
+        .where(
+          and(
+            inArray(workshops.slug, ["physical-goat-training", "eewyla-goat-training"]),
+            eq(workshopPayments.status, "pending")
           )
-          .limit(100);
+        )
+        .limit(100);
+    } else if (isOnline) {
+      pendingPayments = await baseQuery
+        .where(
+          and(
+            eq(workshops.slug, "online-goat-training"),
+            eq(workshopPayments.status, "pending")
+          )
+        )
+        .limit(100);
+    } else {
+      pendingPayments = await baseQuery
+        .where(
+          and(
+            eq(workshops.slug, slug),
+            eq(workshopPayments.status, "pending")
+          )
+        )
+        .limit(100);
+    }
 
     let reconciled = 0;
     let failed = 0;

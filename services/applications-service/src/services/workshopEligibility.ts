@@ -72,10 +72,17 @@ export class WorkshopEligibilityService {
     }
 
     // 1. Fetch workshop configuration
+    const targetSlugs =
+      workshopSlug === "physical-goat-training"
+        ? ["physical-goat-training", "eewyla-goat-training"]
+        : workshopSlug === "eewyla-goat-training"
+        ? ["eewyla-goat-training", "physical-goat-training"]
+        : [workshopSlug];
+
     const [workshop] = await db
       .select()
       .from(workshops)
-      .where(eq(workshops.slug, workshopSlug))
+      .where(or(...targetSlugs.map((s) => eq(workshops.slug, s))))
       .limit(1);
 
     if (!workshop) {
