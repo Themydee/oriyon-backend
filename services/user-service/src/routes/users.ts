@@ -377,13 +377,16 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
       }
     }
 
-    // 2. If not found by ID, try fetching by email
-    if (!user && headerEmail) {
+    const isSelfRequest = Boolean(headerUserId && headerUserId === id);
+    const normalizedHeaderEmail = headerEmail ? headerEmail.trim().toLowerCase() : null;
+
+    // 2. If not found by ID and requesting own profile, try case-insensitive lookup by email
+    if (!user && isSelfRequest && normalizedHeaderEmail) {
       try {
         const rows = await db
           .select(userListProjection)
           .from(users)
-          .where(eq(users.email, headerEmail))
+          .where(sql`LOWER(TRIM(${users.email})) = ${normalizedHeaderEmail}`)
           .limit(1);
         user = rows[0] || null;
       } catch (emailErr) {
@@ -396,7 +399,7 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
               is_cooperative_only, is_active, blacklist_reason, approved_role, specialization, 
               id_type, id_filename, id_mime_type, id_uploaded_at, kyc_status, 
               kyc_rejection_reason, passport_url, avatar_url, created_at, updated_at
-            FROM users WHERE email = ${headerEmail} LIMIT 1
+            FROM users WHERE LOWER(TRIM(email)) = ${normalizedHeaderEmail} LIMIT 1
           `);
           const rows = (rawRes as any)?.rows || (Array.isArray(rawRes) ? rawRes : []);
           user = rows[0] || null;
@@ -407,16 +410,17 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
     }
 
     // 3. If still missing and request is for authenticated user's own profile, auto-provision
-    if (!user && headerUserId && headerUserId === id && headerEmail) {
+    if (!user && isSelfRequest && normalizedHeaderEmail) {
       try {
+        const validRoles = ["trainee", "trainer", "coordinator", "lead_trainer", "admin", "sub_admin", "cooperative", "corper"];
         const [newUser] = await db
           .insert(users)
           .values({
             id,
-            email: headerEmail,
+            email: normalizedHeaderEmail,
             firstName: "Trainee",
             lastName: "User",
-            role: ["trainee", "trainer", "coordinator", "lead_trainer", "admin"].includes(headerRole) ? headerRole : "trainee",
+            role: validRoles.includes(headerRole) ? headerRole : "trainee",
             isActive: true,
           })
           .onConflictDoNothing()
@@ -426,7 +430,11 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
           user = newUser;
         } else {
           try {
-            const rawRes = await db.execute(sql`SELECT * FROM users WHERE id = ${id}::uuid OR email = ${headerEmail} LIMIT 1`);
+            const rawRes = await db.execute(sql`
+              SELECT * FROM users
+              WHERE id = ${id}::uuid OR LOWER(TRIM(email)) = ${normalizedHeaderEmail}
+              LIMIT 1
+            `);
             const rows = (rawRes as any)?.rows || (Array.isArray(rawRes) ? rawRes : []);
             user = rows[0] || null;
           } catch { /* ignore */ }
@@ -440,10 +448,15 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
       return res.status(404).json({ error: "User not found" });
     }
 
+    const resolvedUserId = user.id || id;
     const membershipRes = await db
       .select()
       .from(cohortMembers)
-      .where(eq(cohortMembers.userId, id))
+      .where(
+        resolvedUserId !== id
+          ? or(eq(cohortMembers.userId, resolvedUserId), eq(cohortMembers.userId, id))
+          : eq(cohortMembers.userId, resolvedUserId)
+      )
       .limit(1)
       .catch((e) => {
         console.error("Error fetching cohort membership for user:", e);
@@ -825,16 +838,81 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
 
   try {
     const rawTargetId = req.params.id;
-    const headerUserId = req.headers["x-user-id"] as string | undefined;
-    const headerEmail = req.headers["x-user-email"] as string | undefined;
+    const headerUserId = (req.headers["x-user-id"] as string | undefined)?.trim();
+    const headerEmail = (req.headers["x-user-email"] as string | undefined)?.trim();
+    const headerRole = ((req.headers["x-user-role"] as string | undefined) || "trainee").trim();
 
     const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
     const validTargetId = uuidRegex.test(rawTargetId)
       ? rawTargetId
       : (headerUserId && uuidRegex.test(headerUserId) ? headerUserId : null);
-    const escapedEmail = headerEmail ? headerEmail.replace(/'/g, "''") : null;
+    const isSelfRequest = Boolean(
+      headerUserId && (headerUserId === rawTargetId || headerUserId === validTargetId)
+    );
+    const normalizedHeaderEmail = headerEmail ? headerEmail.toLowerCase() : null;
+
+    // Resolve actual user-service row ID (handles auth-service vs user-service UUID drift for self requests)
+    let resolvedTargetId: string | null = null;
+    if (validTargetId) {
+      try {
+        const existingById = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.id, validTargetId))
+          .limit(1);
+        if (existingById[0]?.id) {
+          resolvedTargetId = existingById[0].id;
+        }
+      } catch {
+        // Fall through to raw SQL lookup
+        try {
+          const rawById = await db.execute(sql`SELECT id FROM users WHERE id = ${validTargetId}::uuid LIMIT 1`);
+          const rows = (rawById as any)?.rows || (Array.isArray(rawById) ? rawById : []);
+          if (rows[0]?.id) resolvedTargetId = rows[0].id;
+        } catch { /* ignore */ }
+      }
+    }
+
+    if (!resolvedTargetId && isSelfRequest && normalizedHeaderEmail) {
+      try {
+        const rawByEmail = await db.execute(sql`
+          SELECT id FROM users WHERE LOWER(TRIM(email)) = ${normalizedHeaderEmail} LIMIT 1
+        `);
+        const rows = (rawByEmail as any)?.rows || (Array.isArray(rawByEmail) ? rawByEmail : []);
+        if (rows[0]?.id) {
+          resolvedTargetId = rows[0].id;
+        } else if (validTargetId) {
+          const validRoles = ["trainee", "trainer", "coordinator", "lead_trainer", "admin", "sub_admin", "cooperative", "corper"];
+          await db
+            .insert(users)
+            .values({
+              id: validTargetId,
+              email: normalizedHeaderEmail,
+              firstName: parsed.data.firstName || "Trainee",
+              lastName: parsed.data.lastName || "User",
+              role: validRoles.includes(headerRole) ? headerRole : "trainee",
+              isActive: true,
+            })
+            .onConflictDoNothing();
+          const refetch = await db.execute(sql`
+            SELECT id FROM users
+            WHERE id = ${validTargetId}::uuid OR LOWER(TRIM(email)) = ${normalizedHeaderEmail}
+            LIMIT 1
+          `);
+          const refetchedRows = (refetch as any)?.rows || (Array.isArray(refetch) ? refetch : []);
+          if (refetchedRows[0]?.id) resolvedTargetId = refetchedRows[0].id;
+        }
+      } catch (resolveErr) {
+        console.error(`Resolving user row for PATCH /users/${rawTargetId} failed:`, resolveErr);
+      }
+    }
+
+    if (!resolvedTargetId) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
     const updateData: any = { ...parsed.data, updatedAt: new Date() };
+    delete updateData.idDocumentUrl;
     if (parsed.data.isActive === true) {
       updateData.blacklistReason = null;
     }
@@ -861,21 +939,19 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
 
     let updated: any = null;
 
-    // Try primary Drizzle update if valid UUID targetId
-    if (validTargetId) {
-      try {
-        const [resRow] = await db
-          .update(users)
-          .set(updateData)
-          .where(eq(users.id, validTargetId))
-          .returning();
-        updated = resRow;
-      } catch (updateErr) {
-        console.error(`Primary Drizzle update for user ${validTargetId} failed, trying per-column raw SQL fallback:`, updateErr);
-      }
+    // Try primary Drizzle update
+    try {
+      const [resRow] = await db
+        .update(users)
+        .set(updateData)
+        .where(eq(users.id, resolvedTargetId))
+        .returning();
+      updated = resRow;
+    } catch (updateErr) {
+      console.error(`Primary Drizzle update for user ${resolvedTargetId} failed, trying per-column raw SQL fallback:`, updateErr);
     }
 
-    // Per-column raw SQL fallback if primary update failed or targetId was not UUID
+    // Per-column parameterized raw SQL fallback if primary update failed
     if (!updated) {
       const colMap: Record<string, string> = {
         firstName: "first_name",
@@ -904,40 +980,27 @@ userRouter.patch("/:id", async (req: Request, res: Response) => {
         kycRejectionReason: "kyc_rejection_reason",
       };
 
-      const whereConditions: string[] = [];
-      if (validTargetId) {
-        whereConditions.push(`id = '${validTargetId}'::uuid`);
-      } else if (escapedEmail) {
-        whereConditions.push(`email = '${escapedEmail}'`);
-      }
-
-      if (whereConditions.length > 0) {
-        const whereSql = whereConditions.join(" OR ");
-
-        for (const [jsKey, sqlCol] of Object.entries(colMap)) {
-          if (updateData[jsKey] !== undefined) {
-            try {
-              const val = updateData[jsKey];
-              if (val === null) {
-                await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = NULL WHERE ${whereSql}`));
-              } else if (typeof val === "boolean") {
-                await db.execute(sql.raw(`UPDATE users SET ${sqlCol} = ${val} WHERE ${whereSql}`));
-              } else {
-                await db.execute(sql`UPDATE users SET ${sql.raw(sqlCol)} = ${val} WHERE ${sql.raw(whereSql)}`);
-              }
-            } catch (colErr) {
-              console.warn(`Column ${sqlCol} update skipped (likely missing on DB):`, colErr);
+      for (const [jsKey, sqlCol] of Object.entries(colMap)) {
+        if (updateData[jsKey] !== undefined) {
+          try {
+            const val = updateData[jsKey];
+            if (val === null) {
+              await db.execute(sql`UPDATE users SET ${sql.raw(sqlCol)} = NULL WHERE id = ${resolvedTargetId}::uuid`);
+            } else {
+              await db.execute(sql`UPDATE users SET ${sql.raw(sqlCol)} = ${val} WHERE id = ${resolvedTargetId}::uuid`);
             }
+          } catch (colErr) {
+            console.warn(`Column ${sqlCol} update skipped (likely missing on DB):`, colErr);
           }
         }
+      }
 
-        try {
-          await db.execute(sql.raw(`UPDATE users SET updated_at = NOW() WHERE ${whereSql}`));
-          const rawRes = await db.execute(sql.raw(`SELECT * FROM users WHERE ${whereSql} LIMIT 1`));
-          updated = (rawRes as any)?.rows?.[0] || (Array.isArray(rawRes) ? rawRes[0] : null);
-        } catch (fetchErr) {
-          console.error(`Fetching updated user row failed:`, fetchErr);
-        }
+      try {
+        await db.execute(sql`UPDATE users SET updated_at = NOW() WHERE id = ${resolvedTargetId}::uuid`);
+        const rawRes = await db.execute(sql`SELECT * FROM users WHERE id = ${resolvedTargetId}::uuid LIMIT 1`);
+        updated = (rawRes as any)?.rows?.[0] || (Array.isArray(rawRes) ? rawRes[0] : null);
+      } catch (fetchErr) {
+        console.error(`Fetching updated user row failed:`, fetchErr);
       }
     }
 

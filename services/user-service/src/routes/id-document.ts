@@ -14,6 +14,170 @@ const ID_TYPES = [
 ] as const;
 
 const MAX_BASE64_LENGTH = 25_000_000; // ~18 MB raw
+const VALID_ROLES = new Set([
+  "trainee",
+  "trainer",
+  "coordinator",
+  "lead_trainer",
+  "admin",
+  "sub_admin",
+  "cooperative",
+  "corper",
+]);
+
+interface ResolvedIdDocUser {
+  id: string;
+  idType: string | null;
+  idFilename: string | null;
+  idMimeType: string | null;
+  idUploadedAt: Date | string | null;
+  kycStatus: string | null;
+  kycRejectionReason: string | null;
+}
+
+function normalizeMetaRow(row: any): ResolvedIdDocUser | null {
+  if (!row || !row.id) return null;
+  return {
+    id: row.id,
+    idType: row.idType ?? row.id_type ?? null,
+    idFilename: row.idFilename ?? row.id_filename ?? null,
+    idMimeType: row.idMimeType ?? row.id_mime_type ?? null,
+    idUploadedAt: row.idUploadedAt ?? row.id_uploaded_at ?? null,
+    kycStatus: row.kycStatus ?? row.kyc_status ?? null,
+    kycRejectionReason: row.kycRejectionReason ?? row.kyc_rejection_reason ?? null,
+  };
+}
+
+async function fetchUserMetaById(id: string): Promise<ResolvedIdDocUser | null> {
+  try {
+    const [u] = await db
+      .select({
+        id: users.id,
+        idType: users.idType,
+        idFilename: users.idFilename,
+        idMimeType: users.idMimeType,
+        idUploadedAt: users.idUploadedAt,
+        kycStatus: users.kycStatus,
+        kycRejectionReason: users.kycRejectionReason,
+      })
+      .from(users)
+      .where(eq(users.id, id))
+      .limit(1);
+    return normalizeMetaRow(u);
+  } catch (drizzleErr) {
+    console.error("[users] id-document meta Drizzle select error, falling back to raw SQL:", drizzleErr);
+    try {
+      const rawRes = await db.execute(sql`
+        SELECT
+          id, id_type, id_filename, id_mime_type, id_uploaded_at, kyc_status, kyc_rejection_reason
+        FROM users WHERE id = ${id}::uuid LIMIT 1
+      `);
+      const rows = (rawRes as any)?.rows || (Array.isArray(rawRes) ? rawRes : []);
+      return normalizeMetaRow(rows[0] || null);
+    } catch (rawErr) {
+      console.error("[users] id-document meta raw SQL query error:", rawErr);
+      return null;
+    }
+  }
+}
+
+async function fetchUserMetaByEmail(email: string): Promise<ResolvedIdDocUser | null> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) return null;
+
+  try {
+    const [u] = await db
+      .select({
+        id: users.id,
+        idType: users.idType,
+        idFilename: users.idFilename,
+        idMimeType: users.idMimeType,
+        idUploadedAt: users.idUploadedAt,
+        kycStatus: users.kycStatus,
+        kycRejectionReason: users.kycRejectionReason,
+      })
+      .from(users)
+      .where(sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`)
+      .limit(1);
+    return normalizeMetaRow(u);
+  } catch (drizzleErr) {
+    console.error("[users] id-document email Drizzle select error, falling back to raw SQL:", drizzleErr);
+    try {
+      const rawRes = await db.execute(sql`
+        SELECT
+          id, id_type, id_filename, id_mime_type, id_uploaded_at, kyc_status, kyc_rejection_reason
+        FROM users WHERE LOWER(TRIM(email)) = ${normalizedEmail} LIMIT 1
+      `);
+      const rows = (rawRes as any)?.rows || (Array.isArray(rawRes) ? rawRes : []);
+      return normalizeMetaRow(rows[0] || null);
+    } catch (rawErr) {
+      console.error("[users] id-document email raw SQL query error:", rawErr);
+      return null;
+    }
+  }
+}
+
+/**
+ * Resolves a user for self-service ID document endpoints.
+ * 1. Always checks by exact UUID first.
+ * 2. If not found and the caller is accessing their own record (x-user-id === id),
+ *    falls back to case-insensitive email match (handles auth-service vs user-service UUID drift).
+ * 3. If still missing on a self-request, idempotently auto-provisions the profile row
+ *    (eliminates Promise.all race condition on first login with GET /users/:id).
+ */
+async function resolveUserForIdDocument(
+  id: string,
+  req: Request
+): Promise<ResolvedIdDocUser | null> {
+  let user = await fetchUserMetaById(id);
+  if (user) return user;
+
+  const headerUserId = (req.headers["x-user-id"] as string | undefined)?.trim();
+  const headerEmail = (req.headers["x-user-email"] as string | undefined)?.trim();
+  const headerRole = ((req.headers["x-user-role"] as string | undefined) || "trainee").trim();
+  const isSelfRequest = Boolean(headerUserId && headerUserId === id);
+
+  if (!isSelfRequest || !headerEmail) {
+    return null;
+  }
+
+  user = await fetchUserMetaByEmail(headerEmail);
+  if (user) return user;
+
+  // Auto-provision user row safely if it does not exist yet in user-service
+  try {
+    const safeRole = VALID_ROLES.has(headerRole) ? headerRole : "trainee";
+    const [created] = await db
+      .insert(users)
+      .values({
+        id,
+        email: headerEmail.toLowerCase(),
+        firstName: "Trainee",
+        lastName: "User",
+        role: safeRole,
+        isActive: true,
+      })
+      .onConflictDoNothing()
+      .returning({
+        id: users.id,
+        idType: users.idType,
+        idFilename: users.idFilename,
+        idMimeType: users.idMimeType,
+        idUploadedAt: users.idUploadedAt,
+        kycStatus: users.kycStatus,
+        kycRejectionReason: users.kycRejectionReason,
+      });
+
+    if (created) {
+      return normalizeMetaRow(created);
+    }
+  } catch (provisionErr) {
+    console.error(`[users] id-document auto-provision failed for ${id}:`, provisionErr);
+  }
+
+  // Re-fetch in case a concurrent GET /users/:id request won the insert race
+  return (await fetchUserMetaById(id)) || (await fetchUserMetaByEmail(headerEmail));
+}
 
 // ─────────────────────────────────────────────
 // PATCH /users/:id/id-document
@@ -44,6 +208,12 @@ router.patch("/:id/id-document", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "Invalid user ID format" });
   }
 
+  const headerUserId = (req.headers["x-user-id"] as string | undefined)?.trim();
+  const headerRole = ((req.headers["x-user-role"] as string | undefined) || "").trim();
+  if (headerUserId && headerUserId !== id && !["admin", "sub_admin"].includes(headerRole)) {
+    return res.status(403).json({ error: "Forbidden — you can only upload your own ID document" });
+  }
+
   const docPayload = req.body.idDocument || req.body.idDocumentUrl;
   const rawIdType = req.body.idType || req.body.id_type || "National ID (NIN)";
   const idType = normalizeIdType(rawIdType);
@@ -65,12 +235,7 @@ router.patch("/:id/id-document", async (req: Request, res: Response) => {
   }
 
   try {
-    const [user] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.id, id))
-      .limit(1);
-
+    const user = await resolveUserForIdDocument(id, req);
     if (!user) return res.status(404).json({ error: "User not found" });
 
     const [updated] = await db
@@ -85,7 +250,7 @@ router.patch("/:id/id-document", async (req: Request, res: Response) => {
         kycRejectionReason: null,
         updatedAt: new Date(),
       })
-      .where(eq(users.id, id))
+      .where(eq(users.id, user.id))
       .returning({
         id:           users.id,
         idType:       users.idType,
@@ -109,7 +274,7 @@ router.patch("/:id/id-document", async (req: Request, res: Response) => {
 // ─────────────────────────────────────────────
 // GET /users/:id/id-document/meta
 // Returns metadata only — no binary.
-// Used by admin dashboard to check upload status.
+// Used by trainee dashboard and admin dashboard to check upload status.
 // ─────────────────────────────────────────────
 router.get("/:id/id-document/meta", async (req: Request, res: Response) => {
   try {
@@ -119,45 +284,11 @@ router.get("/:id/id-document/meta", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Invalid user ID format" });
     }
 
-    let user: any = null;
-    try {
-      const [u] = await db
-        .select({
-          id:           users.id,
-          idType:       users.idType,
-          idFilename:   users.idFilename,
-          idMimeType:   users.idMimeType,
-          idUploadedAt: users.idUploadedAt,
-          kycStatus:    users.kycStatus,
-          kycRejectionReason: users.kycRejectionReason,
-        })
-        .from(users)
-        .where(eq(users.id, id))
-        .limit(1);
-      user = u;
-    } catch (drizzleErr) {
-      console.error("[users] id-document meta Drizzle select error, falling back to raw SQL:", drizzleErr);
-      try {
-        const rawRes = await db.execute(sql`
-          SELECT 
-            id, id_type, id_filename, id_mime_type, id_uploaded_at, kyc_status, kyc_rejection_reason
-          FROM users WHERE id = ${id}::uuid LIMIT 1
-        `);
-        const rows = (rawRes as any)?.rows || (Array.isArray(rawRes) ? rawRes : []);
-        user = rows[0] || null;
-      } catch (rawErr) {
-        console.error("[users] id-document meta raw SQL query error:", rawErr);
-      }
-    }
+    const user = await resolveUserForIdDocument(id, req);
 
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    const idType = user.idType || user.id_type || null;
-    const idFilename = user.idFilename || user.id_filename || null;
-    const idMimeType = user.idMimeType || user.id_mime_type || null;
-    const idUploadedAt = user.idUploadedAt || user.id_uploaded_at || null;
-    const kycStatus = user.kycStatus || user.kyc_status || null;
-    const kycRejectionReason = user.kycRejectionReason || user.kyc_rejection_reason || null;
+    const { idType, idFilename, idMimeType, idUploadedAt, kycStatus, kycRejectionReason } = user;
 
     return res.json({
       hasDocument:  !!(idType || idUploadedAt || idFilename),
