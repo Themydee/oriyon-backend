@@ -12,7 +12,7 @@ import idDocumentRouter from "./routes/id-document";
 import { ticketsRouter } from "./routes/tickets";
 import { chatRouter } from "./routes/chat";
 import { users, cohorts, cohortMembers, groupMembers } from "./db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 
 const app = express();
 const PORT = process.env.PORT || 3002;
