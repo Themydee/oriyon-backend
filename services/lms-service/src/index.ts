@@ -161,10 +161,13 @@ async function ensureDbColumns() {
         updated_at timestamp NOT NULL DEFAULT now()
       );
 
+      ALTER TABLE week12_checkins ADD COLUMN IF NOT EXISTS verified_by UUID;
+      ALTER TABLE week12_checkins ADD COLUMN IF NOT EXISTS group_id VARCHAR(128);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_practical_checkins_cohort_user_week ON practical_checkins (cohort_id, user_id, week_number);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_practical_codes_cohort_user_week ON practical_codes (cohort_id, user_id, week_number);
       CREATE INDEX IF NOT EXISTS idx_practical_codes_code ON practical_codes (code);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_week12_checkins_cohort_user_day ON week12_checkins (cohort_id, user_id, day);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_progress_user_lesson ON progress (user_id, lesson_id);
       CREATE INDEX IF NOT EXISTS idx_appeals_user_id ON appeals (user_id);
       CREATE INDEX IF NOT EXISTS idx_appeals_status ON appeals (status);
 

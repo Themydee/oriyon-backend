@@ -8,6 +8,7 @@ import {
   integer,
   pgEnum,
   jsonb,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const roleEnum = pgEnum("role", ["trainee", "trainer", "coordinator", "lead_trainer", "admin", "sub_admin", "cooperative", "corper"]);
@@ -58,6 +59,7 @@ export const cohorts = pgTable("cohorts", {
   state:       varchar("state", { length: 100 }),
   startDate:   timestamp("start_date"),
   endDate:     timestamp("end_date"),
+  status:      varchar("status", { length: 50 }).notNull().default("open"), // 'open' | 'closed' | 'archived'
   isActive:    boolean("is_active").notNull().default(true),
   createdAt:   timestamp("created_at").notNull().defaultNow(),
   updatedAt:   timestamp("updated_at").notNull().defaultNow(),
@@ -68,7 +70,9 @@ export const cohortMembers = pgTable("cohort_members", {
   userId:     uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   cohortId:   uuid("cohort_id").notNull().references(() => cohorts.id, { onDelete: "cascade" }),
   enrolledAt: timestamp("enrolled_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  userCohortUnique: uniqueIndex("idx_cohort_members_user_cohort").on(table.userId, table.cohortId),
+}));
 
 export const groups = pgTable("groups", {
   id: uuid("id").primaryKey().defaultRandom(),

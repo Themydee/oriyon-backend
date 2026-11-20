@@ -946,9 +946,19 @@ router.patch("/:id", async (req: Request, res: Response) => {
     const wasApproved = current.status === "approved";
     const groupId = parsed.data.groupId;
 
+    // Idempotency guard: block duplicate approval requests if already approved
+    if (wasApproved && parsed.data.status === "approved") {
+      return res.status(200).json(current);
+    }
+
     const updatePayload: Record<string, any> = {
       updatedAt: new Date(),
     };
+
+    const headerUserId = req.headers["x-user-id"] as string | undefined;
+    if (headerUserId) {
+      updatePayload.reviewedBy = headerUserId;
+    }
 
     for (const [key, value] of Object.entries(parsed.data)) {
       if (validApplicationColumns.has(key) && value !== undefined) {

@@ -11,8 +11,8 @@ import adminRouter from "./routes/admin";
 import idDocumentRouter from "./routes/id-document";
 import { ticketsRouter } from "./routes/tickets";
 import { chatRouter } from "./routes/chat";
-import { users, cohortMembers, groupMembers } from "./db/schema";
-import { eq } from "drizzle-orm";
+import { users, cohorts, cohortMembers, groupMembers } from "./db/schema";
+import { eq, and } from "drizzle-orm";
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -73,6 +73,29 @@ async function setupConsumers() {
     async (payload) => {
       const { userId, email, firstName, lastName, phone, cohortId, approvedRole, groupId, physicalSiteId, gender, age } = payload as any;
 
+      // Resolve cohort: ensure Cohort 1 is permanently closed to new enrolments.
+      // If cohortId is Cohort 1, closed, or missing, divert to open Cohort 2.
+      let targetCohortId = cohortId;
+      let targetCohort = null;
+      if (targetCohortId) {
+        const [c] = await db.select().from(cohorts).where(eq(cohorts.id, targetCohortId)).limit(1);
+        targetCohort = c;
+      }
+
+      if (!targetCohort || targetCohort.status === "closed" || targetCohort.name.toLowerCase().includes("cohort 1") || !targetCohort.isActive) {
+        const openCohorts = await db
+          .select()
+          .from(cohorts)
+          .where(and(eq(cohorts.status, "open"), eq(cohorts.isActive, true)));
+
+        const c2 = openCohorts.find((c) => c.name.toLowerCase().includes("cohort 2")) || openCohorts[0];
+        if (c2) {
+          targetCohortId = c2.id;
+          targetCohort = c2;
+          console.log(`[user-service] Diverted approved applicant ${email} from closed cohort to ${c2.name} (${c2.id})`);
+        }
+      }
+
       // Idempotency guard — check if user already exists
       const [existing] = await db
         .select()
@@ -96,11 +119,24 @@ async function setupConsumers() {
           .where(eq(users.id, existing.id))
           .returning();
 
-        if (cohortId) {
+        if (targetCohortId) {
           try {
-            await db.insert(cohortMembers).values({ cohortId, userId: reactivatedUser.id });
+            const [alreadyEnrolled] = await db
+              .select()
+              .from(cohortMembers)
+              .where(and(eq(cohortMembers.userId, reactivatedUser.id), eq(cohortMembers.cohortId, targetCohortId)))
+              .limit(1);
+
+            if (!alreadyEnrolled) {
+              await db.insert(cohortMembers).values({ cohortId: targetCohortId, userId: reactivatedUser.id });
+              await publishEvent("user.enrolled", {
+                userId: reactivatedUser.id,
+                cohortId: targetCohortId,
+                enrolledAt: new Date().toISOString(),
+              });
+            }
           } catch (e) {
-            console.error(`[user-service] Failed to auto-enroll existing user in cohort ${cohortId}:`, e);
+            console.error(`[user-service] Failed to auto-enroll existing user in cohort ${targetCohortId}:`, e);
           }
         }
         if (groupId) {
@@ -141,11 +177,24 @@ async function setupConsumers() {
         })
         .returning();
 
-      if (cohortId) {
+      if (targetCohortId) {
         try {
-          await db.insert(cohortMembers).values({ cohortId, userId: newUser.id });
+          const [alreadyEnrolled] = await db
+            .select()
+            .from(cohortMembers)
+            .where(and(eq(cohortMembers.userId, newUser.id), eq(cohortMembers.cohortId, targetCohortId)))
+            .limit(1);
+
+          if (!alreadyEnrolled) {
+            await db.insert(cohortMembers).values({ cohortId: targetCohortId, userId: newUser.id });
+            await publishEvent("user.enrolled", {
+              userId: newUser.id,
+              cohortId: targetCohortId,
+              enrolledAt: new Date().toISOString(),
+            });
+          }
         } catch (e) {
-          console.error(`[user-service] Failed to auto-enroll user in cohort ${cohortId}:`, e);
+          console.error(`[user-service] Failed to auto-enroll user in cohort ${targetCohortId}:`, e);
         }
       }
       if (groupId) {
@@ -303,6 +352,33 @@ async function setupConsumers() {
 // START
 // ─────────────────────────────────────────────
 async function bootstrap() {
+  try {
+    await queryClient`ALTER TABLE cohorts ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'open' NOT NULL;`;
+    await queryClient`UPDATE cohorts SET status = 'closed', is_active = false WHERE LOWER(name) LIKE '%cohort 1%' AND status != 'closed';`;
+    await queryClient`CREATE UNIQUE INDEX IF NOT EXISTS idx_cohort_members_user_cohort ON cohort_members (user_id, cohort_id);`;
+
+    const [c2Exists] = await db
+      .select({ id: cohorts.id })
+      .from(cohorts)
+      .where(sql`LOWER(${cohorts.name}) LIKE '%cohort 2%'`)
+      .limit(1);
+
+    if (!c2Exists) {
+      await db.insert(cohorts).values({
+        name: "Cohort 2",
+        description: "EEWYLA Cohort 2 Training Programme",
+        state: "Oyo",
+        status: "open",
+        isActive: true,
+      });
+      console.log("[user-service] Seeded active Cohort 2.");
+    }
+
+    console.log("[user-service] Auto-migration and schema guards applied successfully.");
+  } catch (migErr) {
+    console.error("[user-service] Auto-migration error (non-fatal):", migErr);
+  }
+
   app.listen(PORT, () => {
     console.log(`[user-service] Running on port ${PORT}`);
 

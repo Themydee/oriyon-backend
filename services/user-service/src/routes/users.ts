@@ -310,9 +310,17 @@ userRouter.get("/", async (req: Request, res: Response) => {
 
     const usersWithMemberships = allUsers.map((u) => {
       const normalized = normalizeUserRow(u);
+      const userCohorts = userCohortMap.get(u.id) || [];
+      const primaryCohort = userCohorts[0];
+      const isCohort1 = userCohorts.some((c) => c.name.toLowerCase().includes("cohort 1"));
+      const cohortName = primaryCohort ? primaryCohort.name : null;
       return {
         ...normalized,
-        cohorts: userCohortMap.get(u.id) || [],
+        cohortId: primaryCohort ? primaryCohort.id : null,
+        cohortName,
+        isCohort1,
+        cohortTag: isCohort1 ? "Cohort 1 Member" : cohortName ? `${cohortName} Member` : null,
+        cohorts: userCohorts,
         groups: userGroupMap.get(u.id) || [],
       };
     });
@@ -449,24 +457,40 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
     }
 
     const resolvedUserId = user.id || id;
-    const membershipRes = await db
-      .select()
-      .from(cohortMembers)
-      .where(
-        resolvedUserId !== id
-          ? or(eq(cohortMembers.userId, resolvedUserId), eq(cohortMembers.userId, id))
-          : eq(cohortMembers.userId, resolvedUserId)
-      )
-      .limit(1)
-      .catch((e) => {
-        console.error("Error fetching cohort membership for user:", e);
-        return [];
-      });
+    const [membershipRes, allCohorts] = await Promise.all([
+      db
+        .select()
+        .from(cohortMembers)
+        .where(
+          resolvedUserId !== id
+            ? or(eq(cohortMembers.userId, resolvedUserId), eq(cohortMembers.userId, id))
+            : eq(cohortMembers.userId, resolvedUserId)
+        )
+        .catch((e) => {
+          console.error("Error fetching cohort membership for user:", e);
+          return [];
+        }),
+      db.select().from(cohorts).catch(() => []),
+    ]);
+
+    const cohortMap = new Map((allCohorts || []).map((c: any) => [c.id, c.name]));
+    const userCohorts = (membershipRes || []).map((m: any) => ({
+      id: m.cohortId,
+      name: cohortMap.get(m.cohortId) || "",
+    }));
+    const primaryCohort = userCohorts[0];
+    const isCohort1 = userCohorts.some((c) => c.name.toLowerCase().includes("cohort 1"));
+    const cohortName = primaryCohort ? primaryCohort.name : null;
 
     const normalized = normalizeUserRow(user);
     return res.json({
       ...normalized,
-      cohortId: membershipRes?.[0]?.cohortId ?? null,
+      cohortId: primaryCohort ? primaryCohort.id : null,
+      cohortName,
+      isCohort1,
+      cohortTag: isCohort1 ? "Cohort 1 Member" : cohortName ? `${cohortName} Member` : null,
+      cohorts: userCohorts,
+      cohortMembers: membershipRes,
     });
   } catch (err) {
     console.error(`GET /users/${req.params.id} error:`, err);
@@ -1399,7 +1423,15 @@ cohortRouter.get("/:id", async (req: Request, res: Response) => {
       .innerJoin(users, eq(users.id, cohortMembers.userId))
       .where(eq(cohortMembers.cohortId, id));
 
-    return res.json({ ...cohort, members });
+    const isCohort1 = cohort.name.toLowerCase().includes("cohort 1");
+    const membersWithTags = members.map((m) => ({
+      ...m,
+      isCohort1,
+      cohortName: cohort.name,
+      cohortTag: isCohort1 ? "Cohort 1 Member" : `${cohort.name} Member`,
+    }));
+
+    return res.json({ ...cohort, isCohort1, members: membersWithTags });
   } catch (err) {
     console.error("GET /cohorts/:id error:", err);
     return res.status(500).json({ error: "Failed to fetch cohort" });
@@ -1436,12 +1468,30 @@ cohortRouter.post("/", async (req: Request, res: Response) => {
 
 cohortRouter.patch("/:id", async (req: Request, res: Response) => {
   try {
+    const [existingCohort] = await db
+      .select()
+      .from(cohorts)
+      .where(eq(cohorts.id, req.params.id))
+      .limit(1);
+
+    if (!existingCohort) return res.status(404).json({ error: "Cohort not found" });
+
+    // Guard: Cohort 1 is permanently closed and cannot be reopened
+    if (
+      existingCohort.name.toLowerCase().includes("cohort 1") &&
+      (req.body.status === "open" || req.body.isActive === true)
+    ) {
+      return res.status(400).json({
+        error: "Cohort 1 is permanently closed to new enrolments and cannot be reopened.",
+      });
+    }
+
     const [updated] = await db
       .update(cohorts)
       .set({ ...req.body, updatedAt: new Date() })
       .where(eq(cohorts.id, req.params.id))
       .returning();
-    if (!updated) return res.status(404).json({ error: "Cohort not found" });
+
     return res.json(updated);
   } catch {
     return res.status(500).json({ error: "Failed to update cohort" });
@@ -1453,6 +1503,25 @@ cohortRouter.post("/:id/enrol", async (req: Request, res: Response) => {
   if (!userId && !email) return res.status(400).json({ error: "userId or email required" });
 
   try {
+    const [cohort] = await db
+      .select()
+      .from(cohorts)
+      .where(eq(cohorts.id, req.params.id))
+      .limit(1);
+
+    if (!cohort) return res.status(404).json({ error: "Cohort not found" });
+
+    // Enforce permanent closure of Cohort 1 to all new enrolments
+    if (
+      cohort.status === "closed" ||
+      cohort.name.toLowerCase().includes("cohort 1") ||
+      !cohort.isActive
+    ) {
+      return res.status(400).json({
+        error: "Cohort 1 is permanently closed to new enrolments. Trainees must be enrolled into Cohort 2.",
+      });
+    }
+
     let targetUserId = userId;
     if (!targetUserId && email) {
       const [foundUser] = await db

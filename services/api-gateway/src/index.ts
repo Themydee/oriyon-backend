@@ -1125,6 +1125,7 @@ app.get(
 app.post(
   "/api/cohorts",
   authenticate,
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
@@ -1137,12 +1138,14 @@ app.get(
 app.patch(
   "/api/cohorts/:id",
   authenticate,
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
 app.post(
   "/api/cohorts/:id/enrol",
   authenticate,
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
@@ -1156,6 +1159,7 @@ app.post(
 app.post(
   "/api/cohorts/:id/groups",
   authenticate,
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
 );
@@ -1180,6 +1184,7 @@ app.get(
 app.post(
   "/api/cohorts/:cohortId/groups/:groupId/members",
   authenticate,
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({
     target: USER_SERVICE_URL,
@@ -1189,6 +1194,7 @@ app.post(
 app.patch(
   "/api/cohorts/:cohortId/groups/:groupId",
   authenticate,
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({
     target: USER_SERVICE_URL,
@@ -1198,6 +1204,7 @@ app.patch(
 app.delete(
   "/api/cohorts/:cohortId/groups/:groupId",
   authenticate,
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({
     target: USER_SERVICE_URL,
@@ -1207,6 +1214,7 @@ app.delete(
 app.delete(
   "/api/cohorts/:cohortId/groups/:groupId/members/:userId",
   authenticate,
+  requireRole("admin", "sub_admin"),
   keepPath,
   createProxyMiddleware({
     target: USER_SERVICE_URL,
@@ -1500,6 +1508,12 @@ app.patch(
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
 app.get(
+  "/api/lms/exams/eligibility",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
   "/api/lms/exams/admin/sessions",
   authenticate,
   requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
@@ -1578,6 +1592,13 @@ app.post(
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
+app.delete(
+  "/api/lms/week12/admin/checkin",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
 app.get(
   "/api/lms/week12/checkins/:cohortId",
   authenticate,
@@ -1603,6 +1624,7 @@ app.get(
 app.post(
   "/api/lms/practical/checkins",
   authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer", "coordinator"),
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );

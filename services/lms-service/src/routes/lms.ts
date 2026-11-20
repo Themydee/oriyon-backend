@@ -45,13 +45,24 @@ export const appealsRouter = Router();
 export const readingsRouter = Router();
 // ─────────────────────────────────────────────
 // HELPER — fetch user from user-service
-// Gets email + firstName + lastName for notifications / verification
+// Gets user data including cohort memberships for notifications and verification
 // ─────────────────────────────────────────────
-export async function fetchUser(userId: string): Promise<{ id?: string; email: string; firstName: string; lastName?: string } | null> {
+export interface UserRecord {
+  id?: string;
+  email: string;
+  firstName: string;
+  lastName?: string;
+  role?: string;
+  cohortId?: string;
+  cohortMembers?: Array<{ cohortId: string; [key: string]: any }>;
+  [key: string]: any;
+}
+
+export async function fetchUser(userId: string): Promise<UserRecord | null> {
   try {
     const res = await fetch(`${process.env.USER_SERVICE_URL}/users/${userId}`);
     if (!res.ok) return null;
-    const user = await res.json() as { id?: string; email: string; firstName: string; lastName?: string };
+    const user = (await res.json()) as UserRecord;
     return user;
   } catch {
     console.warn(`[lms-service] Could not fetch user ${userId} from user-service`);
@@ -128,25 +139,113 @@ export async function isWeek12AttendanceComplete(userId: string, cohortId?: stri
 }
 
 
+export interface AttendanceCheckResult {
+  isComplete: boolean;
+  attendedWeeks: number[];
+  missingWeeks: number[];
+  week12Complete: boolean;
+}
+
+export async function checkWeeks1To12Attendance(
+  userId: string,
+  cohortId?: string
+): Promise<AttendanceCheckResult> {
+  const isUuid = (str: any) =>
+    typeof str === "string" &&
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+
+  if (!isUuid(userId)) {
+    return {
+      isComplete: false,
+      attendedWeeks: [],
+      missingWeeks: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+      week12Complete: false,
+    };
+  }
+
+  try {
+    // 1. Fetch practical checkins for this user across weeks 1 to 12
+    const pCheckins = await db
+      .select({ weekNumber: practicalCheckins.weekNumber })
+      .from(practicalCheckins)
+      .where(eq(practicalCheckins.userId, userId));
+
+    const attendedSet = new Set<number>();
+    for (const c of pCheckins) {
+      const w = Number(c.weekNumber);
+      if (Number.isInteger(w) && w >= 1 && w <= 12) {
+        attendedSet.add(w);
+      }
+    }
+
+    // 2. Check Week 12 attendance specifically (5-day on-site checkins, practical checkin, or approved appeal)
+    const week12Done = attendedSet.has(12) || (await isWeek12AttendanceComplete(userId, cohortId));
+    if (week12Done) {
+      attendedSet.add(12);
+    }
+
+    const attendedWeeks = Array.from(attendedSet).sort((a, b) => a - b);
+    const missingWeeks: number[] = [];
+    for (let w = 1; w <= 12; w++) {
+      if (!attendedSet.has(w)) {
+        missingWeeks.push(w);
+      }
+    }
+
+    return {
+      isComplete: missingWeeks.length === 0,
+      attendedWeeks,
+      missingWeeks,
+      week12Complete: week12Done,
+    };
+  } catch (err) {
+    console.error("[lms-service] Error checking checkWeeks1To12Attendance:", err);
+    return {
+      isComplete: false,
+      attendedWeeks: [],
+      missingWeeks: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+      week12Complete: false,
+    };
+  }
+}
+
 // Weekly quizzes a trainee still has to take before they may start an exam.
 // Counts every published, already-unlocked week in the cohort that has a published
 // quiz. A week is satisfied once the user has submitted an attempt on any of its
 // quizzes (set REQUIRE_QUIZ_PASS to demand a pass instead).
 const REQUIRE_QUIZ_PASS = false;
 
-export async function getMissingWeeklyQuizzes(userId: string, cohortId: string) {
+export async function getMissingWeeklyQuizzes(userId: string, cohortId?: string) {
+  const isUuid = (str: any) =>
+    typeof str === "string" &&
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+
+  if (!isUuid(userId)) return [];
+
+  let effectiveCohortId = cohortId;
+  if (!effectiveCohortId || !isUuid(effectiveCohortId)) {
+    try {
+      const user = await fetchUser(userId);
+      effectiveCohortId = user?.cohortMembers?.[0]?.cohortId || user?.cohortId;
+    } catch {}
+  }
+
   const now = new Date();
+  const weekConditions: any[] = [
+    eq(weeks.isPublished, true),
+    or(isNull(weeks.unlockDate), lte(weeks.unlockDate, now)),
+  ];
+
+  if (effectiveCohortId && isUuid(effectiveCohortId)) {
+    weekConditions.push(eq(weeks.cohortId, effectiveCohortId));
+  }
+
   const cohortWeeks = await db
     .select({ id: weeks.id, weekNumber: weeks.weekNumber, title: weeks.title })
     .from(weeks)
-    .where(
-      and(
-        eq(weeks.cohortId, cohortId),
-        eq(weeks.isPublished, true),
-        or(isNull(weeks.unlockDate), lte(weeks.unlockDate, now)),
-      ),
-    )
+    .where(and(...weekConditions))
     .orderBy(weeks.weekNumber);
+
   if (!cohortWeeks.length) return [];
 
   const weekIds = cohortWeeks.map((w) => w.id);
@@ -1194,114 +1293,35 @@ week12Router.get("/codes/:cohortId", async (req: Request, res: Response) => {
   }
 });
 
-// POST /lms/week12/checkin — trainee checks in with code
-week12Router.post("/checkin", async (req: Request, res: Response) => {
-  const schema = z.object({
-    userId: z.string().uuid().optional(),
-    cohortId: z.string().uuid(),
-    code: z.string(),
+// POST /lms/week12/checkin — trainee checks in with code (DISABLED: Admin-only recording)
+week12Router.post("/checkin", async (_req: Request, res: Response) => {
+  return res.status(403).json({
+    error: "Trainee self-check-in is disabled for Week 12. Physical attendance must be recorded directly by an authorized administrator or trainer.",
   });
-
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-
-  const headerUserId = req.headers["x-user-id"] as string | undefined;
-  const effectiveUserId = headerUserId || parsed.data.userId;
-
-  if (!effectiveUserId) {
-    return res.status(400).json({ error: "User ID is required" });
-  }
-
-  const { cohortId, code } = parsed.data;
-  const normalizedCode = code.trim().toUpperCase().replace(/\s+/g, "-");
-
-  try {
-    // Find the code (exact match or normalized)
-    const [codeRecord] = await db
-      .select()
-      .from(week12Codes)
-      .where(
-        or(
-          eq(week12Codes.code, code),
-          eq(week12Codes.code, normalizedCode)
-        )
-      )
-      .limit(1);
-
-    if (!codeRecord) {
-      return res.status(400).json({ error: "Invalid code. Please check and try again." });
-    }
-
-    // Check code belongs to this cohort
-    if (codeRecord.cohortId !== cohortId) {
-      return res.status(400).json({ error: "This code is not for your cohort." });
-    }
-
-    // Check code validity with timezone tolerance (WAT = UTC+1 vs UTC)
-    const now = new Date();
-    const watDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Lagos" }).format(now);
-    const utcDateStr = now.toISOString().split("T")[0];
-    const isValidDate = codeRecord.validDate === watDateStr || codeRecord.validDate === utcDateStr;
-    const ageHours = codeRecord.createdAt
-      ? (now.getTime() - new Date(codeRecord.createdAt).getTime()) / (1000 * 60 * 60)
-      : 0;
-
-    if (!isValidDate && ageHours > 28) {
-      return res.status(400).json({ error: "This code has expired or is not valid today." });
-    }
-
-    // Check if already checked in for this day (Idempotency)
-    const [existing] = await db
-      .select()
-      .from(week12Checkins)
-      .where(
-        and(
-          eq(week12Checkins.userId, effectiveUserId),
-          eq(week12Checkins.day, codeRecord.day)
-        )
-      )
-      .limit(1);
-
-    if (existing) {
-      return res.status(200).json({
-        message: `✅ You are already checked in for Day ${codeRecord.day}!`,
-        checkin: existing,
-        alreadyCheckedIn: true,
-      });
-    }
-
-    const [checkin] = await db
-      .insert(week12Checkins)
-      .values({
-        userId: effectiveUserId,
-        cohortId,
-        codeId: codeRecord.id,
-        day: codeRecord.day,
-      })
-      .returning();
-
-    return res.status(201).json({
-      message: `✅ Checked in for Day ${codeRecord.day}!`,
-      checkin,
-    });
-  } catch (err) {
-    console.error("[week12Router.post /checkin] error:", err);
-    return res.status(500).json({ error: "Failed to check in" });
-  }
 });
 
 // POST /lms/week12/admin/checkin — admin manually records attendance for a day
 week12Router.post("/admin/checkin", async (req: Request, res: Response) => {
+  const callerRole = req.headers["x-user-role"] as string | undefined;
+  if (callerRole === "trainee") {
+    return res.status(403).json({ error: "Forbidden: Trainees cannot mark attendance. Attendance must be recorded by an administrator or trainer." });
+  }
+
   const schema = z.object({
     cohortId: z.string().uuid(),
     userId: z.string().uuid(),
     day: z.number().int().min(1).max(5),
+    groupId: z.string().optional(),
+    verifiedBy: z.string().uuid().optional(),
   });
 
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { cohortId, userId, day } = parsed.data;
+  const { cohortId, userId, day, groupId, verifiedBy } = parsed.data;
+  const headerUserId = req.headers["x-user-id"] as string | undefined;
+  const isUuid = (str: any) => typeof str === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+  const effectiveVerifiedBy = isUuid(verifiedBy) ? verifiedBy : (isUuid(headerUserId) ? headerUserId : null);
 
   try {
     const [existing] = await db
@@ -1309,6 +1329,7 @@ week12Router.post("/admin/checkin", async (req: Request, res: Response) => {
       .from(week12Checkins)
       .where(
         and(
+          eq(week12Checkins.cohortId, cohortId),
           eq(week12Checkins.userId, userId),
           eq(week12Checkins.day, day)
         )
@@ -1316,9 +1337,10 @@ week12Router.post("/admin/checkin", async (req: Request, res: Response) => {
       .limit(1);
 
     if (existing) {
-      return res.json({
+      return res.status(200).json({
         message: `User is already checked in for Day ${day}`,
         checkin: existing,
+        alreadyCheckedIn: true,
       });
     }
 
@@ -1334,7 +1356,9 @@ week12Router.post("/admin/checkin", async (req: Request, res: Response) => {
         cohortId,
         userId,
         day,
+        groupId: groupId || null,
         codeId: codeRecord ? codeRecord.id : null,
+        verifiedBy: effectiveVerifiedBy,
       })
       .returning();
 
@@ -1345,6 +1369,43 @@ week12Router.post("/admin/checkin", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("[week12Router.post /admin/checkin] error:", err);
     return res.status(500).json({ error: "Failed to manually check in trainee" });
+  }
+});
+
+// DELETE /lms/week12/admin/checkin — admin removes a checkin for a day (if marked by mistake)
+week12Router.delete("/admin/checkin", async (req: Request, res: Response) => {
+  const callerRole = req.headers["x-user-role"] as string | undefined;
+  if (callerRole === "trainee") {
+    return res.status(403).json({ error: "Forbidden: Trainees cannot remove attendance." });
+  }
+
+  const schema = z.object({
+    cohortId: z.string().uuid(),
+    userId: z.string().uuid(),
+    day: z.number().int().min(1).max(5),
+  });
+
+  const bodyData = req.body && Object.keys(req.body).length > 0 ? req.body : req.query;
+  const parsed = schema.safeParse(bodyData);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const { cohortId, userId, day } = parsed.data;
+
+  try {
+    await db
+      .delete(week12Checkins)
+      .where(
+        and(
+          eq(week12Checkins.cohortId, cohortId),
+          eq(week12Checkins.userId, userId),
+          eq(week12Checkins.day, day)
+        )
+      );
+
+    return res.json({ message: `Check-in removed for Day ${day}` });
+  } catch (err) {
+    console.error("[week12Router.delete /admin/checkin] error:", err);
+    return res.status(500).json({ error: "Failed to remove check-in" });
   }
 });
 
@@ -1418,6 +1479,11 @@ practicalRouter.get("/checkins/:cohortId", async (req: Request, res: Response) =
 
 // POST /lms/practical/checkins
 practicalRouter.post("/checkins", async (req: Request, res: Response) => {
+  const callerRole = req.headers["x-user-role"] as string | undefined;
+  if (callerRole === "trainee") {
+    return res.status(403).json({ error: "Forbidden: Trainees cannot mark attendance. Attendance must be recorded by an administrator or trainer." });
+  }
+
   const { cohortId, userId, groupId, weekNumber, codeSubmitted, verifiedBy } = req.body;
   if (!cohortId || !userId || !weekNumber) {
     return res.status(400).json({ error: "Missing required checkin fields" });
@@ -2319,21 +2385,62 @@ examsRouter.get("/admin/sessions", async (req: Request, res: Response) => {
   }
 });
 
+// GET /lms/exams/eligibility
+// Trainee portal eligibility check across Weeks 1–12 physical attendance and weekly quizzes
+examsRouter.get("/eligibility", async (req: Request, res: Response) => {
+  const headerUserId = req.headers["x-user-id"] as string | undefined;
+  const queryUserId = req.query.userId as string | undefined;
+  const userId = headerUserId || queryUserId;
+  if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+  try {
+    let cohortId = req.query.cohortId as string | undefined;
+    if (!cohortId) {
+      const user = await fetchUser(userId);
+      cohortId = user?.cohortMembers?.[0]?.cohortId || user?.cohortId;
+    }
+
+    const attendanceCheck = await checkWeeks1To12Attendance(userId, cohortId);
+    const missingQuizzes = await getMissingWeeklyQuizzes(userId, cohortId);
+    const ready = attendanceCheck.isComplete && missingQuizzes.length === 0;
+
+    return res.json({
+      ready,
+      attendanceComplete: attendanceCheck.isComplete,
+      missingAttendanceWeeks: attendanceCheck.missingWeeks,
+      attendedWeeks: attendanceCheck.attendedWeeks,
+      week12AttendanceComplete: attendanceCheck.week12Complete,
+      quizzesComplete: missingQuizzes.length === 0,
+      missingQuizzes,
+      cohortId: cohortId || null,
+    });
+  } catch (err) {
+    console.error("[examsRouter GET /eligibility] error:", err);
+    return res.status(500).json({ error: "Failed to check portal eligibility" });
+  }
+});
+
 // GET /lms/exams/:id/quiz-requirements
-// Weekly quizzes and Week 12 physical attendance required before starting this exam.
+// Weekly quizzes (Weeks 1–12) and Physical Attendance (Weeks 1–12) required before starting this exam.
 examsRouter.get("/:id/quiz-requirements", async (req: Request, res: Response) => {
   const userId = req.headers["x-user-id"] as string | undefined;
   if (!userId) return res.status(401).json({ error: "Unauthorized" });
   try {
     const [exam] = await db.select().from(exams).where(eq(exams.id, req.params.id)).limit(1);
     if (!exam) return res.status(404).json({ error: "Exam not found" });
+
+    const attendanceCheck = await checkWeeks1To12Attendance(userId, exam.cohortId);
     const missingQuizzes = await getMissingWeeklyQuizzes(userId, exam.cohortId);
-    const week12AttendanceComplete = await isWeek12AttendanceComplete(userId, exam.cohortId);
-    const ready = missingQuizzes.length === 0 && week12AttendanceComplete;
+    const ready = attendanceCheck.isComplete && missingQuizzes.length === 0;
+
     return res.json({
       ready,
+      attendanceComplete: attendanceCheck.isComplete,
+      missingAttendanceWeeks: attendanceCheck.missingWeeks,
+      attendedWeeks: attendanceCheck.attendedWeeks,
+      week12AttendanceComplete: attendanceCheck.week12Complete,
+      quizzesComplete: missingQuizzes.length === 0,
       missingQuizzes,
-      week12AttendanceComplete,
     });
   } catch (err) {
     console.error(err);
@@ -2595,11 +2702,13 @@ examsRouter.post(
       if (!exam)
         return res.status(404).json({ error: "Exam not found or not published" });
 
-      const complete = await isWeek12AttendanceComplete(userId, exam.cohortId);
-      if (!complete) {
+      const attendanceCheck = await checkWeeks1To12Attendance(userId, exam.cohortId);
+      if (!attendanceCheck.isComplete) {
         return res.status(403).json({
-          error: "Week 12 physical practical attendance must be complete before taking this exam.",
-          code: "WEEK12_ATTENDANCE_INCOMPLETE",
+          error: `Physical practical attendance for Weeks 1–12 must be complete before taking this exam. Missing attendance for Week(s): ${attendanceCheck.missingWeeks.join(", ")}.`,
+          code: "ATTENDANCE_INCOMPLETE",
+          missingAttendanceWeeks: attendanceCheck.missingWeeks,
+          attendedWeeks: attendanceCheck.attendedWeeks,
         });
       }
  
@@ -2667,12 +2776,12 @@ examsRouter.post(
         });
       }
  
-      // Every unlocked weekly quiz must be taken before a new exam session starts
+      // Every unlocked weekly quiz (Weeks 1–12) must be taken before a new exam session starts
       const missingQuizzes = await getMissingWeeklyQuizzes(userId, exam.cohortId);
       if (missingQuizzes.length > 0) {
         const list = missingQuizzes.map((q) => `Week ${q.weekNumber}: ${q.quizTitle}`).join(", ");
         return res.status(403).json({
-          error: `You must take every weekly quiz before this exam. Missing: ${list}.`,
+          error: `All weekly quizzes (Weeks 1–12) must be completed before taking this exam. Missing: ${list}.`,
           code: "QUIZZES_INCOMPLETE",
           missingQuizzes,
         });

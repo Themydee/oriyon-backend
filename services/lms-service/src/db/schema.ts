@@ -9,6 +9,7 @@ import {
   pgEnum,
   jsonb,
   date,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -83,7 +84,9 @@ export const progress = pgTable("progress", {
   completed: boolean("completed").notNull().default(false),
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  userLessonUnique: uniqueIndex("idx_progress_user_lesson").on(table.userId, table.lessonId),
+}));
 
 // ─── Quizzes ──────────────────────────────────────────────────────────────────
 
@@ -140,11 +143,15 @@ export const week12Checkins = pgTable("week12_checkins", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull(),
   cohortId: uuid("cohort_id").notNull(),
+  groupId: varchar("group_id", { length: 128 }),
   codeId: uuid("code_id")
     .references(() => week12Codes.id, { onDelete: "cascade" }),
   day: integer("day").notNull(), // 1–5
+  verifiedBy: uuid("verified_by"),
   checkedInAt: timestamp("checked_in_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  cohortUserDayUnique: uniqueIndex("idx_week12_checkins_cohort_user_day").on(table.cohortId, table.userId, table.day),
+}));
 
 // ─── Practical Check-ins ──────────────────────────────────────────────────────
 
