@@ -1344,11 +1344,41 @@ week12Router.post("/admin/checkin", async (req: Request, res: Response) => {
       });
     }
 
+    let codeId: string | null = null;
     const [codeRecord] = await db
       .select({ id: week12Codes.id })
       .from(week12Codes)
       .where(and(eq(week12Codes.cohortId, cohortId), eq(week12Codes.day, day)))
       .limit(1);
+
+    if (codeRecord) {
+      codeId = codeRecord.id;
+    } else {
+      // Auto-provision a system code record for this cohort and day so that foreign-key and NOT NULL constraints are always satisfied
+      try {
+        const dummyCode = `W12-D${day}-${cohortId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4)}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+        const adminId = effectiveVerifiedBy || userId;
+        const [newCode] = await db
+          .insert(week12Codes)
+          .values({
+            cohortId,
+            day,
+            code: dummyCode,
+            validDate: new Date().toISOString().split("T")[0],
+            createdBy: adminId,
+          })
+          .returning({ id: week12Codes.id });
+        if (newCode) codeId = newCode.id;
+      } catch {
+        // Fallback: check if created concurrently
+        const [fallback] = await db
+          .select({ id: week12Codes.id })
+          .from(week12Codes)
+          .where(and(eq(week12Codes.cohortId, cohortId), eq(week12Codes.day, day)))
+          .limit(1);
+        if (fallback) codeId = fallback.id;
+      }
+    }
 
     const [checkin] = await db
       .insert(week12Checkins)
@@ -1357,7 +1387,7 @@ week12Router.post("/admin/checkin", async (req: Request, res: Response) => {
         userId,
         day,
         groupId: groupId || null,
-        codeId: codeRecord ? codeRecord.id : null,
+        codeId: codeId || null,
         verifiedBy: effectiveVerifiedBy,
       })
       .returning();
@@ -1366,9 +1396,9 @@ week12Router.post("/admin/checkin", async (req: Request, res: Response) => {
       message: `✅ Manually checked in for Day ${day}`,
       checkin,
     });
-  } catch (err) {
-    console.error("[week12Router.post /admin/checkin] error:", err);
-    return res.status(500).json({ error: "Failed to manually check in trainee" });
+  } catch (err: any) {
+    console.error("[week12Router.post /admin/checkin] error:", err?.message || err, err);
+    return res.status(500).json({ error: "Failed to manually check in trainee", details: err?.message });
   }
 });
 
