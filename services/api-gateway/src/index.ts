@@ -766,6 +766,16 @@ app.use(
   }),
 );
 
+// Funding Desk — Opportunities & Materials
+app.use(
+  "/api/funding-desk",
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
 
 // ─────────────────────────────────────────────
 // SHOP SERVICE

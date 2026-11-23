@@ -2313,11 +2313,45 @@ async function tryFinalizeScore(sessionId: string) {
     })
     .where(eq(examSessions.id, sessionId));
 }
- 
+
+// ─────────────────────────────────────────────
+// HELPER — Deterministic seeded question shuffle
+// Ensures different trainees receive differently arranged questions,
+// while remaining strictly consistent across reloads for the same user/session.
+// ─────────────────────────────────────────────
+function shuffleSeeded<T>(items: T[], seedStr: string): T[] {
+  const result = [...items];
+  if (result.length <= 1) return result;
+
+  // 32-bit FNV-1a hash of seed string
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < seedStr.length; i++) {
+    h = Math.imul(h ^ seedStr.charCodeAt(i), 16777619) >>> 0;
+  }
+
+  // Mulberry32 PRNG
+  function prng() {
+    let t = (h += 0x6d2b79f5) >>> 0;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  // Fisher-Yates shuffle
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(prng() * (i + 1));
+    const temp = result[i];
+    result[i] = result[j];
+    result[j] = temp;
+  }
+
+  return result;
+}
+
 // ═════════════════════════════════════════════
 // ADMIN — EXAM MANAGEMENT
 // ═════════════════════════════════════════════
- 
+
 // GET /lms/exams?cohortId=&showAll=true
 // showAll=true → include unpublished (admin use)
 examsRouter.get("/", async (req: Request, res: Response) => {
@@ -2329,7 +2363,7 @@ examsRouter.get("/", async (req: Request, res: Response) => {
     if (cohortId) filters.push(eq(exams.cohortId, cohortId as string));
     if (!includeAll) {
       filters.push(eq(exams.isPublished, true));
-      filters.push(eq(exams.isActive, true));
+      filters.push(or(eq(exams.isActive, true), isNull(exams.isActive)));
     }
 
     let query = db.select().from(exams);
@@ -2502,6 +2536,7 @@ examsRouter.post("/", async (req: Request, res: Response) => {
     durationMinutes: z.number().int().positive().default(60),
     createdBy: z.string().uuid(),
     isPublished: z.boolean().optional().default(false),
+    isActive: z.boolean().optional().default(true),
   });
  
   const parsed = schema.safeParse(req.body);
@@ -2511,7 +2546,11 @@ examsRouter.post("/", async (req: Request, res: Response) => {
   try {
     const [exam] = await db
       .insert(exams)
-      .values({ ...parsed.data, totalMarks: 0 })
+      .values({
+        ...parsed.data,
+        isActive: parsed.data.isActive ?? true,
+        totalMarks: 0,
+      })
       .returning();
     return res.status(201).json(exam);
   } catch {
@@ -2534,9 +2573,13 @@ examsRouter.patch("/:id", async (req: Request, res: Response) => {
     return res.status(400).json({ error: parsed.error.flatten() });
  
   try {
+    const updateData: any = { ...parsed.data, updatedAt: new Date() };
+    if (parsed.data.isPublished === true && parsed.data.isActive === undefined) {
+      updateData.isActive = true;
+    }
     const [updated] = await db
       .update(exams)
-      .set({ ...parsed.data, updatedAt: new Date() })
+      .set(updateData)
       .where(eq(exams.id, req.params.id))
       .returning();
     if (!updated) return res.status(404).json({ error: "Exam not found" });
@@ -2568,6 +2611,16 @@ examsRouter.get("/:id/questions", async (req: Request, res: Response) => {
       ? questions
       : questions.map(({ correctOptionIndex: _stripped, ...q }) => q);
  
+    // Preserve orderIndex for admins/staff; shuffle deterministically per-trainee for examinees
+    if (!isStaff) {
+      const headerUserId = req.headers["x-user-id"] as string | undefined;
+      const queryUserId = req.query.userId as string | undefined;
+      const traineeId = headerUserId || queryUserId;
+      if (traineeId) {
+        return res.json(shuffleSeeded(sanitized, `${traineeId}-${req.params.id}`));
+      }
+    }
+
     return res.json(sanitized);
   } catch {
     return res.status(500).json({ error: "Failed to fetch questions" });
@@ -2789,10 +2842,14 @@ examsRouter.post(
           const sanitizedQuestions = questions.map(
             ({ correctOptionIndex: _stripped, ...q }) => q
           );
- 
+          const shuffledQuestions = shuffleSeeded(
+            sanitizedQuestions,
+            `${existing.id}-${existing.userId}`
+          );
+
           return res.json({
             session: existing,
-            questions: sanitizedQuestions,
+            questions: shuffledQuestions,
             savedAnswers: answers,
             resumed: true,
           });
@@ -2855,10 +2912,14 @@ examsRouter.post(
       const sanitizedQuestions = questions.map(
         ({ correctOptionIndex: _stripped, ...q }) => q
       );
- 
+      const shuffledQuestions = shuffleSeeded(
+        sanitizedQuestions,
+        `${session.id}-${session.userId}`
+      );
+
       return res.status(201).json({
         session,
-        questions: sanitizedQuestions,
+        questions: shuffledQuestions,
         savedAnswers: [],
         resumed: false,
       });

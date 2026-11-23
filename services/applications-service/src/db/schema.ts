@@ -516,5 +516,100 @@ export const eventRegistrations = pgTable(
   })
 );
 
+// ─────────────────────────────────────────────
+// ORIYON FUNDING DESK DATABASE SCHEMAS
+// PostgreSQL Persistence for Opportunities & Materials
+// ─────────────────────────────────────────────
+
+export const fundingOpportunities = pgTable(
+  "funding_opportunities",
+  {
+    id: varchar("id", { length: 120 }).primaryKey(),
+    slug: varchar("slug", { length: 255 }).notNull().unique(),
+    title: varchar("title", { length: 255 }).notNull(),
+    summary: text("summary").notNull(),
+    fullDescription: text("full_description"),
+    issuer: jsonb("issuer").notNull(), // { id, name, website, country, issuerType, isVerified }
+    category: varchar("category", { length: 100 }).notNull(),
+    geography: varchar("geography", { length: 150 }),
+    eligibleCountries: jsonb("eligible_countries"),
+    targetBeneficiaries: jsonb("target_beneficiaries"),
+    currency: varchar("currency", { length: 10 }).default("USD"),
+    fundingMin: integer("funding_min"),
+    fundingMax: integer("funding_max"),
+    fundingAmountDisclosed: boolean("funding_amount_disclosed").default(true),
+    fundingAmountNotes: text("funding_amount_notes"),
+    fundingType: varchar("funding_type", { length: 100 }),
+    eligibilityCriteria: jsonb("eligibility_criteria"),
+    applicationRequirements: jsonb("application_requirements"),
+    practicalNextSteps: jsonb("practical_next_steps"),
+    openingDate: varchar("opening_date", { length: 50 }),
+    closingDate: varchar("closing_date", { length: 50 }),
+    hasUnknownDeadline: boolean("has_unknown_deadline").default(false),
+    isRollingDeadline: boolean("is_rolling_deadline").default(false),
+    officialApplicationUrl: text("official_application_url").notNull(),
+    sourceUrl: text("source_url"),
+    status: varchar("status", { length: 50 }).notNull().default("draft"),
+    verifiedBy: varchar("verified_by", { length: 150 }),
+    verifiedAt: timestamp("verified_at"),
+    verificationNotes: text("verification_notes"),
+    reVerificationDueDate: varchar("re_verification_due_date", { length: 50 }),
+    createdBy: varchar("created_by", { length: 255 }),
+    updatedBy: varchar("updated_by", { length: 255 }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    fundingStatusIdx: uniqueIndex("idx_funding_opp_status_slug").on(table.status, table.slug),
+  })
+);
+
+export const fundingMaterials = pgTable(
+  "funding_materials",
+  {
+    id: varchar("id", { length: 120 }).primaryKey(),
+    slug: varchar("slug", { length: 255 }).notNull().unique(),
+    title: varchar("title", { length: 255 }).notNull(),
+    description: text("description").notNull(),
+    category: varchar("category", { length: 100 }).notNull(),
+    fileType: varchar("file_type", { length: 50 }).notNull(),
+    fileSize: varchar("file_size", { length: 50 }),
+    downloadUrl: text("download_url").notNull(),
+    targetAudience: varchar("target_audience", { length: 255 }),
+    tags: jsonb("tags"),
+    isFeatured: boolean("is_featured").default(false),
+    status: varchar("status", { length: 50 }).notNull().default("published"),
+    downloadCount: integer("download_count").default(0),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  }
+);
+
+export const fundingSubscribers = pgTable(
+  "funding_subscribers",
+  {
+    id: varchar("id", { length: 120 }).primaryKey(),
+    email: varchar("email", { length: 255 }).notNull().unique(),
+    fullName: varchar("full_name", { length: 255 }),
+    source: varchar("source", { length: 100 }).default("Funding Desk Library"),
+    consentedAt: timestamp("consented_at").notNull().defaultNow(),
+  }
+);
+
+export const fundingAuditLogs = pgTable(
+  "funding_audit_logs",
+  {
+    id: varchar("id", { length: 120 }).primaryKey(),
+    opportunityId: varchar("opportunity_id", { length: 120 }),
+    actorEmail: varchar("actor_email", { length: 255 }).notNull(),
+    action: varchar("action", { length: 50 }).notNull(),
+    previousStatus: varchar("previous_status", { length: 50 }),
+    newStatus: varchar("new_status", { length: 50 }),
+    notes: text("notes"),
+    timestamp: timestamp("timestamp").notNull().defaultNow(),
+  }
+);
+
+
 
 

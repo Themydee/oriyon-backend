@@ -23,6 +23,7 @@ import complaintsRouter from "./routes/complaints";
 import workshopsRouter from "./routes/workshops";
 import eventsRouter from "./routes/events";
 import paymentsRouter, { reconcilePendingPayments } from "./routes/payments";
+import fundingDeskRouter from "./routes/fundingDesk";
 const app = express();
 const PORT = process.env.PORT || 3004;
 
@@ -54,6 +55,8 @@ app.use("/api/events", eventsRouter);
 app.use("/events", eventsRouter);
 app.use("/api/payments", paymentsRouter);
 app.use("/payments", paymentsRouter);
+app.use("/api/funding-desk", fundingDeskRouter);
+app.use("/funding-desk", fundingDeskRouter);
 
 export async function ensureDbColumnsExist() {
   const client = postgres(process.env.DATABASE_URL!);
@@ -431,6 +434,87 @@ export async function ensureDbColumnsExist() {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_event_registrations_slug_email ON event_registrations (event_slug, email);
       CREATE INDEX IF NOT EXISTS idx_event_registrations_slug ON event_registrations (event_slug);
       CREATE INDEX IF NOT EXISTS idx_event_registrations_created_at ON event_registrations (created_at DESC);
+
+      -- ORIYON FUNDING DESK TABLES
+      CREATE TABLE IF NOT EXISTS funding_opportunities (
+        id VARCHAR(120) PRIMARY KEY,
+        slug VARCHAR(255) NOT NULL UNIQUE,
+        title VARCHAR(255) NOT NULL,
+        summary TEXT NOT NULL,
+        full_description TEXT,
+        issuer JSONB NOT NULL,
+        category VARCHAR(100) NOT NULL,
+        geography VARCHAR(150),
+        eligible_countries JSONB,
+        target_beneficiaries JSONB,
+        currency VARCHAR(10) DEFAULT 'USD',
+        funding_min INTEGER,
+        funding_max INTEGER,
+        funding_amount_disclosed BOOLEAN DEFAULT true,
+        funding_amount_notes TEXT,
+        funding_type VARCHAR(100),
+        eligibility_criteria JSONB,
+        application_requirements JSONB,
+        practical_next_steps JSONB,
+        opening_date VARCHAR(50),
+        closing_date VARCHAR(50),
+        has_unknown_deadline BOOLEAN DEFAULT false,
+        is_rolling_deadline BOOLEAN DEFAULT false,
+        official_application_url TEXT NOT NULL,
+        source_url TEXT,
+        status VARCHAR(50) NOT NULL DEFAULT 'draft',
+        verified_by VARCHAR(150),
+        verified_at TIMESTAMP,
+        verification_notes TEXT,
+        re_verification_due_date VARCHAR(50),
+        created_by VARCHAR(255),
+        updated_by VARCHAR(255),
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_funding_opportunities_status ON funding_opportunities(status);
+      CREATE INDEX IF NOT EXISTS idx_funding_opportunities_category ON funding_opportunities(category);
+
+      CREATE TABLE IF NOT EXISTS funding_materials (
+        id VARCHAR(120) PRIMARY KEY,
+        slug VARCHAR(255) NOT NULL UNIQUE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT NOT NULL,
+        category VARCHAR(100) NOT NULL,
+        file_type VARCHAR(50) NOT NULL,
+        file_size VARCHAR(50),
+        download_url TEXT NOT NULL,
+        target_audience VARCHAR(255),
+        tags JSONB,
+        is_featured BOOLEAN DEFAULT false,
+        status VARCHAR(50) NOT NULL DEFAULT 'published',
+        download_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_funding_materials_status ON funding_materials(status);
+      CREATE INDEX IF NOT EXISTS idx_funding_materials_category ON funding_materials(category);
+
+      CREATE TABLE IF NOT EXISTS funding_subscribers (
+        id VARCHAR(120) PRIMARY KEY,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        full_name VARCHAR(255),
+        source VARCHAR(100) DEFAULT 'Funding Desk Library',
+        consented_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS funding_audit_logs (
+        id VARCHAR(120) PRIMARY KEY,
+        opportunity_id VARCHAR(120),
+        actor_email VARCHAR(255) NOT NULL,
+        action VARCHAR(50) NOT NULL,
+        previous_status VARCHAR(50),
+        new_status VARCHAR(50),
+        notes TEXT,
+        timestamp TIMESTAMP NOT NULL DEFAULT now()
+      );
 
 
     `);
