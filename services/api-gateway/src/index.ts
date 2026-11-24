@@ -1337,6 +1337,12 @@ app.get(
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
 app.get(
+  "/api/lms/progress/user/:userId/summary",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
   "/api/lms/progress/:userId",
   authenticate,
   keepPath,
@@ -1525,6 +1531,27 @@ app.get(
 );
 app.get(
   "/api/lms/exams/admin/sessions",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.delete(
+  "/api/lms/exams/admin/sessions/:sessionId",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.delete(
+  "/api/lms/exams/admin/user/:userId/exam/:examId",
+  authenticate,
+  requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
+  "/api/lms/exams/admin/user/:userId/sessions",
   authenticate,
   requireRole("admin", "sub_admin", "trainer", "lead_trainer"),
   keepPath,

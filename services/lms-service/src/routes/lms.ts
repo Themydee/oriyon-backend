@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { eq, and, isNull, sql, desc, inArray, lte, or, type InferModel } from "drizzle-orm";
+import { eq, and, isNull, sql, desc, inArray, lte, gte, or, type InferModel } from "drizzle-orm";
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 import { db } from "../index";
@@ -103,6 +103,40 @@ export async function isWeek12AttendanceComplete(userId: string, cohortId?: stri
 
     if (practicalCheckin) return true;
 
+    // Check practicalCodes or generated code for Week 12
+    const w12Codes = await db
+      .select({ code: practicalCodes.code })
+      .from(practicalCodes)
+      .where(
+        and(
+          eq(practicalCodes.userId, userId),
+          eq(practicalCodes.weekNumber, 12)
+        )
+      );
+    const w12CodeList = w12Codes.map((c) => c.code).filter(Boolean);
+    let uEmail = "";
+    try {
+      const u = await fetchUser(userId);
+      if (u?.email) uEmail = u.email;
+    } catch {}
+    w12CodeList.push(generatePracticalCodeString(userId, 12, uEmail));
+    if (uEmail) {
+      w12CodeList.push(generatePracticalCodeString(userId, 12, ""));
+    }
+    if (w12CodeList.length > 0) {
+      const [matchedW12Checkin] = await db
+        .select({ id: practicalCheckins.id })
+        .from(practicalCheckins)
+        .where(
+          and(
+            eq(practicalCheckins.weekNumber, 12),
+            inArray(practicalCheckins.codeSubmitted, w12CodeList)
+          )
+        )
+        .limit(1);
+      if (matchedW12Checkin) return true;
+    }
+
     // 3. Check for 5 days of daily codes check-ins (Days 1 to 5)
     const checkinConditions = [eq(week12Checkins.userId, userId)];
     if (cohortId) {
@@ -178,6 +212,57 @@ export async function checkWeeks1To12Attendance(
       }
     }
 
+    // Also check if any checkins match user's known practical codes or generated codes
+    const userCodes = await db
+      .select({ code: practicalCodes.code, weekNumber: practicalCodes.weekNumber })
+      .from(practicalCodes)
+      .where(eq(practicalCodes.userId, userId));
+
+    if (userCodes.length > 0) {
+      const codeStrings = userCodes.map((u) => u.code).filter(Boolean);
+      if (codeStrings.length > 0) {
+        const matchingCheckins = await db
+          .select({ weekNumber: practicalCheckins.weekNumber })
+          .from(practicalCheckins)
+          .where(inArray(practicalCheckins.codeSubmitted, codeStrings));
+        for (const c of matchingCheckins) {
+          const w = Number(c.weekNumber);
+          if (Number.isInteger(w) && w >= 1 && w <= 12) {
+            attendedSet.add(w);
+          }
+        }
+      }
+    }
+
+    // Also check user's email if available to cross-match generated codes
+    let userEmail = "";
+    try {
+      const u = await fetchUser(userId);
+      if (u?.email) userEmail = u.email;
+    } catch {}
+
+    const potentialCodes: string[] = [];
+    for (let w = 1; w <= 12; w++) {
+      if (!attendedSet.has(w)) {
+        potentialCodes.push(generatePracticalCodeString(userId, w, userEmail));
+        if (userEmail) {
+          potentialCodes.push(generatePracticalCodeString(userId, w, ""));
+        }
+      }
+    }
+    if (potentialCodes.length > 0) {
+      const matchedByGenCode = await db
+        .select({ weekNumber: practicalCheckins.weekNumber })
+        .from(practicalCheckins)
+        .where(inArray(practicalCheckins.codeSubmitted, potentialCodes));
+      for (const c of matchedByGenCode) {
+        const w = Number(c.weekNumber);
+        if (Number.isInteger(w) && w >= 1 && w <= 12) {
+          attendedSet.add(w);
+        }
+      }
+    }
+
     // 2. Check Week 12 attendance specifically (5-day on-site checkins, practical checkin, or approved appeal)
     const week12Done = attendedSet.has(12) || (await isWeek12AttendanceComplete(userId, cohortId));
     if (week12Done) {
@@ -223,12 +308,13 @@ export async function getMissingWeeklyQuizzes(userId: string, cohortId?: string)
   if (!isUuid(userId)) return [];
 
   let effectiveCohortId = cohortId;
-  if (!effectiveCohortId || !isUuid(effectiveCohortId)) {
-    try {
-      const user = await fetchUser(userId);
-      effectiveCohortId = user?.cohortMembers?.[0]?.cohortId || user?.cohortId;
-    } catch {}
-  }
+  try {
+    const user = await fetchUser(userId);
+    const userCohortId = user?.cohortMembers?.[0]?.cohortId || user?.cohortId;
+    if (userCohortId && isUuid(userCohortId)) {
+      effectiveCohortId = userCohortId;
+    }
+  } catch {}
 
   const now = new Date();
   const weekConditions: any[] = [
@@ -254,13 +340,39 @@ export async function getMissingWeeklyQuizzes(userId: string, cohortId?: string)
     .from(quizzes)
     .where(inArray(quizzes.weekId, weekIds))
     .orderBy(desc(quizzes.createdAt));
+
+  // For cohort weeks with no direct quiz, look for sibling published quiz by weekNumber
+  const foundWeekIds = new Set(weekQuizzes.map((q) => q.weekId));
+  for (const cw of cohortWeeks) {
+    if (!foundWeekIds.has(cw.id)) {
+      const [siblingQuiz] = await db
+        .select({ id: quizzes.id, weekId: quizzes.weekId, title: quizzes.title, isPublished: quizzes.isPublished, createdAt: quizzes.createdAt })
+        .from(quizzes)
+        .innerJoin(weeks, eq(quizzes.weekId, weeks.id))
+        .where(
+          and(
+            eq(weeks.weekNumber, cw.weekNumber),
+            eq(quizzes.isPublished, true)
+          )
+        )
+        .orderBy(desc(quizzes.createdAt))
+        .limit(1);
+      if (siblingQuiz) {
+        weekQuizzes.push({ ...siblingQuiz, weekId: cw.id });
+      }
+    }
+  }
+
   if (!weekQuizzes.length) return [];
 
-  const attempts = await db
-    .select({ quizId: quizAttempts.quizId, passed: quizAttempts.passed })
-    .from(quizAttempts)
-    .where(and(eq(quizAttempts.userId, userId), inArray(quizAttempts.quizId, weekQuizzes.map((q) => q.id))));
-  const doneQuizIds = new Set(attempts.filter((a) => !REQUIRE_QUIZ_PASS || a.passed).map((a) => a.quizId));
+  const allQuizIds = weekQuizzes.map((q) => q.id);
+  const attempts = allQuizIds.length > 0
+    ? await db
+        .select({ quizId: quizAttempts.quizId, passed: quizAttempts.passed, score: quizAttempts.score })
+        .from(quizAttempts)
+        .where(and(eq(quizAttempts.userId, userId), inArray(quizAttempts.quizId, allQuizIds)))
+    : [];
+  const doneQuizIds = new Set(attempts.filter((a) => !REQUIRE_QUIZ_PASS || a.passed || (typeof a.score === "number" && a.score >= 70)).map((a) => a.quizId));
 
   const weekLessons = await db
     .select({ id: lessons.id, weekId: lessons.weekId })
@@ -662,6 +774,83 @@ progressRouter.post("/", async (req: Request, res: Response) => {
   }
 });
 
+// GET /lms/progress/user/:userId/summary — Authoritative user learning & attendance summary
+progressRouter.get("/user/:userId/summary", async (req: Request, res: Response) => {
+  try {
+    const userId = req.params.userId;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+    if (!isUuid) {
+      return res.status(400).json({ error: "Invalid user ID format" });
+    }
+
+    let cohortId = req.query.cohortId as string | undefined;
+    if (!cohortId) {
+      try {
+        const user = await fetchUser(userId);
+        cohortId = user?.cohortMembers?.[0]?.cohortId || user?.cohortId;
+      } catch {}
+    }
+
+    const attendanceCheck = await checkWeeks1To12Attendance(userId, cohortId);
+    const week12Done = attendanceCheck.week12Complete || (await isWeek12AttendanceComplete(userId, cohortId));
+
+    const userProgress = await db
+      .select()
+      .from(progress)
+      .where(eq(progress.userId, userId));
+
+    const completedLessonIds = userProgress
+      .filter((p) => p.completed)
+      .map((p) => p.lessonId);
+
+    const passedAttempts = await db
+      .select({
+        quizId: quizAttempts.quizId,
+        weekId: quizAttempts.weekId,
+      })
+      .from(quizAttempts)
+      .where(
+        and(
+          eq(quizAttempts.userId, userId),
+          or(eq(quizAttempts.passed, true), gte(quizAttempts.score, 70))
+        )
+      );
+
+    const passedWeekIdSet = new Set(passedAttempts.map((a) => a.weekId));
+    if (passedWeekIdSet.size > 0) {
+      const passedWeeksList = await db
+        .select({ id: weeks.id, weekNumber: weeks.weekNumber })
+        .from(weeks)
+        .where(inArray(weeks.id, Array.from(passedWeekIdSet)));
+      const passedNumbers = passedWeeksList.map((w) => w.weekNumber).filter((n): n is number => typeof n === "number");
+      if (passedNumbers.length > 0) {
+        const siblingWeeks = await db
+          .select({ id: weeks.id })
+          .from(weeks)
+          .where(inArray(weeks.weekNumber, passedNumbers));
+        for (const sw of siblingWeeks) {
+          passedWeekIdSet.add(sw.id);
+        }
+      }
+    }
+
+    return res.json({
+      userId,
+      cohortId: cohortId || null,
+      practicalWeeks: attendanceCheck.attendedWeeks,
+      missingPracticalWeeks: attendanceCheck.missingWeeks,
+      attendanceComplete: attendanceCheck.isComplete,
+      week12AttendanceComplete: week12Done,
+      completedLessonIds,
+      passedWeekIds: Array.from(passedWeekIdSet),
+      passedQuizIds: Array.from(new Set(passedAttempts.map((a) => a.quizId))),
+    });
+  } catch (err) {
+    console.error("[lms] GET /progress/user/:userId/summary error:", err);
+    return res.status(500).json({ error: "Failed to fetch user progress summary" });
+  }
+});
+
 // GET /lms/progress/:userId
 progressRouter.get("/:userId", async (req: Request, res: Response) => {
   try {
@@ -858,11 +1047,33 @@ quizzesRouter.get("/week/:weekId", async (req: Request, res: Response) => {
     db.update(quizzes).set({ passingScore: 70 }).execute().catch(() => {});
 
     // Published quizzes first, newest first, so clients can rely on index 0
-    const all = await db
+    let all = await db
       .select()
       .from(quizzes)
       .where(eq(quizzes.weekId, req.params.weekId))
       .orderBy(desc(quizzes.isPublished), desc(quizzes.createdAt));
+
+    if (all.length === 0) {
+      const [currentWeek] = await db
+        .select({ weekNumber: weeks.weekNumber })
+        .from(weeks)
+        .where(eq(weeks.id, req.params.weekId))
+        .limit(1);
+      if (currentWeek?.weekNumber) {
+        const siblingQuizzes = await db
+          .select({ quiz: quizzes })
+          .from(quizzes)
+          .innerJoin(weeks, eq(quizzes.weekId, weeks.id))
+          .where(
+            and(
+              eq(weeks.weekNumber, currentWeek.weekNumber),
+              eq(quizzes.isPublished, true)
+            )
+          )
+          .orderBy(desc(quizzes.createdAt));
+        all = siblingQuizzes.map((s) => s.quiz);
+      }
+    }
 
     const isStaff = isStaffRole(req);
     const normalized = all.map((q) => {
@@ -1104,6 +1315,20 @@ quizzesRouter.post("/:id/attempt", async (req: Request, res: Response) => {
     }
 
     if (!cohortId || !z.string().uuid().safeParse(cohortId).success) {
+      if (quiz.cohortId && z.string().uuid().safeParse(quiz.cohortId).success) {
+        cohortId = quiz.cohortId;
+      } else {
+        try {
+          const u = await fetchUser(userId);
+          const uCohort = u?.cohortMembers?.[0]?.cohortId || u?.cohortId;
+          if (uCohort && z.string().uuid().safeParse(uCohort).success) {
+            cohortId = uCohort;
+          }
+        } catch {}
+      }
+    }
+
+    if (!cohortId || !z.string().uuid().safeParse(cohortId).success) {
       return res.status(400).json({ error: "Cohort ID could not be determined for this quiz attempt." });
     }
 
@@ -1232,12 +1457,35 @@ quizzesRouter.get("/user/:userId/passed", async (req: Request, res: Response) =>
       .where(
         and(
           eq(quizAttempts.userId, userId),
-          eq(quizAttempts.passed, true)
+          or(
+            eq(quizAttempts.passed, true),
+            gte(quizAttempts.score, 70)
+          )
         )
       );
 
     const passedWeekIds = Array.from(new Set(passedAttempts.map((a) => a.weekId)));
     const passedQuizIds = Array.from(new Set(passedAttempts.map((a) => a.quizId)));
+
+    // Map sibling week IDs with the same weekNumbers across cohorts
+    if (passedWeekIds.length > 0) {
+      const passedWeekRows = await db
+        .select({ weekNumber: weeks.weekNumber })
+        .from(weeks)
+        .where(inArray(weeks.id, passedWeekIds));
+      const numbers = Array.from(new Set(passedWeekRows.map((w) => w.weekNumber).filter((n): n is number => typeof n === "number")));
+      if (numbers.length > 0) {
+        const siblingWeeks = await db
+          .select({ id: weeks.id })
+          .from(weeks)
+          .where(inArray(weeks.weekNumber, numbers));
+        for (const sw of siblingWeeks) {
+          if (!passedWeekIds.includes(sw.id)) {
+            passedWeekIds.push(sw.id);
+          }
+        }
+      }
+    }
 
     return res.json({ passedWeekIds, passedQuizIds });
   } catch (err) {
@@ -1550,6 +1798,11 @@ practicalRouter.post("/checkins", async (req: Request, res: Response) => {
       return res.status(200).json({ message: "User already checked in for this week", checkin: existing });
     }
 
+    const fallbackCode = generatePracticalCodeString(userId, wNum, "");
+    const finalCodeSubmitted = typeof codeSubmitted === "string" && codeSubmitted.trim() && codeSubmitted.trim() !== "VERIFIED"
+      ? codeSubmitted.trim().slice(0, 128)
+      : fallbackCode;
+
     const [inserted] = await db
       .insert(practicalCheckins)
       .values({
@@ -1557,7 +1810,7 @@ practicalRouter.post("/checkins", async (req: Request, res: Response) => {
         userId,
         groupId: typeof groupId === "string" ? groupId.slice(0, 128) : null,
         weekNumber: wNum,
-        codeSubmitted: typeof codeSubmitted === "string" && codeSubmitted.trim() ? codeSubmitted.trim().slice(0, 128) : "VERIFIED",
+        codeSubmitted: finalCodeSubmitted,
         verifiedBy: validVerifiedBy,
       })
       .onConflictDoNothing()
@@ -1612,6 +1865,44 @@ practicalRouter.get("/checkins/user/:userId", async (req: Request, res: Response
       .select()
       .from(practicalCheckins)
       .where(eq(practicalCheckins.userId, userId));
+
+    const existingWeeks = new Set(list.map((c) => Number(c.weekNumber)));
+
+    // Also look up any practical checkins matching user's registered or deterministic codes
+    const userCodes = await db
+      .select({ code: practicalCodes.code, weekNumber: practicalCodes.weekNumber })
+      .from(practicalCodes)
+      .where(eq(practicalCodes.userId, userId));
+
+    let userEmail = "";
+    try {
+      const u = await fetchUser(userId);
+      if (u?.email) userEmail = u.email;
+    } catch {}
+
+    const codeStrings = new Set<string>(userCodes.map((u) => u.code).filter(Boolean));
+    for (let w = 1; w <= 12; w++) {
+      if (!existingWeeks.has(w)) {
+        codeStrings.add(generatePracticalCodeString(userId, w, userEmail));
+        if (userEmail) {
+          codeStrings.add(generatePracticalCodeString(userId, w, ""));
+        }
+      }
+    }
+
+    if (codeStrings.size > 0) {
+      const matched = await db
+        .select()
+        .from(practicalCheckins)
+        .where(inArray(practicalCheckins.codeSubmitted, Array.from(codeStrings)));
+      for (const m of matched) {
+        if (!existingWeeks.has(Number(m.weekNumber))) {
+          existingWeeks.add(Number(m.weekNumber));
+          list.push(m);
+        }
+      }
+    }
+
     return res.json(list);
   } catch (err) {
     console.error("[lms] GET /practical/checkins/user/:userId error:", err);
@@ -2370,8 +2661,25 @@ examsRouter.get("/", async (req: Request, res: Response) => {
     if (filters.length > 0) {
       query = query.where(and(...filters)) as typeof query;
     }
- 
-    const all = await query.orderBy(exams.createdAt);
+
+    let all = await query.orderBy(exams.createdAt);
+
+    // Trainee portal fallback: if a specific cohortId was queried but returned 0 published exams,
+    // fallback to returning all published active exams. This ensures trainees are not blocked if
+    // exams were published under the main cohort or if trainee profile cohortId is mismatched.
+    if (!includeAll && cohortId && all.length === 0) {
+      all = await db
+        .select()
+        .from(exams)
+        .where(
+          and(
+            eq(exams.isPublished, true),
+            or(eq(exams.isActive, true), isNull(exams.isActive))
+          )
+        )
+        .orderBy(exams.createdAt);
+    }
+
     return res.json(all);
   } catch (err) {
     console.error(err);
@@ -2384,9 +2692,92 @@ examsRouter.get("/", async (req: Request, res: Response) => {
 examsRouter.get("/admin/sessions", async (req: Request, res: Response) => {
   const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
   const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+  const userIdFilter = req.query.userId as string | undefined;
+  const examIdFilter = req.query.examId as string | undefined;
+  const statusFilter = req.query.status as string | undefined;
 
   try {
-    const baseQuery = db
+    const filters: any[] = [];
+    if (userIdFilter) {
+      filters.push(eq(examSessions.userId, userIdFilter));
+    }
+    if (examIdFilter) {
+      filters.push(eq(examSessions.examId, examIdFilter));
+    }
+    if (statusFilter) {
+      filters.push(eq(examSessions.status, statusFilter as any));
+    }
+
+    let baseQuery = db
+      .select({
+        sessionId: examSessions.id,
+        userId: examSessions.userId,
+        examId: examSessions.examId,
+        status: examSessions.status,
+        mcqScore: examSessions.mcqScore,
+        score: examSessions.score,
+        submittedAt: examSessions.submittedAt,
+        startedAt: examSessions.startedAt,
+        isFullyMarked: examSessions.isFullyMarked,
+        examTitle: exams.title,
+      })
+      .from(examSessions)
+      .innerJoin(exams, eq(examSessions.examId, exams.id));
+
+    if (filters.length > 0) {
+      baseQuery = baseQuery.where(and(...filters)) as typeof baseQuery;
+    }
+
+    const orderedQuery = baseQuery.orderBy(desc(examSessions.createdAt));
+
+    if (page || limit) {
+      const pageNum = page && page > 0 ? page : 1;
+      const limitNum = limit && limit > 0 ? limit : 25;
+      const offsetNum = (pageNum - 1) * limitNum;
+
+      let countQuery = db
+        .select({
+          sessionId: examSessions.id,
+        })
+        .from(examSessions);
+
+      if (filters.length > 0) {
+        countQuery = countQuery.where(and(...filters)) as typeof countQuery;
+      }
+
+      const [allMatched, paginated] = await Promise.all([
+        countQuery,
+        orderedQuery.limit(limitNum).offset(offsetNum),
+      ]);
+
+      const total = allMatched.length;
+      return res.json({
+        data: paginated,
+        sessions: paginated,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+      });
+    }
+
+    const all = await orderedQuery;
+    return res.json(all);
+  } catch (err) {
+    console.error("[examsRouter GET /admin/sessions] error:", err);
+    return res.status(500).json({ error: "Failed to fetch admin exam sessions" });
+  }
+});
+
+// ADMIN — get all exam sessions for a specific user
+// GET /lms/exams/admin/user/:userId/sessions
+examsRouter.get("/admin/user/:userId/sessions", async (req: Request, res: Response) => {
+  if (!isStaffRole(req)) {
+    return res.status(403).json({ error: "Unauthorized. Staff access required." });
+  }
+  try {
+    const { userId } = req.params;
+    const sessions = await db
       .select({
         sessionId: examSessions.id,
         userId: examSessions.userId,
@@ -2401,51 +2792,81 @@ examsRouter.get("/admin/sessions", async (req: Request, res: Response) => {
       })
       .from(examSessions)
       .innerJoin(exams, eq(examSessions.examId, exams.id))
-      .orderBy(examSessions.createdAt);
+      .where(eq(examSessions.userId, userId))
+      .orderBy(desc(examSessions.createdAt));
 
-    if (page || limit) {
-      const pageNum = page && page > 0 ? page : 1;
-      const limitNum = limit && limit > 0 ? limit : 25;
-      const offsetNum = (pageNum - 1) * limitNum;
+    return res.json(sessions);
+  } catch (err) {
+    console.error("[examsRouter GET /admin/user/:userId/sessions] error:", err);
+    return res.status(500).json({ error: "Failed to fetch user exam sessions" });
+  }
+});
 
-      const [allMatched, paginated] = await Promise.all([
-        baseQuery,
-        db
-          .select({
-            sessionId: examSessions.id,
-            userId: examSessions.userId,
-            examId: examSessions.examId,
-            status: examSessions.status,
-            mcqScore: examSessions.mcqScore,
-            score: examSessions.score,
-            submittedAt: examSessions.submittedAt,
-            startedAt: examSessions.startedAt,
-            isFullyMarked: examSessions.isFullyMarked,
-            examTitle: exams.title,
-          })
-          .from(examSessions)
-          .innerJoin(exams, eq(examSessions.examId, exams.id))
-          .orderBy(examSessions.createdAt)
-          .limit(limitNum)
-          .offset(offsetNum),
-      ]);
+// ADMIN — delete a specific exam session to allow trainee to rewrite (resets attempt)
+// DELETE /lms/exams/admin/sessions/:sessionId
+examsRouter.delete("/admin/sessions/:sessionId", async (req: Request, res: Response) => {
+  if (!isStaffRole(req)) {
+    return res.status(403).json({ error: "Unauthorized. Staff access required." });
+  }
+  try {
+    const { sessionId } = req.params;
 
-      const total = allMatched.length;
-      return res.json({
-        data: paginated,
-        sessions: paginated,
-        total,
-        page: pageNum,
-        limit: limitNum,
-        totalPages: Math.ceil(total / limitNum),
-      });
+    // Explicitly delete dependent child records first to ensure clean cascade across any DB constraint variant
+    await db.delete(examAnswers).where(eq(examAnswers.sessionId, sessionId)).catch(() => null);
+    await db.delete(examViolations).where(eq(examViolations.sessionId, sessionId)).catch(() => null);
+
+    const [deleted] = await db
+      .delete(examSessions)
+      .where(eq(examSessions.id, sessionId))
+      .returning();
+
+    if (!deleted) {
+      return res.status(404).json({ error: "Exam session not found" });
     }
 
-    const all = await baseQuery;
-    return res.json(all);
+    return res.json({
+      message: "Exam session deleted successfully. Trainee is eligible to rewrite the exam.",
+      session: deleted,
+    });
   } catch (err) {
-    console.error("[examsRouter GET /admin/sessions] error:", err);
-    return res.status(500).json({ error: "Failed to fetch admin exam sessions" });
+    console.error("[examsRouter DELETE /admin/sessions/:sessionId] error:", err);
+    return res.status(500).json({ error: "Failed to delete exam session" });
+  }
+});
+
+// ADMIN — delete all exam sessions for a specific user and exam
+// DELETE /lms/exams/admin/user/:userId/exam/:examId
+examsRouter.delete("/admin/user/:userId/exam/:examId", async (req: Request, res: Response) => {
+  if (!isStaffRole(req)) {
+    return res.status(403).json({ error: "Unauthorized. Staff access required." });
+  }
+  try {
+    const { userId, examId } = req.params;
+
+    const matchedSessions = await db
+      .select({ id: examSessions.id })
+      .from(examSessions)
+      .where(and(eq(examSessions.userId, userId), eq(examSessions.examId, examId)));
+
+    const sessionIds = matchedSessions.map((s) => s.id);
+    if (sessionIds.length > 0) {
+      await db.delete(examAnswers).where(inArray(examAnswers.sessionId, sessionIds)).catch(() => null);
+      await db.delete(examViolations).where(inArray(examViolations.sessionId, sessionIds)).catch(() => null);
+    }
+
+    const deleted = await db
+      .delete(examSessions)
+      .where(and(eq(examSessions.userId, userId), eq(examSessions.examId, examId)))
+      .returning();
+
+    return res.json({
+      message: `Deleted ${deleted.length} exam session(s). Trainee can now rewrite the exam.`,
+      deletedCount: deleted.length,
+      sessions: deleted,
+    });
+  } catch (err) {
+    console.error("[examsRouter DELETE /admin/user/:userId/exam/:examId] error:", err);
+    return res.status(500).json({ error: "Failed to reset exam for user" });
   }
 });
 
@@ -2497,6 +2918,29 @@ examsRouter.get("/:id/quiz-requirements", async (req: Request, res: Response) =>
     const missingQuizzes = await getMissingWeeklyQuizzes(userId, exam.cohortId);
     const ready = attendanceCheck.isComplete && missingQuizzes.length === 0;
 
+    // Check if user has already taken or started this exam (strict 1-attempt policy)
+    const [existingSession] = await db
+      .select({
+        id: examSessions.id,
+        status: examSessions.status,
+        submittedAt: examSessions.submittedAt,
+        score: examSessions.score,
+        mcqScore: examSessions.mcqScore,
+        isFullyMarked: examSessions.isFullyMarked,
+      })
+      .from(examSessions)
+      .where(
+        and(
+          eq(examSessions.userId, userId),
+          eq(examSessions.examId, exam.id)
+        )
+      )
+      .limit(1);
+
+    const alreadyTaken = Boolean(
+      existingSession && existingSession.status !== "in_progress"
+    );
+
     return res.json({
       ready,
       attendanceComplete: attendanceCheck.isComplete,
@@ -2505,6 +2949,8 @@ examsRouter.get("/:id/quiz-requirements", async (req: Request, res: Response) =>
       week12AttendanceComplete: attendanceCheck.week12Complete,
       quizzesComplete: missingQuizzes.length === 0,
       missingQuizzes,
+      existingSession: existingSession || null,
+      alreadyTaken,
     });
   } catch (err) {
     console.error(err);
@@ -2599,18 +3045,35 @@ examsRouter.patch("/:id", async (req: Request, res: Response) => {
 examsRouter.get("/:id/questions", async (req: Request, res: Response) => {
   try {
     const isStaff = isStaffRole(req);
- 
+
     const questions = await db
       .select()
       .from(examQuestions)
       .where(eq(examQuestions.examId, req.params.id))
       .orderBy(examQuestions.orderIndex);
- 
+
+    // Normalize options to always be string[]
+    const normalized = questions.map((q) => {
+      let safeOptions: string[] = [];
+      if (Array.isArray(q.options)) {
+        safeOptions = q.options as string[];
+      } else if (typeof q.options === "string") {
+        try {
+          const parsed = JSON.parse(q.options);
+          if (Array.isArray(parsed)) safeOptions = parsed;
+        } catch {}
+      }
+      return {
+        ...q,
+        options: safeOptions,
+      };
+    });
+
     // Strip correct answer from trainee-facing responses
     const sanitized = isStaff
-      ? questions
-      : questions.map(({ correctOptionIndex: _stripped, ...q }) => q);
- 
+      ? normalized
+      : normalized.map(({ correctOptionIndex: _stripped, ...q }) => q);
+
     // Preserve orderIndex for admins/staff; shuffle deterministically per-trainee for examinees
     if (!isStaff) {
       const headerUserId = req.headers["x-user-id"] as string | undefined;
@@ -2833,14 +3296,28 @@ examsRouter.post(
             .from(examQuestions)
             .where(eq(examQuestions.examId, examId))
             .orderBy(examQuestions.orderIndex);
- 
+
           const answers = await db
             .select()
             .from(examAnswers)
             .where(eq(examAnswers.sessionId, existing.id));
- 
+
           const sanitizedQuestions = questions.map(
-            ({ correctOptionIndex: _stripped, ...q }) => q
+            ({ correctOptionIndex: _stripped, ...q }) => {
+              let safeOptions: string[] = [];
+              if (Array.isArray(q.options)) {
+                safeOptions = q.options as string[];
+              } else if (typeof q.options === "string") {
+                try {
+                  const parsed = JSON.parse(q.options);
+                  if (Array.isArray(parsed)) safeOptions = parsed;
+                } catch {}
+              }
+              return {
+                ...q,
+                options: safeOptions,
+              };
+            }
           );
           const shuffledQuestions = shuffleSeeded(
             sanitizedQuestions,
@@ -2855,14 +3332,30 @@ examsRouter.post(
           });
         }
  
-        // Already submitted/auto-submitted/timed-out
+        // Already submitted/auto-submitted/timed-out — strictly 1 attempt allowed
         return res.status(409).json({
-          error: "You have already taken this exam.",
+          error: "You have already taken this exam. Each exam can only be taken once.",
+          code: "EXAM_ALREADY_TAKEN",
           status: existing.status,
           sessionId: existing.id,
         });
       }
  
+      // Pre-verify that questions actually exist for this exam before creating a session!
+      // This prevents locking trainees into an empty exam session if admin hasn't added questions yet.
+      const questions = await db
+        .select()
+        .from(examQuestions)
+        .where(eq(examQuestions.examId, examId))
+        .orderBy(examQuestions.orderIndex);
+
+      if (!questions || questions.length === 0) {
+        return res.status(400).json({
+          error: "No questions have been configured for this exam yet. Please notify your administrator.",
+          code: "NO_QUESTIONS",
+        });
+      }
+
       // Every unlocked weekly quiz (Weeks 1–12) must be taken before a new exam session starts
       const missingQuizzes = await getMissingWeeklyQuizzes(userId, exam.cohortId);
       if (missingQuizzes.length > 0) {
@@ -2893,24 +3386,30 @@ examsRouter.post(
  
       // Pre-create empty answer rows for every question
       // so autosave is always an UPDATE, never an INSERT race condition
-      const questions = await db
-        .select()
-        .from(examQuestions)
-        .where(eq(examQuestions.examId, examId))
-        .orderBy(examQuestions.orderIndex);
- 
-      if (questions.length > 0) {
-        await db.insert(examAnswers).values(
-          questions.map((q) => ({
-            sessionId: session.id,
-            questionId: q.id,
-            answerText: null,
-          }))
-        );
-      }
+      await db.insert(examAnswers).values(
+        questions.map((q) => ({
+          sessionId: session.id,
+          questionId: q.id,
+          answerText: null,
+        }))
+      );
  
       const sanitizedQuestions = questions.map(
-        ({ correctOptionIndex: _stripped, ...q }) => q
+        ({ correctOptionIndex: _stripped, ...q }) => {
+          let safeOptions: string[] = [];
+          if (Array.isArray(q.options)) {
+            safeOptions = q.options as string[];
+          } else if (typeof q.options === "string") {
+            try {
+              const parsed = JSON.parse(q.options);
+              if (Array.isArray(parsed)) safeOptions = parsed;
+            } catch {}
+          }
+          return {
+            ...q,
+            options: safeOptions,
+          };
+        }
       );
       const shuffledQuestions = shuffleSeeded(
         sanitizedQuestions,
