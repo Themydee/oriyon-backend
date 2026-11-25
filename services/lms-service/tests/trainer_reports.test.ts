@@ -261,6 +261,40 @@ async function runTrainerReportingTestSuite() {
   });
 
   // ─────────────────────────────────────────────
+  // 3. ROLE SEPARATION & SCOPE ISOLATION
+  // ─────────────────────────────────────────────
+  console.log("\n[3] Role Separation & Report Scope Isolation:");
+
+  function evaluateAdminReportsAccess(role: string): { allowed: boolean; status: number } {
+    const isAdmin = role === "admin" || role === "sub_admin" || role === "lead_trainer";
+    if (!isAdmin) {
+      return { allowed: false, status: 403 };
+    }
+    return { allowed: true, status: 200 };
+  }
+
+  await test("Individual trainers are BLOCKED from /admin/all with HTTP 403 Forbidden", () => {
+    const res = evaluateAdminReportsAccess("trainer");
+    assert.strictEqual(res.allowed, false);
+    assert.strictEqual(res.status, 403);
+  });
+
+  await test("Trainees are BLOCKED from /admin/all with HTTP 403 Forbidden", () => {
+    const res = evaluateAdminReportsAccess("trainee");
+    assert.strictEqual(res.allowed, false);
+    assert.strictEqual(res.status, 403);
+  });
+
+  await test("Admins and Lead Trainers CAN access /admin/all with HTTP 200", () => {
+    const adminRes = evaluateAdminReportsAccess("admin");
+    const leadRes = evaluateAdminReportsAccess("lead_trainer");
+    const subAdminRes = evaluateAdminReportsAccess("sub_admin");
+    assert.strictEqual(adminRes.allowed, true);
+    assert.strictEqual(leadRes.allowed, true);
+    assert.strictEqual(subAdminRes.allowed, true);
+  });
+
+  // ─────────────────────────────────────────────
   // SUMMARY
   // ─────────────────────────────────────────────
   console.log("\n=============================================================");

@@ -1846,6 +1846,31 @@ app.delete(
 // ─────────────────────────────────────────────
 // LMS — TRAINER LESSON REPORTS & DELIVERY GATE
 // ─────────────────────────────────────────────
+app.post(
+  "/api/lms/trainer-reports",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
+  "/api/lms/trainer-reports/my-reports",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
+  "/api/lms/trainer-reports/admin/all",
+  authenticate,
+  requireRole("admin", "sub_admin", "lead_trainer"),
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.post(
+  "/api/lms/trainer-reports/:id/mark-delivered",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
 app.use(
   "/api/lms/trainer-reports",
   authenticate,

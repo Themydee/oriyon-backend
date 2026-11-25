@@ -4344,7 +4344,7 @@ const reportInputSchema = z.object({
 });
 
 // 1. POST /trainer-reports — Create or update lesson report
-trainerReportsRouter.post("/", async (req: Request, res: Response) => {
+trainerReportsRouter.post(["/", ""], async (req: Request, res: Response) => {
   try {
     const auth = getAuthUserContext(req);
     if (!auth.userId) {
@@ -4547,13 +4547,13 @@ trainerReportsRouter.get("/my-reports", async (req: Request, res: Response) => {
   }
 });
 
-// 3. GET /trainer-reports/admin/all — Administrator & Trainer view for monitoring reports
+// 3. GET /trainer-reports/admin/all — Administrator & Lead Trainer monitoring view
 trainerReportsRouter.get("/admin/all", async (req: Request, res: Response) => {
   try {
     const auth = getAuthUserContext(req);
-    const isStaff = auth.role === "admin" || auth.role === "sub_admin" || auth.role === "lead_trainer" || auth.role === "trainer" || auth.role === "coordinator";
-    if (!isStaff) {
-      return res.status(403).json({ error: "Staff or Trainer privilege required to view trainer reports." });
+    const isAdmin = auth.role === "admin" || auth.role === "sub_admin" || auth.role === "lead_trainer";
+    if (!isAdmin) {
+      return res.status(403).json({ error: "Administrator or Lead Trainer privilege required to view all trainer reports." });
     }
 
     const { trainerId, cohortId, groupId, status, isDelivered, limit, offset } = req.query;
@@ -4561,9 +4561,6 @@ trainerReportsRouter.get("/admin/all", async (req: Request, res: Response) => {
     const conditions: any[] = [];
     if (trainerId && typeof trainerId === "string") {
       conditions.push(eq(trainerLessonReports.trainerId, trainerId));
-    } else if (auth.role === "trainer" && auth.userId) {
-      // For regular trainers without an explicit trainerId query filter, show their own reports by default
-      conditions.push(eq(trainerLessonReports.trainerId, auth.userId));
     }
 
     if (cohortId && typeof cohortId === "string") {
