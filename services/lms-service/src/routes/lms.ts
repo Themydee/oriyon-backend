@@ -4303,18 +4303,34 @@ function getAuthUserContext(req: Request) {
   let email = (req.headers["x-user-email"] as string | undefined)?.trim();
   let name = (req.headers["x-user-name"] as string | undefined)?.trim();
 
+  if (userId === "undefined" || userId === "null") userId = undefined;
+
   const authHeader = req.headers.authorization;
-  if (authHeader?.startsWith("Bearer ") && process.env.JWT_SECRET) {
-    try {
-      const token = authHeader.split(" ")[1];
-      const payload = jwt.verify(token, process.env.JWT_SECRET) as any;
-      if (!userId && (payload?.id || payload?.userId)) userId = payload.id || payload.userId;
-      if (!role && payload?.role) role = payload.role?.toLowerCase();
-      if (!email && payload?.email) email = payload.email;
-      if (!name && (payload?.name || payload?.firstName)) {
-        name = payload.name || `${payload.firstName || ""} ${payload.lastName || ""}`.trim();
-      }
-    } catch {}
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.split(" ")[1];
+    if (process.env.JWT_SECRET) {
+      try {
+        const payload = jwt.verify(token, process.env.JWT_SECRET) as any;
+        if (!userId && (payload?.id || payload?.userId || payload?.sub)) {
+          userId = (payload.userId || payload.id || payload.sub)?.toString();
+        }
+        if (!role && payload?.role) role = payload.role?.toLowerCase();
+        if (!email && payload?.email) email = payload.email;
+        if (!name && (payload?.name || payload?.firstName)) {
+          name = payload.name || `${payload.firstName || ""} ${payload.lastName || ""}`.trim();
+        }
+      } catch {}
+    }
+    if (!userId) {
+      try {
+        const decoded = jwt.decode(token) as any;
+        if (decoded?.id || decoded?.userId || decoded?.sub) {
+          userId = (decoded.userId || decoded.id || decoded.sub)?.toString();
+        }
+        if (!role && decoded?.role) role = decoded.role?.toLowerCase();
+        if (!email && decoded?.email) email = decoded.email;
+      } catch {}
+    }
   }
 
   return { userId, role, email, name };
@@ -4322,24 +4338,24 @@ function getAuthUserContext(req: Request) {
 
 // Schema for report creation / update
 const reportInputSchema = z.object({
-  id: z.string().uuid().optional(),
+  id: z.string().uuid().optional().nullable().or(z.literal("")),
   cohortId: z.string().uuid("Invalid cohort ID"),
-  cohortName: z.string().optional(),
-  groupId: z.string().optional(),
-  groupName: z.string().optional(),
-  sessionId: z.string().uuid().optional().nullable(),
-  lessonId: z.string().uuid().optional().nullable(),
-  weekNumber: z.number().int().optional().nullable(),
+  cohortName: z.string().optional().nullable().or(z.literal("")),
+  groupId: z.string().optional().nullable().or(z.literal("")),
+  groupName: z.string().optional().nullable().or(z.literal("")),
+  sessionId: z.string().uuid().optional().nullable().or(z.literal("")),
+  lessonId: z.string().uuid().optional().nullable().or(z.literal("")),
+  weekNumber: z.coerce.number().int().min(1, "Week number must be at least 1").max(12, "Week number cannot exceed 12").default(1),
   sessionTitle: z.string().min(2, "Session/Lesson title is required"),
   dateConducted: z.string().min(1, "Date conducted is required"),
-  topicsCovered: z.string().optional(),
-  activities: z.string().optional(),
-  traineesPresent: z.number().int().min(0, "Trainees count cannot be negative").default(0),
-  learningOutcomes: z.string().optional(),
-  challenges: z.string().optional().nullable(),
-  comments: z.string().optional().nullable(),
-  attachmentUrl: z.string().optional().nullable(),
-  attachmentName: z.string().optional().nullable(),
+  topicsCovered: z.string().optional().nullable().or(z.literal("")),
+  activities: z.string().optional().nullable().or(z.literal("")),
+  traineesPresent: z.coerce.number().int().min(0, "Trainees count cannot be negative").default(0),
+  learningOutcomes: z.string().optional().nullable().or(z.literal("")),
+  challenges: z.string().optional().nullable().or(z.literal("")),
+  comments: z.string().optional().nullable().or(z.literal("")),
+  attachmentUrl: z.string().optional().nullable().or(z.literal("")),
+  attachmentName: z.string().optional().nullable().or(z.literal("")),
   action: z.enum(["draft", "submit"]).default("draft"),
 });
 
@@ -4383,6 +4399,69 @@ trainerReportsRouter.post(["/", ""], async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Invalid date format for dateConducted." });
     }
 
+    const targetWeek = Number(data.weekNumber) || 1;
+    const isTrainerRole = auth.role === "trainer";
+
+    // Clean optional values
+    if (data.id === "" || !data.id) data.id = undefined;
+    const sanitizedGroupId = data.groupId?.trim() || null;
+    const sanitizedCohortName = data.cohortName?.trim() || null;
+    const sanitizedGroupName = data.groupName?.trim() || null;
+    const sanitizedSessionId = data.sessionId?.trim() || null;
+    const sanitizedLessonId = data.lessonId?.trim() || null;
+    const sanitizedAttachmentUrl = data.attachmentUrl?.trim() || null;
+    const sanitizedAttachmentName = data.attachmentName?.trim() || (sanitizedAttachmentUrl ? "Supporting Evidence" : null);
+    const sanitizedChallenges = data.challenges?.trim() || null;
+    const sanitizedComments = data.comments?.trim() || null;
+
+    // ─── SEQUENTIAL WEEK PROGRESSION GATE ───
+    // Trainers cannot conduct or submit a report for Week W > 1 unless Week W - 1 was submitted.
+    if (isTrainerRole && targetWeek > 1) {
+      const priorConditions = [
+        eq(trainerLessonReports.trainerId, auth.userId),
+        eq(trainerLessonReports.cohortId, data.cohortId),
+        eq(trainerLessonReports.weekNumber, targetWeek - 1),
+        eq(trainerLessonReports.status, "submitted"),
+      ];
+
+      const [priorReport] = await db
+        .select()
+        .from(trainerLessonReports)
+        .where(and(...priorConditions))
+        .limit(1);
+
+      if (!priorReport) {
+        return res.status(400).json({
+          error: `Cannot take or submit training for Week ${targetWeek}. You must submit your training report for Week ${targetWeek - 1} first.`,
+          code: "PRIOR_WEEK_REPORT_REQUIRED",
+          requiredWeek: targetWeek - 1,
+          requestedWeek: targetWeek,
+        });
+      }
+    }
+
+    // Auto-link existing report for the same trainer/cohort/week if id is not passed
+    if (!data.id) {
+      const matchConditions = [
+        eq(trainerLessonReports.trainerId, auth.userId),
+        eq(trainerLessonReports.cohortId, data.cohortId),
+        eq(trainerLessonReports.weekNumber, targetWeek),
+      ];
+      if (sanitizedGroupId) {
+        matchConditions.push(eq(trainerLessonReports.groupId, sanitizedGroupId));
+      }
+
+      const [existingWeekReport] = await db
+        .select()
+        .from(trainerLessonReports)
+        .where(and(...matchConditions))
+        .limit(1);
+
+      if (existingWeekReport) {
+        data.id = existingWeekReport.id;
+      }
+    }
+
     // Check if updating existing report
     if (data.id) {
       const [existing] = await db
@@ -4410,19 +4489,19 @@ trainerReportsRouter.post(["/", ""], async (req: Request, res: Response) => {
         activities: data.activities || "",
         traineesPresent: data.traineesPresent ?? 0,
         learningOutcomes: data.learningOutcomes || "",
-        challenges: data.challenges || null,
-        comments: data.comments || null,
-        attachmentUrl: data.attachmentUrl || null,
-        attachmentName: data.attachmentName || null,
+        challenges: sanitizedChallenges,
+        comments: sanitizedComments,
+        attachmentUrl: sanitizedAttachmentUrl,
+        attachmentName: sanitizedAttachmentName,
         status: isSubmit ? "submitted" : "draft",
         updatedAt: new Date(),
       };
 
-      if (data.cohortName) updatePayload.cohortName = data.cohortName;
-      if (data.groupId !== undefined) updatePayload.groupId = data.groupId;
-      if (data.groupName) updatePayload.groupName = data.groupName;
-      if (data.sessionId !== undefined) updatePayload.sessionId = data.sessionId;
-      if (data.lessonId !== undefined) updatePayload.lessonId = data.lessonId;
+      if (sanitizedCohortName) updatePayload.cohortName = sanitizedCohortName;
+      if (sanitizedGroupId !== undefined) updatePayload.groupId = sanitizedGroupId;
+      if (sanitizedGroupName) updatePayload.groupName = sanitizedGroupName;
+      if (sanitizedSessionId !== undefined) updatePayload.sessionId = sanitizedSessionId;
+      if (sanitizedLessonId !== undefined) updatePayload.lessonId = sanitizedLessonId;
       if (data.weekNumber !== undefined) updatePayload.weekNumber = data.weekNumber;
       if (isSubmit && !existing.submittedAt) {
         updatePayload.submittedAt = new Date();
@@ -4461,11 +4540,11 @@ trainerReportsRouter.post(["/", ""], async (req: Request, res: Response) => {
         trainerName: auth.name || null,
         trainerEmail: auth.email || null,
         cohortId: data.cohortId,
-        cohortName: data.cohortName || null,
-        groupId: data.groupId || null,
-        groupName: data.groupName || null,
-        sessionId: data.sessionId || null,
-        lessonId: data.lessonId || null,
+        cohortName: sanitizedCohortName,
+        groupId: sanitizedGroupId,
+        groupName: sanitizedGroupName,
+        sessionId: sanitizedSessionId,
+        lessonId: sanitizedLessonId,
         weekNumber: data.weekNumber || null,
         sessionTitle: data.sessionTitle,
         dateConducted: parsedDate,
@@ -4473,10 +4552,10 @@ trainerReportsRouter.post(["/", ""], async (req: Request, res: Response) => {
         activities: data.activities || "",
         traineesPresent: data.traineesPresent ?? 0,
         learningOutcomes: data.learningOutcomes || "",
-        challenges: data.challenges || null,
-        comments: data.comments || null,
-        attachmentUrl: data.attachmentUrl || null,
-        attachmentName: data.attachmentName || null,
+        challenges: sanitizedChallenges,
+        comments: sanitizedComments,
+        attachmentUrl: sanitizedAttachmentUrl,
+        attachmentName: sanitizedAttachmentName,
         status: isSubmit ? "submitted" : "draft",
         isDelivered: false,
         submittedAt: isSubmit ? new Date() : null,
@@ -4510,11 +4589,12 @@ trainerReportsRouter.post(["/", ""], async (req: Request, res: Response) => {
 trainerReportsRouter.get("/my-reports", async (req: Request, res: Response) => {
   try {
     const auth = getAuthUserContext(req);
-    if (!auth.userId) {
-      return res.status(401).json({ error: "Authentication required." });
+    const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    if (!auth.userId || !UUID_REGEX.test(auth.userId)) {
+      return res.json({ success: true, count: 0, reports: [] });
     }
 
-    const { cohortId, groupId, sessionId, lessonId, status } = req.query;
+    const { cohortId, groupId, sessionId, lessonId, weekNumber, status } = req.query;
 
     const conditions: any[] = [eq(trainerLessonReports.trainerId, auth.userId)];
 
@@ -4529,6 +4609,9 @@ trainerReportsRouter.get("/my-reports", async (req: Request, res: Response) => {
     }
     if (lessonId && typeof lessonId === "string") {
       conditions.push(eq(trainerLessonReports.lessonId, lessonId));
+    }
+    if (weekNumber !== undefined && !isNaN(Number(weekNumber))) {
+      conditions.push(eq(trainerLessonReports.weekNumber, Number(weekNumber)));
     }
     if (status && (status === "draft" || status === "submitted")) {
       conditions.push(eq(trainerLessonReports.status, status as any));
@@ -4556,7 +4639,7 @@ trainerReportsRouter.get("/admin/all", async (req: Request, res: Response) => {
       return res.status(403).json({ error: "Administrator or Lead Trainer privilege required to view all trainer reports." });
     }
 
-    const { trainerId, cohortId, groupId, status, isDelivered, limit, offset } = req.query;
+    const { trainerId, cohortId, groupId, weekNumber, status, isDelivered, limit, offset } = req.query;
 
     const conditions: any[] = [];
     if (trainerId && typeof trainerId === "string") {
@@ -4568,6 +4651,9 @@ trainerReportsRouter.get("/admin/all", async (req: Request, res: Response) => {
     }
     if (groupId && typeof groupId === "string") {
       conditions.push(eq(trainerLessonReports.groupId, groupId));
+    }
+    if (weekNumber !== undefined && !isNaN(Number(weekNumber))) {
+      conditions.push(eq(trainerLessonReports.weekNumber, Number(weekNumber)));
     }
     if (status && (status === "draft" || status === "submitted")) {
       conditions.push(eq(trainerLessonReports.status, status as any));
@@ -4597,6 +4683,139 @@ trainerReportsRouter.get("/admin/all", async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error("[lms-service] Error fetching admin reports:", err);
     return res.status(500).json({ error: "Failed to fetch admin reports" });
+  }
+});
+
+// 4. GET /trainer-reports/progression-status — Check 12-week progression and unlocked weeks
+trainerReportsRouter.get("/progression-status", async (req: Request, res: Response) => {
+  try {
+    const auth = getAuthUserContext(req);
+    if (!auth.userId) {
+      return res.status(401).json({ error: "Authentication required." });
+    }
+
+    const cohortId = (req.query.cohortId as string)?.trim();
+    const groupId = (req.query.groupId as string)?.trim();
+    const targetTrainerId =
+      (auth.role === "admin" || auth.role === "sub_admin" || auth.role === "lead_trainer") && req.query.trainerId
+        ? (req.query.trainerId as string).trim()
+        : auth.userId;
+
+    const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+    // Guard against invalid or missing UUIDs - return default 12-week progression safely instead of crashing
+    if (!cohortId || !UUID_REGEX.test(cohortId) || !targetTrainerId || !UUID_REGEX.test(targetTrainerId)) {
+      const defaultWeeks = Array.from({ length: 12 }, (_, i) => ({
+        weekNumber: i + 1,
+        status: (i === 0 ? "unlocked" : "locked") as "unlocked" | "locked",
+        isSubmitted: false,
+        isDelivered: false,
+        isDraft: false,
+        isUnlocked: i === 0,
+        reportId: null,
+        sessionTitle: null,
+        dateConducted: null,
+        deliveredAt: null,
+      }));
+      return res.json({
+        cohortId: cohortId || "",
+        groupId: groupId || null,
+        trainerId: targetTrainerId || null,
+        maxUnlockedWeek: 1,
+        currentUnlockedWeek: 1,
+        totalSubmitted: 0,
+        totalDelivered: 0,
+        weeks: defaultWeeks,
+      });
+    }
+
+    const conditions: any[] = [
+      eq(trainerLessonReports.trainerId, targetTrainerId),
+      eq(trainerLessonReports.cohortId, cohortId),
+    ];
+    if (groupId) {
+      conditions.push(eq(trainerLessonReports.groupId, groupId));
+    }
+
+    const existingReports = await db
+      .select()
+      .from(trainerLessonReports)
+      .where(and(...conditions));
+
+    // Map existing reports by weekNumber (1..12)
+    const reportByWeek = new Map<number, typeof trainerLessonReports.$inferSelect>();
+    for (const rep of existingReports) {
+      if (rep.weekNumber && rep.weekNumber >= 1 && rep.weekNumber <= 12) {
+        const curr = reportByWeek.get(rep.weekNumber);
+        if (!curr || (rep.status === "submitted" && curr.status !== "submitted")) {
+          reportByWeek.set(rep.weekNumber, rep);
+        }
+      }
+    }
+
+    // Build the 12-week progression array
+    // Week 1 is always unlocked.
+    // Week N (N > 1) is unlocked IF Week N-1 is submitted.
+    const weeks = [];
+    let maxUnlockedWeek = 1;
+
+    for (let w = 1; w <= 12; w++) {
+      const rep = reportByWeek.get(w);
+      const isSubmitted = rep?.status === "submitted";
+      const isDelivered = Boolean(rep?.isDelivered);
+      const isDraft = rep?.status === "draft";
+
+      const isUnlocked = w === 1 || (reportByWeek.get(w - 1)?.status === "submitted");
+
+      if (isUnlocked && w > maxUnlockedWeek) {
+        maxUnlockedWeek = w;
+      }
+
+      let weekStatus: "submitted" | "draft" | "unlocked" | "locked" = "locked";
+      if (isSubmitted) {
+        weekStatus = "submitted";
+      } else if (isDraft) {
+        weekStatus = "draft";
+      } else if (isUnlocked) {
+        weekStatus = "unlocked";
+      } else {
+        weekStatus = "locked";
+      }
+
+      weeks.push({
+        weekNumber: w,
+        status: weekStatus,
+        isSubmitted,
+        isDelivered,
+        isDraft,
+        isUnlocked,
+        reportId: rep?.id || null,
+        sessionTitle: rep?.sessionTitle || null,
+        dateConducted: rep?.dateConducted ? rep.dateConducted.toISOString() : null,
+        deliveredAt: rep?.deliveredAt ? rep.deliveredAt.toISOString() : null,
+      });
+    }
+
+    const currentWeekItem = weeks.find((wk) => wk.isUnlocked && !wk.isSubmitted);
+    const currentUnlockedWeek = currentWeekItem
+      ? currentWeekItem.weekNumber
+      : maxUnlockedWeek < 12
+      ? maxUnlockedWeek + 1
+      : 12;
+
+    return res.json({
+      cohortId,
+      groupId: groupId || null,
+      trainerId: targetTrainerId,
+      maxUnlockedWeek,
+      currentUnlockedWeek,
+      totalSubmitted: weeks.filter((w) => w.isSubmitted).length,
+      totalDelivered: weeks.filter((w) => w.isDelivered).length,
+      weeks,
+    });
+  } catch (err: any) {
+    console.error("[lms-service] Error fetching progression status:", err);
+    return res.status(500).json({ error: "Failed to fetch progression status", details: err?.message });
   }
 });
 

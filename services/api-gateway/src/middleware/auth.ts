@@ -27,14 +27,16 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
 
   const token = authHeader.split(" ")[1];
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET!) as JwtPayload;
+    const payload = jwt.verify(token, process.env.JWT_SECRET!) as any;
+    const resolvedUserId = (payload.userId || payload.id || payload.sub || "")?.toString();
+    payload.userId = resolvedUserId;
     req.user = payload;
-    req.headers["x-user-id"] = payload.userId;
-    req.headers["x-user-email"] = payload.email;
-    req.headers["x-user-role"] = payload.role;
-    req.headers["x-user-assigned-state"] = payload.assignedState || "";
-    req.headers["x-user-assigned-lga"] = payload.assignedLga || "";
-    req.headers["x-user-assigned-zone"] = payload.assignedZone || "";
+    req.headers["x-user-id"] = resolvedUserId;
+    req.headers["x-user-email"] = (payload.email || "")?.toString();
+    req.headers["x-user-role"] = (payload.role || "")?.toString();
+    req.headers["x-user-assigned-state"] = (payload.assignedState || "")?.toString();
+    req.headers["x-user-assigned-lga"] = (payload.assignedLga || "")?.toString();
+    req.headers["x-user-assigned-zone"] = (payload.assignedZone || "")?.toString();
     req.headers["x-user-is-cooperative-only"] = payload.isCooperativeOnly ? "true" : "false";
 
     next();

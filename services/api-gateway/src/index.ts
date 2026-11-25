@@ -1859,6 +1859,12 @@ app.get(
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
 app.get(
+  "/api/lms/trainer-reports/progression-status",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
   "/api/lms/trainer-reports/admin/all",
   authenticate,
   requireRole("admin", "sub_admin", "lead_trainer"),

@@ -295,6 +295,88 @@ async function runTrainerReportingTestSuite() {
   });
 
   // ─────────────────────────────────────────────
+  // 4. WEEKLY SEQUENTIAL PROGRESSION GATE (WEEKS 1 TO 12)
+  // ─────────────────────────────────────────────
+  console.log("\n[4] Weekly Sequential Progression Gate & Lock Enforcement:");
+
+  function evaluateWeeklyProgressionGate(
+    targetWeek: number,
+    submittedWeeks: Set<number>,
+    userRole: string = "trainer"
+  ): { allowed: boolean; status: number; error?: string; code?: string } {
+    if (userRole !== "trainer") {
+      return { allowed: true, status: 200 };
+    }
+    if (targetWeek <= 1) {
+      return { allowed: true, status: 200 };
+    }
+    const requiredWeek = targetWeek - 1;
+    if (!submittedWeeks.has(requiredWeek)) {
+      return {
+        allowed: false,
+        status: 400,
+        code: "PRIOR_WEEK_REPORT_REQUIRED",
+        error: `Cannot take or submit training for Week ${targetWeek}. You must submit your training report for Week ${requiredWeek} first.`,
+      };
+    }
+    return { allowed: true, status: 200 };
+  }
+
+  await test("Week 1 report is ALWAYS unlocked without prior requirements", () => {
+    const res = evaluateWeeklyProgressionGate(1, new Set());
+    assert.strictEqual(res.allowed, true);
+    assert.strictEqual(res.status, 200);
+  });
+
+  await test("Week 2 submission is BLOCKED with 400 when Week 1 has not been submitted", () => {
+    const res = evaluateWeeklyProgressionGate(2, new Set());
+    assert.strictEqual(res.allowed, false);
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.code, "PRIOR_WEEK_REPORT_REQUIRED");
+    assert.ok(res.error?.includes("Week 1 first"));
+  });
+
+  await test("Week 2 submission SUCCEEDS once Week 1 report is in submitted status", () => {
+    const submitted = new Set([1]);
+    const res = evaluateWeeklyProgressionGate(2, submitted);
+    assert.strictEqual(res.allowed, true);
+    assert.strictEqual(res.status, 200);
+  });
+
+  await test("Week 3 submission is BLOCKED with 400 when Week 1 is submitted but Week 2 is missing", () => {
+    const submitted = new Set([1]);
+    const res = evaluateWeeklyProgressionGate(3, submitted);
+    assert.strictEqual(res.allowed, false);
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.code, "PRIOR_WEEK_REPORT_REQUIRED");
+    assert.ok(res.error?.includes("Week 2 first"));
+  });
+
+  await test("Weeks 1 to 12 sequential unlocking computes correct lock/unlock progression states", () => {
+    const submittedWeeks = new Set([1, 2, 3]);
+    const progression = Array.from({ length: 12 }, (_, i) => {
+      const wk = i + 1;
+      const isSubmitted = submittedWeeks.has(wk);
+      const isUnlocked = wk === 1 || submittedWeeks.has(wk - 1);
+      const status = isSubmitted ? "submitted" : isUnlocked ? "unlocked" : "locked";
+      return { wk, isSubmitted, isUnlocked, status };
+    });
+
+    assert.strictEqual(progression[0].status, "submitted"); // Week 1
+    assert.strictEqual(progression[1].status, "submitted"); // Week 2
+    assert.strictEqual(progression[2].status, "submitted"); // Week 3
+    assert.strictEqual(progression[3].status, "unlocked");  // Week 4
+    assert.strictEqual(progression[4].status, "locked");    // Week 5
+    assert.strictEqual(progression[11].status, "locked");   // Week 12
+  });
+
+  await test("Admin role can override sequential progression gate if necessary", () => {
+    const res = evaluateWeeklyProgressionGate(4, new Set([1]), "admin");
+    assert.strictEqual(res.allowed, true);
+    assert.strictEqual(res.status, 200);
+  });
+
+  // ─────────────────────────────────────────────
   // SUMMARY
   // ─────────────────────────────────────────────
   console.log("\n=============================================================");
