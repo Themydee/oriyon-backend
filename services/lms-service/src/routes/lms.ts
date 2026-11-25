@@ -3,7 +3,7 @@ import { eq, and, isNull, sql, desc, inArray, lte, gte, or, type InferModel } fr
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 import { db } from "../index";
-import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, practicalCheckins, practicalCodes, exams, examQuestions, examSessions, examAnswers, examViolations, platformTutorials, appeals, readings } from "../db/schema";
+import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, practicalCheckins, practicalCodes, exams, examQuestions, examSessions, examAnswers, examViolations, platformTutorials, appeals, readings, trainerLessonReports } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 
 type WeekRow = InferModel<typeof weeks>;
@@ -4293,4 +4293,419 @@ readingsRouter.delete("/:id", async (req: Request, res: Response) => {
     return res.status(500).json({ error: "Failed to delete reading" });
   }
 });
+
+// ─── Trainer Lesson Reports Router ──────────────────────────────────────────
+export const trainerReportsRouter = Router();
+
+function getAuthUserContext(req: Request) {
+  let userId = (req.headers["x-user-id"] as string | undefined)?.trim();
+  let role = (req.headers["x-user-role"] as string | undefined)?.trim()?.toLowerCase();
+  let email = (req.headers["x-user-email"] as string | undefined)?.trim();
+  let name = (req.headers["x-user-name"] as string | undefined)?.trim();
+
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ") && process.env.JWT_SECRET) {
+    try {
+      const token = authHeader.split(" ")[1];
+      const payload = jwt.verify(token, process.env.JWT_SECRET) as any;
+      if (!userId && (payload?.id || payload?.userId)) userId = payload.id || payload.userId;
+      if (!role && payload?.role) role = payload.role?.toLowerCase();
+      if (!email && payload?.email) email = payload.email;
+      if (!name && (payload?.name || payload?.firstName)) {
+        name = payload.name || `${payload.firstName || ""} ${payload.lastName || ""}`.trim();
+      }
+    } catch {}
+  }
+
+  return { userId, role, email, name };
+}
+
+// Schema for report creation / update
+const reportInputSchema = z.object({
+  id: z.string().uuid().optional(),
+  cohortId: z.string().uuid("Invalid cohort ID"),
+  cohortName: z.string().optional(),
+  groupId: z.string().optional(),
+  groupName: z.string().optional(),
+  sessionId: z.string().uuid().optional().nullable(),
+  lessonId: z.string().uuid().optional().nullable(),
+  weekNumber: z.number().int().optional().nullable(),
+  sessionTitle: z.string().min(2, "Session/Lesson title is required"),
+  dateConducted: z.string().min(1, "Date conducted is required"),
+  topicsCovered: z.string().optional(),
+  activities: z.string().optional(),
+  traineesPresent: z.number().int().min(0, "Trainees count cannot be negative").default(0),
+  learningOutcomes: z.string().optional(),
+  challenges: z.string().optional().nullable(),
+  comments: z.string().optional().nullable(),
+  attachmentUrl: z.string().optional().nullable(),
+  attachmentName: z.string().optional().nullable(),
+  action: z.enum(["draft", "submit"]).default("draft"),
+});
+
+// 1. POST /trainer-reports — Create or update lesson report
+trainerReportsRouter.post("/", async (req: Request, res: Response) => {
+  try {
+    const auth = getAuthUserContext(req);
+    if (!auth.userId) {
+      return res.status(401).json({ error: "Authentication required to submit trainer reports." });
+    }
+
+    const parseResult = reportInputSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: "Validation error",
+        details: parseResult.error.flatten(),
+      });
+    }
+
+    const data = parseResult.data;
+    const isSubmit = data.action === "submit";
+
+    // Strict validation when submitting
+    if (isSubmit) {
+      if (!data.topicsCovered || data.topicsCovered.trim().length < 5) {
+        return res.status(400).json({ error: "Topics covered is required (at least 5 characters) for submission." });
+      }
+      if (!data.activities || data.activities.trim().length < 5) {
+        return res.status(400).json({ error: "Activities or practical exercises is required (at least 5 characters) for submission." });
+      }
+      if (!data.learningOutcomes || data.learningOutcomes.trim().length < 5) {
+        return res.status(400).json({ error: "Learning outcomes is required (at least 5 characters) for submission." });
+      }
+      if (typeof data.traineesPresent !== "number" || data.traineesPresent < 0) {
+        return res.status(400).json({ error: "Valid number of trainees present is required." });
+      }
+    }
+
+    const parsedDate = new Date(data.dateConducted);
+    if (isNaN(parsedDate.getTime())) {
+      return res.status(400).json({ error: "Invalid date format for dateConducted." });
+    }
+
+    // Check if updating existing report
+    if (data.id) {
+      const [existing] = await db
+        .select()
+        .from(trainerLessonReports)
+        .where(eq(trainerLessonReports.id, data.id))
+        .limit(1);
+
+      if (!existing) {
+        return res.status(404).json({ error: "Report not found." });
+      }
+
+      // Ensure caller is the report author or admin
+      const isOwner = existing.trainerId === auth.userId;
+      const isAdmin = auth.role === "admin" || auth.role === "sub_admin";
+      if (!isOwner && !isAdmin) {
+        return res.status(403).json({ error: "Unauthorized to edit this report." });
+      }
+
+      const updatePayload: any = {
+        cohortId: data.cohortId,
+        sessionTitle: data.sessionTitle,
+        dateConducted: parsedDate,
+        topicsCovered: data.topicsCovered || "",
+        activities: data.activities || "",
+        traineesPresent: data.traineesPresent ?? 0,
+        learningOutcomes: data.learningOutcomes || "",
+        challenges: data.challenges || null,
+        comments: data.comments || null,
+        attachmentUrl: data.attachmentUrl || null,
+        attachmentName: data.attachmentName || null,
+        status: isSubmit ? "submitted" : "draft",
+        updatedAt: new Date(),
+      };
+
+      if (data.cohortName) updatePayload.cohortName = data.cohortName;
+      if (data.groupId !== undefined) updatePayload.groupId = data.groupId;
+      if (data.groupName) updatePayload.groupName = data.groupName;
+      if (data.sessionId !== undefined) updatePayload.sessionId = data.sessionId;
+      if (data.lessonId !== undefined) updatePayload.lessonId = data.lessonId;
+      if (data.weekNumber !== undefined) updatePayload.weekNumber = data.weekNumber;
+      if (isSubmit && !existing.submittedAt) {
+        updatePayload.submittedAt = new Date();
+      }
+
+      const [updated] = await db
+        .update(trainerLessonReports)
+        .set(updatePayload)
+        .where(eq(trainerLessonReports.id, data.id))
+        .returning();
+
+      if (isSubmit) {
+        publishEvent("trainer.report.submitted", {
+          reportId: updated.id,
+          trainerId: updated.trainerId,
+          cohortId: updated.cohortId,
+          groupId: updated.groupId,
+          sessionTitle: updated.sessionTitle,
+          traineesPresent: updated.traineesPresent,
+          submittedAt: updated.submittedAt,
+        }).catch(() => {});
+      }
+
+      return res.json({
+        success: true,
+        message: isSubmit ? "Lesson report submitted successfully." : "Draft saved successfully.",
+        report: updated,
+      });
+    }
+
+    // New report insertion
+    const [created] = await db
+      .insert(trainerLessonReports)
+      .values({
+        trainerId: auth.userId,
+        trainerName: auth.name || null,
+        trainerEmail: auth.email || null,
+        cohortId: data.cohortId,
+        cohortName: data.cohortName || null,
+        groupId: data.groupId || null,
+        groupName: data.groupName || null,
+        sessionId: data.sessionId || null,
+        lessonId: data.lessonId || null,
+        weekNumber: data.weekNumber || null,
+        sessionTitle: data.sessionTitle,
+        dateConducted: parsedDate,
+        topicsCovered: data.topicsCovered || "",
+        activities: data.activities || "",
+        traineesPresent: data.traineesPresent ?? 0,
+        learningOutcomes: data.learningOutcomes || "",
+        challenges: data.challenges || null,
+        comments: data.comments || null,
+        attachmentUrl: data.attachmentUrl || null,
+        attachmentName: data.attachmentName || null,
+        status: isSubmit ? "submitted" : "draft",
+        isDelivered: false,
+        submittedAt: isSubmit ? new Date() : null,
+      })
+      .returning();
+
+    if (isSubmit) {
+      publishEvent("trainer.report.submitted", {
+        reportId: created.id,
+        trainerId: created.trainerId,
+        cohortId: created.cohortId,
+        groupId: created.groupId,
+        sessionTitle: created.sessionTitle,
+        traineesPresent: created.traineesPresent,
+        submittedAt: created.submittedAt,
+      }).catch(() => {});
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: isSubmit ? "Lesson report submitted successfully." : "Draft saved successfully.",
+      report: created,
+    });
+  } catch (err: any) {
+    console.error("[lms-service] Error saving trainer report:", err);
+    return res.status(500).json({ error: "Failed to save trainer report", details: err?.message });
+  }
+});
+
+// 2. GET /trainer-reports/my-reports — Fetch all reports created by the logged-in trainer
+trainerReportsRouter.get("/my-reports", async (req: Request, res: Response) => {
+  try {
+    const auth = getAuthUserContext(req);
+    if (!auth.userId) {
+      return res.status(401).json({ error: "Authentication required." });
+    }
+
+    const { cohortId, groupId, sessionId, lessonId, status } = req.query;
+
+    const conditions: any[] = [eq(trainerLessonReports.trainerId, auth.userId)];
+
+    if (cohortId && typeof cohortId === "string") {
+      conditions.push(eq(trainerLessonReports.cohortId, cohortId));
+    }
+    if (groupId && typeof groupId === "string") {
+      conditions.push(eq(trainerLessonReports.groupId, groupId));
+    }
+    if (sessionId && typeof sessionId === "string") {
+      conditions.push(eq(trainerLessonReports.sessionId, sessionId));
+    }
+    if (lessonId && typeof lessonId === "string") {
+      conditions.push(eq(trainerLessonReports.lessonId, lessonId));
+    }
+    if (status && (status === "draft" || status === "submitted")) {
+      conditions.push(eq(trainerLessonReports.status, status as any));
+    }
+
+    const reports = await db
+      .select()
+      .from(trainerLessonReports)
+      .where(and(...conditions))
+      .orderBy(desc(trainerLessonReports.createdAt));
+
+    return res.json({ success: true, count: reports.length, reports });
+  } catch (err: any) {
+    console.error("[lms-service] Error fetching my reports:", err);
+    return res.status(500).json({ error: "Failed to fetch reports" });
+  }
+});
+
+// 3. GET /trainer-reports/admin/all — Administrator view for monitoring all reports
+trainerReportsRouter.get("/admin/all", async (req: Request, res: Response) => {
+  try {
+    const auth = getAuthUserContext(req);
+    const isAdmin = auth.role === "admin" || auth.role === "sub_admin" || auth.role === "lead_trainer";
+    if (!isAdmin) {
+      return res.status(403).json({ error: "Staff privilege required to view all trainer reports." });
+    }
+
+    const { trainerId, cohortId, groupId, status, isDelivered, limit, offset } = req.query;
+
+    const conditions: any[] = [];
+    if (trainerId && typeof trainerId === "string") {
+      conditions.push(eq(trainerLessonReports.trainerId, trainerId));
+    }
+    if (cohortId && typeof cohortId === "string") {
+      conditions.push(eq(trainerLessonReports.cohortId, cohortId));
+    }
+    if (groupId && typeof groupId === "string") {
+      conditions.push(eq(trainerLessonReports.groupId, groupId));
+    }
+    if (status && (status === "draft" || status === "submitted")) {
+      conditions.push(eq(trainerLessonReports.status, status as any));
+    }
+    if (isDelivered !== undefined) {
+      conditions.push(eq(trainerLessonReports.isDelivered, isDelivered === "true"));
+    }
+
+    const queryLimit = Math.min(Number(limit) || 100, 500);
+    const queryOffset = Number(offset) || 0;
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const reports = await db
+      .select()
+      .from(trainerLessonReports)
+      .where(whereClause)
+      .orderBy(desc(trainerLessonReports.createdAt))
+      .limit(queryLimit)
+      .offset(queryOffset);
+
+    return res.json({
+      success: true,
+      count: reports.length,
+      reports,
+    });
+  } catch (err: any) {
+    console.error("[lms-service] Error fetching admin reports:", err);
+    return res.status(500).json({ error: "Failed to fetch admin reports" });
+  }
+});
+
+// 4. POST /trainer-reports/:id/mark-delivered — MANDATORY GATED DELIVERY ACTION
+trainerReportsRouter.post("/:id/mark-delivered", async (req: Request, res: Response) => {
+  try {
+    const auth = getAuthUserContext(req);
+    if (!auth.userId) {
+      return res.status(401).json({ error: "Authentication required." });
+    }
+
+    const reportId = req.params.id;
+    if (!reportId) {
+      return res.status(400).json({ error: "Report ID is required." });
+    }
+
+    const [report] = await db
+      .select()
+      .from(trainerLessonReports)
+      .where(eq(trainerLessonReports.id, reportId))
+      .limit(1);
+
+    if (!report) {
+      return res.status(404).json({
+        error: "Cannot mark session delivered: No report found. A submitted lesson report is strictly mandatory before marking completion.",
+      });
+    }
+
+    // Permission check: only assigned trainer or staff
+    const isOwner = report.trainerId === auth.userId;
+    const isStaff = auth.role === "admin" || auth.role === "sub_admin" || auth.role === "lead_trainer";
+    if (!isOwner && !isStaff) {
+      return res.status(403).json({ error: "Unauthorized to mark delivery for this lesson report." });
+    }
+
+    // ─── STRICT GATE ENFORCEMENT ───
+    if (report.status !== "submitted") {
+      return res.status(400).json({
+        error: "Cannot mark session as completed/delivered: The lesson report is still in 'draft' status. You must submit the report first.",
+        status: report.status,
+      });
+    }
+
+    if (report.isDelivered) {
+      return res.json({
+        success: true,
+        message: "Session is already marked as completed/delivered.",
+        report,
+      });
+    }
+
+    const deliveredAt = new Date();
+    const [updated] = await db
+      .update(trainerLessonReports)
+      .set({
+        isDelivered: true,
+        deliveredAt,
+        updatedAt: deliveredAt,
+      })
+      .where(eq(trainerLessonReports.id, reportId))
+      .returning();
+
+    publishEvent("trainer.session.delivered", {
+      reportId: updated.id,
+      trainerId: updated.trainerId,
+      cohortId: updated.cohortId,
+      groupId: updated.groupId,
+      sessionTitle: updated.sessionTitle,
+      deliveredAt: updated.deliveredAt,
+    }).catch(() => {});
+
+    return res.json({
+      success: true,
+      message: "Lesson/session has been marked as completed/delivered successfully.",
+      report: updated,
+    });
+  } catch (err: any) {
+    console.error("[lms-service] Error marking session delivered:", err);
+    return res.status(500).json({ error: "Failed to mark session as delivered" });
+  }
+});
+
+// 5. GET /trainer-reports/:id — Fetch a single report by ID
+trainerReportsRouter.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const auth = getAuthUserContext(req);
+    const reportId = req.params.id;
+
+    const [report] = await db
+      .select()
+      .from(trainerLessonReports)
+      .where(eq(trainerLessonReports.id, reportId))
+      .limit(1);
+
+    if (!report) {
+      return res.status(404).json({ error: "Report not found." });
+    }
+
+    // Only allow owner or staff
+    const isOwner = auth.userId && report.trainerId === auth.userId;
+    const isStaff = auth.role === "admin" || auth.role === "sub_admin" || auth.role === "lead_trainer";
+    if (!isOwner && !isStaff) {
+      return res.status(403).json({ error: "Unauthorized to view this report." });
+    }
+
+    return res.json({ success: true, report });
+  } catch (err: any) {
+    console.error("[lms-service] Error fetching report:", err);
+    return res.status(500).json({ error: "Failed to fetch report" });
+  }
+});
+
  

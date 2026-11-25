@@ -699,6 +699,25 @@ app.post(
   }),
 );
 
+app.post(
+  "/api/cooperative/withdraw",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+app.post(
+  "/api/cooperative/payout",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({
+    target: APPLICATIONS_SERVICE_URL,
+    changeOrigin: true,
+  }),
+);
+
 // ─────────────────────────────────────────────
 // WORKSHOP & PAYSTACK INTEGRATION (applications-service)
 // ─────────────────────────────────────────────
@@ -1061,6 +1080,36 @@ app.get(
   },
 );
 
+
+app.post(
+  "/api/users/:id/kyc-submit",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
+  "/api/users/:id/kyc-status",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
+  "/api/users/:id/kyc-details",
+  authenticate,
+  requireRole("admin", "sub_admin"),
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+app.get(
+  "/api/users/kyc/files/download",
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
+app.post(
+  "/api/users/kyc/webhook/:provider",
+  keepPath,
+  createProxyMiddleware({ target: USER_SERVICE_URL, changeOrigin: true }),
+);
 
 app.patch(
   "/api/users/:id/id-document",
@@ -1793,6 +1842,17 @@ app.delete(
   keepPath,
   createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
 );
+
+// ─────────────────────────────────────────────
+// LMS — TRAINER LESSON REPORTS & DELIVERY GATE
+// ─────────────────────────────────────────────
+app.use(
+  "/api/lms/trainer-reports",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+
 
 // ─────────────────────────────────────────────
 // TRAINER SUPPORT TICKETS (user-service) — signed-in users only;

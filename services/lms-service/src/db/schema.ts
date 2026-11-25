@@ -10,12 +10,14 @@ import {
   jsonb,
   date,
   uniqueIndex,
+  index,
 } from "drizzle-orm/pg-core";
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
 export const lessonTypeEnum = pgEnum("lesson_type", ["video", "document"]);
 export const sessionTypeEnum = pgEnum("session_type", ["online", "physical"]);
+export const reportStatusEnum = pgEnum("report_status", ["draft", "submitted"]);
 // ─── Enums (add to existing enums section) ───────────────────────────────────
 export const questionTypeEnum = pgEnum("question_type", ["mcq", "short_answer","essay",]);
 
@@ -412,3 +414,40 @@ export const readings = pgTable("readings", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+// ─── Trainer Lesson Reports ───────────────────────────────────────────────────
+export const trainerLessonReports = pgTable("trainer_lesson_reports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  trainerId: uuid("trainer_id").notNull(),
+  trainerName: varchar("trainer_name", { length: 255 }),
+  trainerEmail: varchar("trainer_email", { length: 255 }),
+  cohortId: uuid("cohort_id").notNull(),
+  cohortName: varchar("cohort_name", { length: 255 }),
+  groupId: varchar("group_id", { length: 128 }),
+  groupName: varchar("group_name", { length: 255 }),
+  sessionId: uuid("session_id"),
+  lessonId: uuid("lesson_id"),
+  weekNumber: integer("week_number"),
+  sessionTitle: varchar("session_title", { length: 255 }).notNull(),
+  dateConducted: timestamp("date_conducted").notNull(),
+  topicsCovered: text("topics_covered").notNull(),
+  activities: text("activities").notNull(),
+  traineesPresent: integer("trainees_present").notNull().default(0),
+  learningOutcomes: text("learning_outcomes").notNull(),
+  challenges: text("challenges"),
+  comments: text("comments"),
+  attachmentUrl: text("attachment_url"),
+  attachmentName: varchar("attachment_name", { length: 255 }),
+  status: reportStatusEnum("status").notNull().default("draft"),
+  isDelivered: boolean("is_delivered").notNull().default(false),
+  deliveredAt: timestamp("delivered_at"),
+  submittedAt: timestamp("submitted_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  idxTrainerReportsTrainer: index("idx_trainer_reports_trainer").on(table.trainerId),
+  idxTrainerReportsCohort: index("idx_trainer_reports_cohort").on(table.cohortId),
+  idxTrainerReportsGroup: index("idx_trainer_reports_group").on(table.groupId),
+  idxTrainerReportsStatus: index("idx_trainer_reports_status").on(table.status),
+}));
+
