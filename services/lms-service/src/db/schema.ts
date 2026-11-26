@@ -415,7 +415,7 @@ export const readings = pgTable("readings", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// ─── Trainer Lesson Reports ───────────────────────────────────────────────────
+// ─── Trainer Lesson Reports (Official 7-Section EEWYLA Template) ─────────────
 export const trainerLessonReports = pgTable("trainer_lesson_reports", {
   id: uuid("id").primaryKey().defaultRandom(),
   trainerId: uuid("trainer_id").notNull(),
@@ -428,20 +428,60 @@ export const trainerLessonReports = pgTable("trainer_lesson_reports", {
   sessionId: uuid("session_id"),
   lessonId: uuid("lesson_id"),
   weekNumber: integer("week_number"),
+
+  // Section 1: Session details
   sessionTitle: varchar("session_title", { length: 255 }).notNull(),
+  sessionType: varchar("session_type", { length: 64 }).notNull().default("practical"), // physical | practical | online | hybrid
   dateConducted: timestamp("date_conducted").notNull(),
+  sessionStartTime: varchar("session_start_time", { length: 32 }),
+  sessionEndTime: varchar("session_end_time", { length: 32 }),
+  location: varchar("location", { length: 255 }),
+
+  // Section 2: Attendance
+  expectedTrainees: integer("expected_trainees").notNull().default(0),
+  traineesPresent: integer("trainees_present").notNull().default(0),
+  absentTrainees: integer("absent_trainees").notNull().default(0),
+  attendanceNotes: text("attendance_notes"),
+  attendanceEvidenceRef: text("attendance_evidence_ref"),
+
+  // Section 3: Objectives and outcomes
+  objectives: text("objectives"),
   topicsCovered: text("topics_covered").notNull(),
   activities: text("activities").notNull(),
-  traineesPresent: integer("trainees_present").notNull().default(0),
   learningOutcomes: text("learning_outcomes").notNull(),
+
+  // Section 4: Issues raised
   challenges: text("challenges"),
+
+  // Section 5: Incidents
+  incidentsOccurred: boolean("incidents_occurred").notNull().default(false),
+  incidentDetails: text("incident_details"),
+
+  // Section 6: Looking ahead
+  lookingAhead: text("looking_ahead"),
+
+  // Section 7: Sign-off
   comments: text("comments"),
+  trainerSignOffName: varchar("trainer_sign_off_name", { length: 255 }),
+  trainerSignedAt: timestamp("trainer_signed_at"),
+
+  // Legacy single-attachment columns kept for backwards compatibility
   attachmentUrl: text("attachment_url"),
   attachmentName: varchar("attachment_name", { length: 255 }),
+
+  // Workflow, 24h Deadline, Delivery Gate & EPA Confirmation
   status: reportStatusEnum("status").notNull().default("draft"),
+  submissionDeadline: timestamp("submission_deadline"),
+  isLate: boolean("is_late").notNull().default(false),
   isDelivered: boolean("is_delivered").notNull().default(false),
   deliveredAt: timestamp("delivered_at"),
   submittedAt: timestamp("submitted_at"),
+  epaConfirmed: boolean("epa_confirmed").notNull().default(false),
+  epaConfirmedBy: uuid("epa_confirmed_by"),
+  epaConfirmedByName: varchar("epa_confirmed_by_name", { length: 255 }),
+  epaConfirmedAt: timestamp("epa_confirmed_at"),
+  epaNotes: text("epa_notes"),
+
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({
@@ -449,5 +489,45 @@ export const trainerLessonReports = pgTable("trainer_lesson_reports", {
   idxTrainerReportsCohort: index("idx_trainer_reports_cohort").on(table.cohortId),
   idxTrainerReportsGroup: index("idx_trainer_reports_group").on(table.groupId),
   idxTrainerReportsStatus: index("idx_trainer_reports_status").on(table.status),
+  idxTrainerReportsSession: index("idx_trainer_reports_session").on(table.sessionId),
+}));
+
+// ─── Trainer Report Supporting Document Attachments (Cloudinary Metadata) ─────
+export const trainerReportAttachments = pgTable("trainer_report_attachments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  reportId: uuid("report_id")
+    .notNull()
+    .references(() => trainerLessonReports.id, { onDelete: "cascade" }),
+  trainerId: uuid("trainer_id").notNull(),
+  cloudinaryPublicId: varchar("cloudinary_public_id", { length: 512 }).notNull(),
+  resourceType: varchar("resource_type", { length: 32 }).notNull().default("image"), // image | raw | video
+  deliveryType: varchar("delivery_type", { length: 32 }).notNull().default("authenticated"), // authenticated | private | upload
+  originalFilename: varchar("original_filename", { length: 255 }).notNull(),
+  fileFormat: varchar("file_format", { length: 50 }),
+  fileSize: integer("file_size").notNull().default(0),
+  attachmentCategory: varchar("attachment_category", { length: 64 }).notNull().default("other"), // attendance | photo | farm_evidence | other
+  uploadedBy: uuid("uploaded_by").notNull(),
+  uploadNonce: varchar("upload_nonce", { length: 128 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  idxReportAttachReport: index("idx_report_attach_report").on(table.reportId),
+  idxReportAttachTrainer: index("idx_report_attach_trainer").on(table.trainerId),
+  uqReportAttachPublicId: uniqueIndex("uq_report_attach_public_id").on(table.reportId, table.cloudinaryPublicId),
+}));
+
+// ─── Trainer Report Audit Trail ───────────────────────────────────────────────
+export const trainerReportAuditLogs = pgTable("trainer_report_audit_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  reportId: uuid("report_id")
+    .notNull()
+    .references(() => trainerLessonReports.id, { onDelete: "cascade" }),
+  action: varchar("action", { length: 64 }).notNull(), // created | draft_saved | submitted | amended | attachment_added | attachment_removed | epa_confirmed | marked_delivered
+  actorId: uuid("actor_id").notNull(),
+  actorName: varchar("actor_name", { length: 255 }),
+  actorRole: varchar("actor_role", { length: 64 }),
+  details: jsonb("details").$type<Record<string, any>>().default({}),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  idxReportAuditReport: index("idx_report_audit_report").on(table.reportId),
 }));
 
