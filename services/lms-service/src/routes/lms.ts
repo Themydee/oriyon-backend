@@ -1911,13 +1911,16 @@ week12Router.get("/checkins/:cohortId", async (req: Request, res: Response) => {
 week12Router.get("/checkins/:cohortId/:userId", async (req: Request, res: Response) => {
   try {
     const { cohortId, userId } = req.params;
+    const { candidateIds } = await resolveCandidateUserIds(userId);
+    const idList = candidateIds.length > 0 ? candidateIds : [userId];
+
     let all = await db
       .select()
       .from(week12Checkins)
       .where(
         and(
           eq(week12Checkins.cohortId, cohortId),
-          eq(week12Checkins.userId, userId)
+          inArray(week12Checkins.userId, idList)
         )
       );
 
@@ -1926,11 +1929,12 @@ week12Router.get("/checkins/:cohortId/:userId", async (req: Request, res: Respon
       all = await db
         .select()
         .from(week12Checkins)
-        .where(eq(week12Checkins.userId, userId));
+        .where(inArray(week12Checkins.userId, idList));
     }
 
-    const days = Array.from(new Set(all.map((c) => c.day)));
     const fullyAttended = await isWeek12AttendanceComplete(userId, cohortId);
+    const rawDays = Array.from(new Set(all.map((c) => c.day)));
+    const days = fullyAttended && rawDays.length === 0 ? [1, 2, 3, 4, 5] : rawDays;
 
     return res.json({ checkins: all, days, fullyAttended });
   } catch {
