@@ -299,6 +299,59 @@ async function ensureDbColumns() {
       CREATE INDEX IF NOT EXISTS idx_trainer_reports_cohort ON trainer_lesson_reports (cohort_id);
       CREATE INDEX IF NOT EXISTS idx_trainer_reports_group ON trainer_lesson_reports (group_id);
       CREATE INDEX IF NOT EXISTS idx_trainer_reports_status ON trainer_lesson_reports (status);
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS session_type varchar(64) NOT NULL DEFAULT 'practical';
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS session_start_time varchar(32);
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS session_end_time varchar(32);
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS location varchar(255);
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS expected_trainees integer NOT NULL DEFAULT 0;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS absent_trainees integer NOT NULL DEFAULT 0;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS attendance_notes text;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS attendance_evidence_ref text;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS objectives text;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS incidents_occurred boolean NOT NULL DEFAULT false;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS incident_details text;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS looking_ahead text;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS trainer_sign_off_name varchar(255);
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS trainer_signed_at timestamp;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS submission_deadline timestamp;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS is_late boolean NOT NULL DEFAULT false;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS epa_confirmed boolean NOT NULL DEFAULT false;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS epa_confirmed_by uuid;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS epa_confirmed_by_name varchar(255);
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS epa_confirmed_at timestamp;
+      ALTER TABLE trainer_lesson_reports ADD COLUMN IF NOT EXISTS epa_notes text;
+      CREATE INDEX IF NOT EXISTS idx_trainer_reports_session ON trainer_lesson_reports (session_id);
+
+      CREATE TABLE IF NOT EXISTS trainer_report_attachments (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        report_id uuid NOT NULL REFERENCES trainer_lesson_reports(id) ON DELETE CASCADE,
+        trainer_id uuid NOT NULL,
+        cloudinary_public_id varchar(512) NOT NULL,
+        resource_type varchar(32) NOT NULL DEFAULT 'image',
+        delivery_type varchar(32) NOT NULL DEFAULT 'authenticated',
+        original_filename varchar(255) NOT NULL,
+        file_format varchar(50),
+        file_size integer NOT NULL DEFAULT 0,
+        attachment_category varchar(64) NOT NULL DEFAULT 'other',
+        uploaded_by uuid NOT NULL,
+        upload_nonce varchar(128),
+        created_at timestamp NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_report_attach_report ON trainer_report_attachments (report_id);
+      CREATE INDEX IF NOT EXISTS idx_report_attach_trainer ON trainer_report_attachments (trainer_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_report_attach_public_id ON trainer_report_attachments (report_id, cloudinary_public_id);
+
+      CREATE TABLE IF NOT EXISTS trainer_report_audit_logs (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        report_id uuid NOT NULL REFERENCES trainer_lesson_reports(id) ON DELETE CASCADE,
+        action varchar(64) NOT NULL,
+        actor_id uuid NOT NULL,
+        actor_name varchar(255),
+        actor_role varchar(64),
+        details jsonb DEFAULT '{}'::jsonb,
+        created_at timestamp NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_report_audit_report ON trainer_report_audit_logs (report_id);
       CREATE TABLE IF NOT EXISTS exam_eligibility_overrides (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         trainee_id uuid NOT NULL,
