@@ -28,7 +28,7 @@ import { eq } from "drizzle-orm";
 const app = express();
 const PORT = process.env.PORT || 3003;
 
-const queryClient = postgres(process.env.DATABASE_URL!, {
+export const queryClient = postgres(process.env.DATABASE_URL!, {
   max: 30,
   idle_timeout: 20,
   connect_timeout: 10,

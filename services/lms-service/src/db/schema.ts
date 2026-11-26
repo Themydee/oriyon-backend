@@ -39,11 +39,14 @@ export const violationTypeEnum = pgEnum("violation_type", [
 export const weeks = pgTable("weeks", {
   id: uuid("id").primaryKey().defaultRandom(),
   cohortId: uuid("cohort_id").notNull(),
+  curriculumRevisionId: uuid("curriculum_revision_id"),
+  moduleId: uuid("module_id"),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
   weekNumber: integer("week_number").notNull(),
   requiresQuizPass: boolean("requires_quiz_pass").notNull().default(true),
   isPublished: boolean("is_published").notNull().default(false),
+  isArchived: boolean("is_archived").notNull().default(false),
   objectives: jsonb("objectives").$type<string[]>().notNull().default([]),
   unlockDate: timestamp("unlock_date"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -57,6 +60,7 @@ export const lessons = pgTable("lessons", {
   weekId: uuid("week_id")
     .notNull()
     .references(() => weeks.id, { onDelete: "cascade" }),
+  curriculumRevisionId: uuid("curriculum_revision_id"),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
   type: lessonTypeEnum("type").notNull().default("video"),
@@ -67,6 +71,7 @@ export const lessons = pgTable("lessons", {
   durationMinutes: integer("duration_minutes"),
   order: integer("order").notNull().default(0),
   isPublished: boolean("is_published").notNull().default(false),
+  isArchived: boolean("is_archived").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -83,6 +88,7 @@ export const progress = pgTable("progress", {
     .notNull()
     .references(() => weeks.id, { onDelete: "cascade" }),
   cohortId: uuid("cohort_id").notNull(),
+  curriculumRevisionId: uuid("curriculum_revision_id"),
   completed: boolean("completed").notNull().default(false),
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -98,12 +104,14 @@ export const quizzes = pgTable("quizzes", {
     .notNull()
     .references(() => weeks.id, { onDelete: "cascade" }),
   cohortId: uuid("cohort_id").notNull(),
+  curriculumRevisionId: uuid("curriculum_revision_id"),
   title: varchar("title", { length: 255 }).notNull(),
   // questions stored as JSON array:
   // [{ id, question, options: [string], correctIndex: number }]
   questions: jsonb("questions").notNull().default([]),
   passingScore: integer("passing_score").notNull().default(70),
   isPublished: boolean("is_published").notNull().default(false),
+  isArchived: boolean("is_archived").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -120,6 +128,7 @@ export const quizAttempts = pgTable("quiz_attempts", {
     .notNull()
     .references(() => weeks.id, { onDelete: "cascade" }),
   cohortId: uuid("cohort_id").notNull(),
+  curriculumRevisionId: uuid("curriculum_revision_id"),
   // answers stored as JSON: { [questionId]: selectedIndex }
   answers: jsonb("answers").notNull().default({}),
   score: integer("score").notNull().default(0),
@@ -550,5 +559,105 @@ export const examEligibilityOverrides = pgTable("exam_eligibility_overrides", {
 }, (table) => ({
   idxExamEligOverrideTrainee: index("idx_exam_elig_override_trainee").on(table.traineeId),
   idxExamEligOverrideActive: index("idx_exam_elig_override_active").on(table.traineeId, table.isActive),
+}));
+
+// ─── Master Curriculum Architecture (Phase 1 Additive Schema) ────────────────
+
+export const masterCurricula = pgTable("master_curricula", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: varchar("code", { length: 64 }).notNull().unique(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: uuid("created_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const curriculumRevisions = pgTable("curriculum_revisions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  curriculumId: uuid("curriculum_id")
+    .notNull()
+    .references(() => masterCurricula.id, { onDelete: "restrict" }),
+  versionLabel: varchar("version_label", { length: 32 }).notNull(),
+  versionNumber: integer("version_number").notNull(),
+  changeClassification: varchar("change_classification", { length: 32 }).notNull().default("initial"), // initial | non_breaking | structural | controlled
+  status: varchar("status", { length: 32 }).notNull().default("draft"), // draft | in_review | published | archived
+  summary: text("summary"),
+  effectiveFrom: timestamp("effective_from"),
+  publishedBy: uuid("published_by"),
+  publishedAt: timestamp("published_at"),
+  parentRevisionId: uuid("parent_revision_id"),
+  createdBy: uuid("created_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  uqCurriculumVersion: uniqueIndex("uq_curriculum_revision_version").on(table.curriculumId, table.versionNumber),
+  idxCurriculumRevisionStatus: index("idx_curriculum_revision_status").on(table.status),
+}));
+
+export const curriculumModules = pgTable("curriculum_modules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  revisionId: uuid("revision_id")
+    .notNull()
+    .references(() => curriculumRevisions.id, { onDelete: "restrict" }),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  orderIndex: integer("order_index").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  idxCurriculumModulesRev: index("idx_curriculum_modules_rev").on(table.revisionId),
+}));
+
+export const cohortCurriculumBindings = pgTable("cohort_curriculum_bindings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  cohortId: uuid("cohort_id").notNull(),
+  cohortName: varchar("cohort_name", { length: 255 }),
+  revisionId: uuid("revision_id")
+    .notNull()
+    .references(() => curriculumRevisions.id, { onDelete: "restrict" }),
+  isPinned: boolean("is_pinned").notNull().default(true),
+  boundBy: uuid("bound_by"),
+  boundAt: timestamp("bound_at").notNull().defaultNow(),
+  previousRevisionId: uuid("previous_revision_id"),
+  upgradeReason: text("upgrade_reason"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  uqCohortBinding: uniqueIndex("uq_cohort_curriculum_binding").on(table.cohortId),
+  idxCohortBindingRev: index("idx_cohort_binding_rev").on(table.revisionId),
+}));
+
+export const cohortWeekSchedules = pgTable("cohort_week_schedules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  cohortId: uuid("cohort_id").notNull(),
+  weekNumber: integer("week_number").notNull(),
+  masterWeekId: uuid("master_week_id"),
+  unlockDate: timestamp("unlock_date"),
+  practicalRequired: boolean("practical_required").notNull().default(true),
+  quizRequired: boolean("quiz_required").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  uqCohortWeekSchedule: uniqueIndex("uq_cohort_week_schedule").on(table.cohortId, table.weekNumber),
+  idxCohortWeekScheduleCohort: index("idx_cohort_week_schedule_cohort").on(table.cohortId),
+}));
+
+export const curriculumAuditLogs = pgTable("curriculum_audit_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  curriculumId: uuid("curriculum_id"),
+  revisionId: uuid("revision_id"),
+  cohortId: uuid("cohort_id"),
+  action: varchar("action", { length: 64 }).notNull(), // revision_created | content_updated | revision_published | cohort_bound | cohort_upgraded | backfill_promoted | rollback
+  changeClassification: varchar("change_classification", { length: 32 }),
+  actorId: uuid("actor_id"),
+  actorRole: varchar("actor_role", { length: 64 }),
+  reason: text("reason"),
+  details: jsonb("details").$type<Record<string, any>>().default({}),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  idxCurriculumAuditRev: index("idx_curriculum_audit_rev").on(table.revisionId),
+  idxCurriculumAuditCohort: index("idx_curriculum_audit_cohort").on(table.cohortId),
 }));
 
