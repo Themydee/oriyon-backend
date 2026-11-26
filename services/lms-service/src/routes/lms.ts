@@ -123,11 +123,11 @@ export async function fetchUser(userId: string): Promise<UserRecord | null> {
   }
 }
 
-async function resolveCandidateUserIds(userId: string): Promise<{ candidateIds: string[]; email: string }> {
+async function resolveCandidateUserIds(userId: string, fallbackEmail?: string): Promise<{ candidateIds: string[]; email: string }> {
   const isUuid = (str: any) => typeof str === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
   const idSet = new Set<string>();
   if (isUuid(userId)) idSet.add(userId);
-  let email = "";
+  let email = (fallbackEmail || "").trim();
   try {
     const u = await fetchUser(userId);
     if (u?.email) email = u.email;
@@ -262,7 +262,8 @@ export interface AttendanceCheckResult {
 
 export async function checkWeeks1To12Attendance(
   userId: string,
-  cohortId?: string
+  cohortId?: string,
+  fallbackEmail?: string
 ): Promise<AttendanceCheckResult> {
   const isUuid = (str: any) =>
     typeof str === "string" &&
@@ -278,7 +279,7 @@ export async function checkWeeks1To12Attendance(
   }
 
   try {
-    const { candidateIds, email: userEmail } = await resolveCandidateUserIds(userId);
+    const { candidateIds, email: userEmail } = await resolveCandidateUserIds(userId, fallbackEmail);
 
     // 1. Fetch practical checkins across all candidate IDs (userId, cohortMemberId, groupMemberId)
     const pCheckins = await db
@@ -352,12 +353,17 @@ export async function checkWeeks1To12Attendance(
       }
     }
 
-    // Fallback: if cohortId is known and some weeks are still missing, scan cohort checkins for suffix match (parity with frontend)
-    if (cohortId && isUuid(cohortId) && attendedSet.size < 12) {
+    // Fallback: if some weeks are still missing, scan practical checkins for those weeks across cohorts for suffix match (parity with frontend)
+    const stillMissingWeeks = Array.from(expectedSuffixes.keys());
+    if (stillMissingWeeks.length > 0 && attendedSet.size < 12) {
       const cohortCheckins = await db
         .select({ weekNumber: practicalCheckins.weekNumber, codeSubmitted: practicalCheckins.codeSubmitted })
         .from(practicalCheckins)
-        .where(eq(practicalCheckins.cohortId, cohortId));
+        .where(
+          cohortId && isUuid(cohortId)
+            ? inArray(practicalCheckins.weekNumber, stillMissingWeeks)
+            : inArray(practicalCheckins.weekNumber, stillMissingWeeks)
+        );
       for (const cc of cohortCheckins) {
         const w = Number(cc.weekNumber);
         if (!Number.isInteger(w) || w < 1 || w > 12 || attendedSet.has(w)) continue;
@@ -3122,8 +3128,9 @@ examsRouter.get("/eligibility", async (req: Request, res: Response) => {
       cohortId = user?.cohortMembers?.[0]?.cohortId || user?.cohortId;
     }
 
+    const userEmailHeader = (req.headers["x-user-email"] as string | undefined) || undefined;
     const [attendanceCheck, missingQuizzes, manualOverride] = await Promise.all([
-      checkWeeks1To12Attendance(userId, cohortId),
+      checkWeeks1To12Attendance(userId, cohortId, userEmailHeader),
       getMissingWeeklyQuizzes(userId, cohortId),
       getActiveEligibilityOverride(userId, cohortId),
     ]);
@@ -3304,8 +3311,9 @@ examsRouter.get("/:id/quiz-requirements", async (req: Request, res: Response) =>
     const [exam] = await db.select().from(exams).where(eq(exams.id, req.params.id)).limit(1);
     if (!exam) return res.status(404).json({ error: "Exam not found" });
 
+    const userEmailHeader = (req.headers["x-user-email"] as string | undefined) || undefined;
     const [attendanceCheck, missingQuizzes, manualOverride] = await Promise.all([
-      checkWeeks1To12Attendance(userId, exam.cohortId),
+      checkWeeks1To12Attendance(userId, exam.cohortId, userEmailHeader),
       getMissingWeeklyQuizzes(userId, exam.cohortId),
       getActiveEligibilityOverride(userId, exam.cohortId, exam.id),
     ]);
@@ -3660,8 +3668,9 @@ examsRouter.post(
       if (!exam)
         return res.status(404).json({ error: "Exam not found or not published" });
 
+      const userEmailHeader = (req.headers["x-user-email"] as string | undefined) || undefined;
       const [attendanceCheck, manualOverride] = await Promise.all([
-        checkWeeks1To12Attendance(userId, exam.cohortId),
+        checkWeeks1To12Attendance(userId, exam.cohortId, userEmailHeader),
         getActiveEligibilityOverride(userId, exam.cohortId, exam.id),
       ]);
       if (!attendanceCheck.isComplete && !manualOverride) {
