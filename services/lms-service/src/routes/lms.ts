@@ -1942,6 +1942,7 @@ week12Router.get("/checkins/:cohortId/:userId", async (req: Request, res: Respon
     const rawDays = Array.from(new Set(all.map((c) => c.day)));
     const days = fullyAttended && rawDays.length === 0 ? [1, 2, 3, 4, 5] : rawDays;
 
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
     return res.json({ checkins: all, days, fullyAttended });
   } catch {
     return res.status(500).json({ error: "Failed to fetch checkins" });
@@ -2146,6 +2147,7 @@ practicalRouter.get("/checkins/user/:userId", async (req: Request, res: Response
       }
     }
 
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
     return res.json(list);
   } catch (err) {
     console.error("[lms] GET /practical/checkins/user/:userId error:", err);
@@ -3143,6 +3145,7 @@ examsRouter.get("/eligibility", async (req: Request, res: Response) => {
       ? "ADMIN_MANUAL_OVERRIDE"
       : "INELIGIBLE";
 
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
     return res.json({
       ready,
       eligible: ready,
@@ -3349,6 +3352,7 @@ examsRouter.get("/:id/quiz-requirements", async (req: Request, res: Response) =>
       existingSession && existingSession.status !== "in_progress"
     );
 
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
     return res.json({
       ready,
       eligible: ready,
