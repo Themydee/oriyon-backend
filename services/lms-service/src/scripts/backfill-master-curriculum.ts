@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { db } from "../index";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 import {
   weeks,
   lessons,
@@ -13,6 +14,9 @@ import {
   cohortWeekSchedules,
   curriculumAuditLogs,
 } from "../db/schema";
+
+const queryClient = postgres(process.env.DATABASE_URL!, { max: 5, connect_timeout: 10 });
+const db = drizzle(queryClient);
 
 interface CohortSummary {
   cohortId: string;
@@ -274,12 +278,14 @@ if (require.main === module) {
     : undefined;
 
   runMasterCurriculumBackfill({ apply, sourceCohortId, allCohortIds })
-    .then((result) => {
+    .then(async (result) => {
       console.log(JSON.stringify(result, null, 2));
+      await queryClient.end({ timeout: 2 }).catch(() => {});
       process.exit(0);
     })
-    .catch((err) => {
+    .catch(async (err) => {
       console.error("Backfill error:", err);
+      await queryClient.end({ timeout: 2 }).catch(() => {});
       process.exit(1);
     });
 }
