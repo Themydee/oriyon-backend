@@ -111,9 +111,28 @@ export interface UserRecord {
   [key: string]: any;
 }
 
-export async function fetchUser(userId: string): Promise<UserRecord | null> {
+function getRequestUserEmail(req: Request): string | undefined {
+  const headerEmail = (req.headers["x-user-email"] as string | undefined)?.trim();
+  if (headerEmail) return headerEmail;
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    try {
+      const token = authHeader.split(" ")[1];
+      const payload = jwt.decode(token) as { email?: string } | null;
+      if (payload?.email) return payload.email.trim();
+    } catch {
+      // ignore
+    }
+  }
+  return undefined;
+}
+
+export async function fetchUser(userId: string, fallbackEmail?: string): Promise<UserRecord | null> {
   try {
-    const res = await fetch(`${process.env.USER_SERVICE_URL}/users/${userId}`);
+    const headers: Record<string, string> = {};
+    if (userId) headers["x-user-id"] = userId;
+    if (fallbackEmail) headers["x-user-email"] = fallbackEmail;
+    const res = await fetch(`${process.env.USER_SERVICE_URL}/users/${userId}`, { headers });
     if (!res.ok) return null;
     const user = (await res.json()) as UserRecord;
     return user;
@@ -129,7 +148,7 @@ async function resolveCandidateUserIds(userId: string, fallbackEmail?: string): 
   if (isUuid(userId)) idSet.add(userId);
   let email = (fallbackEmail || "").trim();
   try {
-    const u = await fetchUser(userId);
+    const u = await fetchUser(userId, email || undefined);
     if (u?.email) email = u.email;
     if (u?.id && isUuid(u.id)) idSet.add(u.id);
     if (Array.isArray(u?.cohortMembers)) {
@@ -148,11 +167,11 @@ async function resolveCandidateUserIds(userId: string, fallbackEmail?: string): 
   return { candidateIds: Array.from(idSet), email };
 }
 
-export async function isWeek12AttendanceComplete(userId: string, cohortId?: string): Promise<boolean> {
+export async function isWeek12AttendanceComplete(userId: string, cohortId?: string, fallbackEmail?: string): Promise<boolean> {
   const isUuid = (str: any) => typeof str === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
   if (!isUuid(userId)) return false;
   try {
-    const { candidateIds, email: uEmail } = await resolveCandidateUserIds(userId);
+    const { candidateIds, email: uEmail } = await resolveCandidateUserIds(userId, fallbackEmail);
 
     // 1. Check if user has an approved appeal for Week 12 physical attendance
     const [approvedAppeal] = await db
@@ -376,7 +395,7 @@ export async function checkWeeks1To12Attendance(
     }
 
     // 2. Check Week 12 attendance specifically (5-day on-site checkins, practical checkin, or approved appeal)
-    const week12Done = attendedSet.has(12) || (await isWeek12AttendanceComplete(userId, cohortId));
+    const week12Done = attendedSet.has(12) || (await isWeek12AttendanceComplete(userId, cohortId, fallbackEmail));
     if (week12Done) {
       attendedSet.add(12);
     }
@@ -415,7 +434,8 @@ const REQUIRE_QUIZ_PASS = false;
 export async function getActiveEligibilityOverride(
   userId: string,
   cohortId?: string | null,
-  examId?: string | null
+  examId?: string | null,
+  fallbackEmail?: string
 ) {
   const isUuid = (str: any) =>
     typeof str === "string" &&
@@ -424,7 +444,7 @@ export async function getActiveEligibilityOverride(
   if (!isUuid(userId)) return null;
 
   try {
-    const { candidateIds } = await resolveCandidateUserIds(userId);
+    const { candidateIds } = await resolveCandidateUserIds(userId, fallbackEmail);
     const idList = candidateIds.filter((id) => isUuid(id));
     if (idList.length === 0) return null;
 
@@ -454,14 +474,14 @@ export async function getActiveEligibilityOverride(
   }
 }
 
-export async function getMissingWeeklyQuizzes(userId: string, cohortId?: string) {
+export async function getMissingWeeklyQuizzes(userId: string, cohortId?: string, fallbackEmail?: string) {
   const isUuid = (str: any) =>
     typeof str === "string" &&
     /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
 
   if (!isUuid(userId)) return [];
 
-  const { candidateIds } = await resolveCandidateUserIds(userId);
+  const { candidateIds } = await resolveCandidateUserIds(userId, fallbackEmail);
   const queryUserIds = candidateIds.filter((id) => isUuid(id));
   if (queryUserIds.length === 0) queryUserIds.push(userId);
 
@@ -1917,7 +1937,8 @@ week12Router.get("/checkins/:cohortId", async (req: Request, res: Response) => {
 week12Router.get("/checkins/:cohortId/:userId", async (req: Request, res: Response) => {
   try {
     const { cohortId, userId } = req.params;
-    const { candidateIds } = await resolveCandidateUserIds(userId);
+    const reqEmail = getRequestUserEmail(req);
+    const { candidateIds } = await resolveCandidateUserIds(userId, reqEmail);
     const idList = candidateIds.length > 0 ? candidateIds : [userId];
 
     let all = await db
@@ -1938,7 +1959,7 @@ week12Router.get("/checkins/:cohortId/:userId", async (req: Request, res: Respon
         .where(inArray(week12Checkins.userId, idList));
     }
 
-    const fullyAttended = await isWeek12AttendanceComplete(userId, cohortId);
+    const fullyAttended = await isWeek12AttendanceComplete(userId, cohortId, reqEmail);
     const rawDays = Array.from(new Set(all.map((c) => c.day)));
     const days = fullyAttended && rawDays.length === 0 ? [1, 2, 3, 4, 5] : rawDays;
 
@@ -2087,7 +2108,8 @@ practicalRouter.get("/checkins/user/:userId", async (req: Request, res: Response
       return res.status(400).json({ error: "Invalid user ID format" });
     }
 
-    const { candidateIds, email: userEmail } = await resolveCandidateUserIds(userId);
+    const reqEmail = getRequestUserEmail(req);
+    const { candidateIds, email: userEmail } = await resolveCandidateUserIds(userId, reqEmail);
 
     const list = await db
       .select()
@@ -2132,7 +2154,7 @@ practicalRouter.get("/checkins/user/:userId", async (req: Request, res: Response
 
     // Also reflect completed Week 12 attendance (5-day check-in or approved appeal)
     if (!existingWeeks.has(12)) {
-      const w12Complete = await isWeek12AttendanceComplete(userId);
+      const w12Complete = await isWeek12AttendanceComplete(userId, undefined, reqEmail);
       if (w12Complete) {
         list.push({
           id: `w12-complete-${userId}`,
@@ -3124,17 +3146,17 @@ examsRouter.get("/eligibility", async (req: Request, res: Response) => {
   if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
   try {
+    const userEmailHeader = getRequestUserEmail(req);
     let cohortId = req.query.cohortId as string | undefined;
     if (!cohortId) {
-      const user = await fetchUser(userId);
+      const user = await fetchUser(userId, userEmailHeader);
       cohortId = user?.cohortMembers?.[0]?.cohortId || user?.cohortId;
     }
 
-    const userEmailHeader = (req.headers["x-user-email"] as string | undefined) || undefined;
     const [attendanceCheck, missingQuizzes, manualOverride] = await Promise.all([
       checkWeeks1To12Attendance(userId, cohortId, userEmailHeader),
-      getMissingWeeklyQuizzes(userId, cohortId),
-      getActiveEligibilityOverride(userId, cohortId),
+      getMissingWeeklyQuizzes(userId, cohortId, userEmailHeader),
+      getActiveEligibilityOverride(userId, cohortId, undefined, userEmailHeader),
     ]);
 
     const systemReady = attendanceCheck.isComplete && missingQuizzes.length === 0;
@@ -3314,11 +3336,11 @@ examsRouter.get("/:id/quiz-requirements", async (req: Request, res: Response) =>
     const [exam] = await db.select().from(exams).where(eq(exams.id, req.params.id)).limit(1);
     if (!exam) return res.status(404).json({ error: "Exam not found" });
 
-    const userEmailHeader = (req.headers["x-user-email"] as string | undefined) || undefined;
+    const userEmailHeader = getRequestUserEmail(req);
     const [attendanceCheck, missingQuizzes, manualOverride] = await Promise.all([
       checkWeeks1To12Attendance(userId, exam.cohortId, userEmailHeader),
-      getMissingWeeklyQuizzes(userId, exam.cohortId),
-      getActiveEligibilityOverride(userId, exam.cohortId, exam.id),
+      getMissingWeeklyQuizzes(userId, exam.cohortId, userEmailHeader),
+      getActiveEligibilityOverride(userId, exam.cohortId, exam.id, userEmailHeader),
     ]);
 
     const systemReady = attendanceCheck.isComplete && missingQuizzes.length === 0;
@@ -3672,10 +3694,10 @@ examsRouter.post(
       if (!exam)
         return res.status(404).json({ error: "Exam not found or not published" });
 
-      const userEmailHeader = (req.headers["x-user-email"] as string | undefined) || undefined;
+      const userEmailHeader = getRequestUserEmail(req);
       const [attendanceCheck, manualOverride] = await Promise.all([
         checkWeeks1To12Attendance(userId, exam.cohortId, userEmailHeader),
-        getActiveEligibilityOverride(userId, exam.cohortId, exam.id),
+        getActiveEligibilityOverride(userId, exam.cohortId, exam.id, userEmailHeader),
       ]);
       if (!attendanceCheck.isComplete && !manualOverride) {
         return res.status(403).json({
@@ -3785,7 +3807,7 @@ examsRouter.post(
       }
 
       // Every unlocked weekly quiz (Weeks 1–12) must be taken before a new exam session starts
-      const missingQuizzes = await getMissingWeeklyQuizzes(userId, exam.cohortId);
+      const missingQuizzes = await getMissingWeeklyQuizzes(userId, exam.cohortId, userEmailHeader);
       if (missingQuizzes.length > 0 && !manualOverride) {
         const list = missingQuizzes.map((q) => `Week ${q.weekNumber}: ${q.quizTitle}`).join(", ");
         return res.status(403).json({
