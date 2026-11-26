@@ -1930,10 +1930,12 @@ practicalRouter.get("/checkins/user/:userId", async (req: Request, res: Response
       return res.status(400).json({ error: "Invalid user ID format" });
     }
 
+    const { candidateIds, email: userEmail } = await resolveCandidateUserIds(userId);
+
     const list = await db
       .select()
       .from(practicalCheckins)
-      .where(eq(practicalCheckins.userId, userId));
+      .where(inArray(practicalCheckins.userId, candidateIds));
 
     const existingWeeks = new Set(list.map((c) => Number(c.weekNumber)));
 
@@ -1941,20 +1943,18 @@ practicalRouter.get("/checkins/user/:userId", async (req: Request, res: Response
     const userCodes = await db
       .select({ code: practicalCodes.code, weekNumber: practicalCodes.weekNumber })
       .from(practicalCodes)
-      .where(eq(practicalCodes.userId, userId));
-
-    let userEmail = "";
-    try {
-      const u = await fetchUser(userId);
-      if (u?.email) userEmail = u.email;
-    } catch {}
+      .where(inArray(practicalCodes.userId, candidateIds));
 
     const codeStrings = new Set<string>(userCodes.map((u) => u.code).filter(Boolean));
     for (let w = 1; w <= 12; w++) {
       if (!existingWeeks.has(w)) {
-        codeStrings.add(generatePracticalCodeString(userId, w, userEmail));
+        for (const cid of candidateIds) {
+          codeStrings.add(generatePracticalCodeString(cid, w, userEmail));
+          if (userEmail) {
+            codeStrings.add(generatePracticalCodeString(cid, w, ""));
+          }
+        }
         if (userEmail) {
-          codeStrings.add(generatePracticalCodeString(userId, w, ""));
           codeStrings.add(generatePracticalCodeString(userEmail, w, userEmail));
         }
       }
