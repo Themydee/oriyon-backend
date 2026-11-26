@@ -78,17 +78,44 @@ export async function fetchUser(userId: string): Promise<UserRecord | null> {
   }
 }
 
+async function resolveCandidateUserIds(userId: string): Promise<{ candidateIds: string[]; email: string }> {
+  const isUuid = (str: any) => typeof str === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+  const idSet = new Set<string>();
+  if (isUuid(userId)) idSet.add(userId);
+  let email = "";
+  try {
+    const u = await fetchUser(userId);
+    if (u?.email) email = u.email;
+    if (u?.id && isUuid(u.id)) idSet.add(u.id);
+    if (Array.isArray(u?.cohortMembers)) {
+      for (const cm of u.cohortMembers) {
+        if (cm?.id && isUuid(cm.id)) idSet.add(cm.id);
+        if (cm?.userId && isUuid(cm.userId)) idSet.add(cm.userId);
+      }
+    }
+    if (Array.isArray(u?.groupMembers)) {
+      for (const gm of u.groupMembers) {
+        if (gm?.id && isUuid(gm.id)) idSet.add(gm.id);
+        if (gm?.userId && isUuid(gm.userId)) idSet.add(gm.userId);
+      }
+    }
+  } catch {}
+  return { candidateIds: Array.from(idSet), email };
+}
+
 export async function isWeek12AttendanceComplete(userId: string, cohortId?: string): Promise<boolean> {
   const isUuid = (str: any) => typeof str === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
   if (!isUuid(userId)) return false;
   try {
+    const { candidateIds, email: uEmail } = await resolveCandidateUserIds(userId);
+
     // 1. Check if user has an approved appeal for Week 12 physical attendance
     const [approvedAppeal] = await db
       .select({ id: appeals.id })
       .from(appeals)
       .where(
         and(
-          eq(appeals.userId, userId),
+          inArray(appeals.userId, candidateIds),
           eq(appeals.appealType, "week12_attendance"),
           eq(appeals.status, "approved")
         )
@@ -97,13 +124,13 @@ export async function isWeek12AttendanceComplete(userId: string, cohortId?: stri
 
     if (approvedAppeal) return true;
 
-    // 2. Check if user has a verified Week 12 practical check-in
+    // 2. Check if user has a verified Week 12 practical check-in (under userId, cohortMemberId, or groupMemberId)
     const [practicalCheckin] = await db
       .select({ id: practicalCheckins.id })
       .from(practicalCheckins)
       .where(
         and(
-          eq(practicalCheckins.userId, userId),
+          inArray(practicalCheckins.userId, candidateIds),
           eq(practicalCheckins.weekNumber, 12)
         )
       )
@@ -111,25 +138,25 @@ export async function isWeek12AttendanceComplete(userId: string, cohortId?: stri
 
     if (practicalCheckin) return true;
 
-    // Check practicalCodes or generated code for Week 12
+    // Check practicalCodes or generated code for Week 12 across all candidate IDs
     const w12Codes = await db
       .select({ code: practicalCodes.code })
       .from(practicalCodes)
       .where(
         and(
-          eq(practicalCodes.userId, userId),
+          inArray(practicalCodes.userId, candidateIds),
           eq(practicalCodes.weekNumber, 12)
         )
       );
     const w12CodeList = w12Codes.map((c) => c.code).filter(Boolean);
-    let uEmail = "";
-    try {
-      const u = await fetchUser(userId);
-      if (u?.email) uEmail = u.email;
-    } catch {}
-    w12CodeList.push(generatePracticalCodeString(userId, 12, uEmail));
+    for (const cid of candidateIds) {
+      w12CodeList.push(generatePracticalCodeString(cid, 12, uEmail));
+      if (uEmail) {
+        w12CodeList.push(generatePracticalCodeString(cid, 12, ""));
+      }
+    }
     if (uEmail) {
-      w12CodeList.push(generatePracticalCodeString(userId, 12, ""));
+      w12CodeList.push(generatePracticalCodeString(uEmail, 12, uEmail));
     }
     if (w12CodeList.length > 0) {
       const [matchedW12Checkin] = await db
@@ -146,7 +173,7 @@ export async function isWeek12AttendanceComplete(userId: string, cohortId?: stri
     }
 
     // 3. Check for 5 days of daily codes check-ins (Days 1 to 5)
-    const checkinConditions = [eq(week12Checkins.userId, userId)];
+    const checkinConditions: any[] = [inArray(week12Checkins.userId, candidateIds)];
     if (cohortId) {
       checkinConditions.push(eq(week12Checkins.cohortId, cohortId));
     }
@@ -166,7 +193,7 @@ export async function isWeek12AttendanceComplete(userId: string, cohortId?: stri
       const allCheckins = await db
         .select({ day: week12Checkins.day })
         .from(week12Checkins)
-        .where(eq(week12Checkins.userId, userId));
+        .where(inArray(week12Checkins.userId, candidateIds));
       const allAttendedDays = new Set(allCheckins.map((c) => c.day));
       if ([1, 2, 3, 4, 5].every((day) => allAttendedDays.has(day))) {
         return true;
@@ -206,11 +233,13 @@ export async function checkWeeks1To12Attendance(
   }
 
   try {
-    // 1. Fetch practical checkins for this user across weeks 1 to 12
+    const { candidateIds, email: userEmail } = await resolveCandidateUserIds(userId);
+
+    // 1. Fetch practical checkins across all candidate IDs (userId, cohortMemberId, groupMemberId)
     const pCheckins = await db
       .select({ weekNumber: practicalCheckins.weekNumber })
       .from(practicalCheckins)
-      .where(eq(practicalCheckins.userId, userId));
+      .where(inArray(practicalCheckins.userId, candidateIds));
 
     const attendedSet = new Set<number>();
     for (const c of pCheckins) {
@@ -224,7 +253,7 @@ export async function checkWeeks1To12Attendance(
     const userCodes = await db
       .select({ code: practicalCodes.code, weekNumber: practicalCodes.weekNumber })
       .from(practicalCodes)
-      .where(eq(practicalCodes.userId, userId));
+      .where(inArray(practicalCodes.userId, candidateIds));
 
     if (userCodes.length > 0) {
       const codeStrings = userCodes.map((u) => u.code).filter(Boolean);
@@ -242,21 +271,27 @@ export async function checkWeeks1To12Attendance(
       }
     }
 
-    // Also check user's email if available to cross-match generated codes
-    let userEmail = "";
-    try {
-      const u = await fetchUser(userId);
-      if (u?.email) userEmail = u.email;
-    } catch {}
-
     const potentialCodes: string[] = [];
+    const expectedSuffixes = new Map<number, Set<string>>();
     for (let w = 1; w <= 12; w++) {
       if (!attendedSet.has(w)) {
-        potentialCodes.push(generatePracticalCodeString(userId, w, userEmail));
-        if (userEmail) {
-          potentialCodes.push(generatePracticalCodeString(userId, w, ""));
-          potentialCodes.push(generatePracticalCodeString(userEmail, w, userEmail));
+        const suffixes = new Set<string>();
+        for (const cid of candidateIds) {
+          const c1 = generatePracticalCodeString(cid, w, userEmail);
+          potentialCodes.push(c1);
+          suffixes.add(c1.slice(-9));
+          if (userEmail) {
+            const c2 = generatePracticalCodeString(cid, w, "");
+            potentialCodes.push(c2);
+            suffixes.add(c2.slice(-9));
+          }
         }
+        if (userEmail) {
+          const c3 = generatePracticalCodeString(userEmail, w, userEmail);
+          potentialCodes.push(c3);
+          suffixes.add(c3.slice(-9));
+        }
+        expectedSuffixes.set(w, suffixes);
       }
     }
     if (potentialCodes.length > 0) {
@@ -267,6 +302,23 @@ export async function checkWeeks1To12Attendance(
       for (const c of matchedByGenCode) {
         const w = Number(c.weekNumber);
         if (Number.isInteger(w) && w >= 1 && w <= 12) {
+          attendedSet.add(w);
+        }
+      }
+    }
+
+    // Fallback: if cohortId is known and some weeks are still missing, scan cohort checkins for suffix match (parity with frontend)
+    if (cohortId && isUuid(cohortId) && attendedSet.size < 12) {
+      const cohortCheckins = await db
+        .select({ weekNumber: practicalCheckins.weekNumber, codeSubmitted: practicalCheckins.codeSubmitted })
+        .from(practicalCheckins)
+        .where(eq(practicalCheckins.cohortId, cohortId));
+      for (const cc of cohortCheckins) {
+        const w = Number(cc.weekNumber);
+        if (!Number.isInteger(w) || w < 1 || w > 12 || attendedSet.has(w)) continue;
+        const normCode = normalizePracticalCodeInput(cc.codeSubmitted || "");
+        const suffixes = expectedSuffixes.get(w);
+        if (suffixes && normCode.length >= 9 && suffixes.has(normCode.slice(-9))) {
           attendedSet.add(w);
         }
       }

@@ -457,7 +457,7 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
     }
 
     const resolvedUserId = user.id || id;
-    const [membershipRes, allCohorts] = await Promise.all([
+    const [membershipRes, groupMembershipRes, allCohorts] = await Promise.all([
       db
         .select()
         .from(cohortMembers)
@@ -468,6 +468,18 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
         )
         .catch((e) => {
           console.error("Error fetching cohort membership for user:", e);
+          return [];
+        }),
+      db
+        .select()
+        .from(groupMembers)
+        .where(
+          resolvedUserId !== id
+            ? or(eq(groupMembers.userId, resolvedUserId), eq(groupMembers.userId, id))
+            : eq(groupMembers.userId, resolvedUserId)
+        )
+        .catch((e) => {
+          console.error("Error fetching group membership for user:", e);
           return [];
         }),
       db.select().from(cohorts).catch(() => []),
@@ -491,6 +503,7 @@ userRouter.get("/:id", async (req: Request, res: Response) => {
       cohortTag: isCohort1 ? "Cohort 1 Member" : cohortName ? `${cohortName} Member` : null,
       cohorts: userCohorts,
       cohortMembers: membershipRes,
+      groupMembers: groupMembershipRes,
     });
   } catch (err) {
     console.error(`GET /users/${req.params.id} error:`, err);
