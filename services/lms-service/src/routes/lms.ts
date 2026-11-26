@@ -255,6 +255,7 @@ export async function checkWeeks1To12Attendance(
         potentialCodes.push(generatePracticalCodeString(userId, w, userEmail));
         if (userEmail) {
           potentialCodes.push(generatePracticalCodeString(userId, w, ""));
+          potentialCodes.push(generatePracticalCodeString(userEmail, w, userEmail));
         }
       }
     }
@@ -1712,7 +1713,7 @@ week12Router.get("/checkins/:cohortId", async (req: Request, res: Response) => {
 week12Router.get("/checkins/:cohortId/:userId", async (req: Request, res: Response) => {
   try {
     const { cohortId, userId } = req.params;
-    const all = await db
+    let all = await db
       .select()
       .from(week12Checkins)
       .where(
@@ -1722,7 +1723,15 @@ week12Router.get("/checkins/:cohortId/:userId", async (req: Request, res: Respon
         )
       );
 
-    const days = all.map((c) => c.day);
+    // Cross-cohort fallback: if trainee was marked present under another cohort record, include those check-ins
+    if (all.length === 0) {
+      all = await db
+        .select()
+        .from(week12Checkins)
+        .where(eq(week12Checkins.userId, userId));
+    }
+
+    const days = Array.from(new Set(all.map((c) => c.day)));
     const fullyAttended = await isWeek12AttendanceComplete(userId, cohortId);
 
     return res.json({ checkins: all, days, fullyAttended });
@@ -1894,6 +1903,7 @@ practicalRouter.get("/checkins/user/:userId", async (req: Request, res: Response
         codeStrings.add(generatePracticalCodeString(userId, w, userEmail));
         if (userEmail) {
           codeStrings.add(generatePracticalCodeString(userId, w, ""));
+          codeStrings.add(generatePracticalCodeString(userEmail, w, userEmail));
         }
       }
     }
@@ -1908,6 +1918,23 @@ practicalRouter.get("/checkins/user/:userId", async (req: Request, res: Response
           existingWeeks.add(Number(m.weekNumber));
           list.push(m);
         }
+      }
+    }
+
+    // Also reflect completed Week 12 attendance (5-day check-in or approved appeal)
+    if (!existingWeeks.has(12)) {
+      const w12Complete = await isWeek12AttendanceComplete(userId);
+      if (w12Complete) {
+        list.push({
+          id: `w12-complete-${userId}`,
+          userId,
+          cohortId: list[0]?.cohortId || "00000000-0000-0000-0000-000000000000",
+          groupId: list[0]?.groupId || null,
+          weekNumber: 12,
+          codeSubmitted: "WEEK12-VERIFIED",
+          verifiedBy: null,
+          checkedInAt: new Date(),
+        } as any);
       }
     }
 
