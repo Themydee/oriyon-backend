@@ -4,7 +4,7 @@ import { z } from "zod";
 import jwt from "jsonwebtoken";
 import multer from "multer";
 import { db } from "../index";
-import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, practicalCheckins, practicalCodes, exams, examQuestions, examSessions, examAnswers, examViolations, platformTutorials, appeals, readings, trainerLessonReports, trainerReportAttachments, trainerReportAuditLogs } from "../db/schema";
+import { weeks, lessons, progress, physicalSessions, sessionGroups, quizzes, quizAttempts, week12Codes, week12Checkins, practicalCheckins, practicalCodes, exams, examQuestions, examSessions, examAnswers, examViolations, examEligibilityOverrides, platformTutorials, appeals, readings, trainerLessonReports, trainerReportAttachments, trainerReportAuditLogs } from "../db/schema";
 import { publishEvent } from "../rabbitmq";
 import {
   MAX_ATTACHMENT_BYTES,
@@ -17,6 +17,7 @@ import {
 type WeekRow = InferModel<typeof weeks>;
 
 const STAFF_ROLES = ["admin", "sub_admin", "trainer", "lead_trainer"];
+const ADMIN_ROLES = ["admin", "sub_admin"];
 
 export function isStaffRole(req: Request): boolean {
   const headerRole = req.headers["x-user-role"];
@@ -38,6 +39,50 @@ export function isStaffRole(req: Request): boolean {
   }
 
   return false;
+}
+
+export function isAdminRole(req: Request): boolean {
+  const headerRole = req.headers["x-user-role"];
+  if (typeof headerRole === "string" && ADMIN_ROLES.includes(headerRole.trim().toLowerCase())) {
+    return true;
+  }
+
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ") && process.env.JWT_SECRET) {
+    try {
+      const token = authHeader.split(" ")[1];
+      const payload = jwt.verify(token, process.env.JWT_SECRET) as { role?: string };
+      if (payload?.role && ADMIN_ROLES.includes(payload.role.toLowerCase())) {
+        return true;
+      }
+    } catch {
+      // Invalid token
+    }
+  }
+
+  return false;
+}
+
+function getRequestActor(req: Request): { userId: string | null; role: string | null } {
+  const headerUserId = (req.headers["x-user-id"] as string | undefined)?.trim() || null;
+  const headerRole = (req.headers["x-user-role"] as string | undefined)?.trim()?.toLowerCase() || null;
+  if (headerUserId) {
+    return { userId: headerUserId, role: headerRole };
+  }
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ") && process.env.JWT_SECRET) {
+    try {
+      const token = authHeader.split(" ")[1];
+      const payload = jwt.verify(token, process.env.JWT_SECRET) as { userId?: string; sub?: string; id?: string; role?: string };
+      return {
+        userId: payload.userId || payload.sub || payload.id || null,
+        role: payload.role ? payload.role.toLowerCase() : headerRole,
+      };
+    } catch {
+      // ignore
+    }
+  }
+  return { userId: null, role: headerRole };
 }
 
 
@@ -361,6 +406,48 @@ export async function checkWeeks1To12Attendance(
 // quizzes (set REQUIRE_QUIZ_PASS to demand a pass instead).
 const REQUIRE_QUIZ_PASS = false;
 
+export async function getActiveEligibilityOverride(
+  userId: string,
+  cohortId?: string | null,
+  examId?: string | null
+) {
+  const isUuid = (str: any) =>
+    typeof str === "string" &&
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+
+  if (!isUuid(userId)) return null;
+
+  try {
+    const { candidateIds } = await resolveCandidateUserIds(userId);
+    const idList = candidateIds.filter((id) => isUuid(id));
+    if (idList.length === 0) return null;
+
+    const overrides = await db
+      .select()
+      .from(examEligibilityOverrides)
+      .where(
+        and(
+          inArray(examEligibilityOverrides.traineeId, idList),
+          eq(examEligibilityOverrides.isActive, true)
+        )
+      )
+      .orderBy(desc(examEligibilityOverrides.createdAt));
+
+    const now = new Date();
+    for (const ov of overrides) {
+      if (ov.expiresAt && new Date(ov.expiresAt) <= now) continue;
+      if (ov.examId && examId && ov.examId !== examId) continue;
+      if (ov.examId && !examId) continue;
+      if (ov.cohortId && cohortId && ov.cohortId !== cohortId) continue;
+      return ov;
+    }
+    return null;
+  } catch (err) {
+    console.error("[lms-service] Error checking getActiveEligibilityOverride:", err);
+    return null;
+  }
+}
+
 export async function getMissingWeeklyQuizzes(userId: string, cohortId?: string) {
   const isUuid = (str: any) =>
     typeof str === "string" &&
@@ -368,14 +455,21 @@ export async function getMissingWeeklyQuizzes(userId: string, cohortId?: string)
 
   if (!isUuid(userId)) return [];
 
-  let effectiveCohortId = cohortId;
-  try {
-    const user = await fetchUser(userId);
-    const userCohortId = user?.cohortMembers?.[0]?.cohortId || user?.cohortId;
-    if (userCohortId && isUuid(userCohortId)) {
-      effectiveCohortId = userCohortId;
-    }
-  } catch {}
+  const { candidateIds } = await resolveCandidateUserIds(userId);
+  const queryUserIds = candidateIds.filter((id) => isUuid(id));
+  if (queryUserIds.length === 0) queryUserIds.push(userId);
+
+  // Respect explicit cohortId when provided; only fall back to user's primary cohort when omitted
+  let effectiveCohortId = cohortId && isUuid(cohortId) ? cohortId : undefined;
+  if (!effectiveCohortId) {
+    try {
+      const user = await fetchUser(userId);
+      const userCohortId = user?.cohortMembers?.[0]?.cohortId || user?.cohortId;
+      if (userCohortId && isUuid(userCohortId)) {
+        effectiveCohortId = userCohortId;
+      }
+    } catch {}
+  }
 
   const now = new Date();
   const weekConditions: any[] = [
@@ -387,53 +481,97 @@ export async function getMissingWeeklyQuizzes(userId: string, cohortId?: string)
     weekConditions.push(eq(weeks.cohortId, effectiveCohortId));
   }
 
-  const cohortWeeks = await db
+  const rawCohortWeeks = await db
     .select({ id: weeks.id, weekNumber: weeks.weekNumber, title: weeks.title })
     .from(weeks)
     .where(and(...weekConditions))
     .orderBy(weeks.weekNumber);
 
-  if (!cohortWeeks.length) return [];
+  if (!rawCohortWeeks.length) return [];
 
-  const weekIds = cohortWeeks.map((w) => w.id);
+  // Map all week IDs belonging to each distinct weekNumber (handles duplicate week rows cleanly)
+  const weekIdsByNumber = new Map<number, string[]>();
+  const distinctWeekByNumber = new Map<number, { id: string; weekNumber: number; title: string }>();
+  for (const cw of rawCohortWeeks) {
+    const ids = weekIdsByNumber.get(cw.weekNumber) || [];
+    ids.push(cw.id);
+    weekIdsByNumber.set(cw.weekNumber, ids);
+    if (!distinctWeekByNumber.has(cw.weekNumber)) {
+      distinctWeekByNumber.set(cw.weekNumber, cw);
+    }
+  }
+
+  const cohortWeeks = Array.from(distinctWeekByNumber.values()).sort((a, b) => a.weekNumber - b.weekNumber);
+  const weekIds = rawCohortWeeks.map((w) => w.id);
   const weekQuizzes = await db
     .select({ id: quizzes.id, weekId: quizzes.weekId, title: quizzes.title, isPublished: quizzes.isPublished, createdAt: quizzes.createdAt })
     .from(quizzes)
     .where(inArray(quizzes.weekId, weekIds))
     .orderBy(desc(quizzes.createdAt));
 
-  // For cohort weeks with no direct quiz, look for sibling published quiz by weekNumber
-  const foundWeekIds = new Set(weekQuizzes.map((q) => q.weekId));
-  for (const cw of cohortWeeks) {
-    if (!foundWeekIds.has(cw.id)) {
-      const [siblingQuiz] = await db
-        .select({ id: quizzes.id, weekId: quizzes.weekId, title: quizzes.title, isPublished: quizzes.isPublished, createdAt: quizzes.createdAt })
-        .from(quizzes)
-        .innerJoin(weeks, eq(quizzes.weekId, weeks.id))
-        .where(
-          and(
-            eq(weeks.weekNumber, cw.weekNumber),
-            eq(quizzes.isPublished, true)
-          )
+  // Tag each quiz with its canonical weekNumber
+  const weekNumberById = new Map<string, number>();
+  for (const cw of rawCohortWeeks) {
+    weekNumberById.set(cw.id, cw.weekNumber);
+  }
+
+  const quizzesWithWeekNumber: Array<{ id: string; weekId: string; weekNumber: number; title: string; isPublished: boolean; createdAt: Date }> = weekQuizzes.map((q) => ({
+    ...q,
+    weekNumber: weekNumberById.get(q.weekId) ?? 0,
+  }));
+
+  // Also include published sibling quizzes across cohorts for the same weekNumber so cross-cohort/shared quiz attempts are recognized
+  const weekNumbersPresent = Array.from(distinctWeekByNumber.keys());
+  if (weekNumbersPresent.length > 0) {
+    const siblingQuizzes = await db
+      .select({
+        id: quizzes.id,
+        weekId: quizzes.weekId,
+        weekNumber: weeks.weekNumber,
+        title: quizzes.title,
+        isPublished: quizzes.isPublished,
+        createdAt: quizzes.createdAt,
+      })
+      .from(quizzes)
+      .innerJoin(weeks, eq(quizzes.weekId, weeks.id))
+      .where(
+        and(
+          inArray(weeks.weekNumber, weekNumbersPresent),
+          eq(quizzes.isPublished, true)
         )
-        .orderBy(desc(quizzes.createdAt))
-        .limit(1);
-      if (siblingQuiz) {
-        weekQuizzes.push({ ...siblingQuiz, weekId: cw.id });
+      )
+      .orderBy(desc(quizzes.createdAt));
+
+    const seenQuizIds = new Set(quizzesWithWeekNumber.map((q) => q.id));
+    for (const sq of siblingQuizzes) {
+      if (!seenQuizIds.has(sq.id)) {
+        seenQuizIds.add(sq.id);
+        quizzesWithWeekNumber.push(sq);
       }
     }
   }
 
-  if (!weekQuizzes.length) return [];
+  if (!quizzesWithWeekNumber.length) return [];
 
-  const allQuizIds = weekQuizzes.map((q) => q.id);
-  const attempts = allQuizIds.length > 0
-    ? await db
-        .select({ quizId: quizAttempts.quizId, passed: quizAttempts.passed, score: quizAttempts.score })
-        .from(quizAttempts)
-        .where(and(eq(quizAttempts.userId, userId), inArray(quizAttempts.quizId, allQuizIds)))
-    : [];
-  const doneQuizIds = new Set(attempts.filter((a) => !REQUIRE_QUIZ_PASS || a.passed || (typeof a.score === "number" && a.score >= 70)).map((a) => a.quizId));
+  const allQuizIds = quizzesWithWeekNumber.map((q) => q.id);
+  const attempts = await db
+    .select({ quizId: quizAttempts.quizId, weekId: quizAttempts.weekId, passed: quizAttempts.passed, score: quizAttempts.score })
+    .from(quizAttempts)
+    .where(
+      and(
+        inArray(quizAttempts.userId, queryUserIds),
+        or(
+          inArray(quizAttempts.quizId, allQuizIds),
+          inArray(quizAttempts.weekId, weekIds)
+        )
+      )
+    );
+
+  const validAttempts = attempts.filter(
+    (a) => !REQUIRE_QUIZ_PASS || a.passed || (typeof a.score === "number" && a.score >= 70)
+  );
+  const doneQuizIds = new Set(validAttempts.map((a) => a.quizId));
+  const doneWeekIds = new Set(validAttempts.map((a) => a.weekId));
 
   const weekLessons = await db
     .select({ id: lessons.id, weekId: lessons.weekId })
@@ -442,16 +580,24 @@ export async function getMissingWeeklyQuizzes(userId: string, cohortId?: string)
   const completed = await db
     .select({ lessonId: progress.lessonId })
     .from(progress)
-    .where(and(eq(progress.userId, userId), eq(progress.completed, true), inArray(progress.weekId, weekIds)));
+    .where(and(inArray(progress.userId, queryUserIds), eq(progress.completed, true), inArray(progress.weekId, weekIds)));
   const completedLessonIds = new Set(completed.map((p) => p.lessonId));
 
   const missing = [];
   for (const week of cohortWeeks) {
-    const quizzesForWeek = weekQuizzes.filter((q) => q.weekId === week.id);
-    // Newest published quiz is the one the week page shows
-    const activeQuiz = quizzesForWeek.find((q) => q.isPublished);
+    const idsForThisWeekNumber = weekIdsByNumber.get(week.weekNumber) || [week.id];
+    const directQuizzes = quizzesWithWeekNumber.filter((q) => idsForThisWeekNumber.includes(q.weekId));
+    const quizzesForWeekNumber = quizzesWithWeekNumber.filter((q) => q.weekNumber === week.weekNumber);
+
+    // Active quiz shown to trainee is the newest published direct quiz (or sibling published quiz)
+    const activeQuiz = directQuizzes.find((q) => q.isPublished) || quizzesForWeekNumber.find((q) => q.isPublished);
     if (!activeQuiz) continue;
-    if (quizzesForWeek.some((q) => doneQuizIds.has(q.id))) continue;
+
+    // Week is complete if ANY quiz for this weekNumber (direct or sibling) has a valid attempt, or attempt matches this week's weekId
+    const weekCompleted =
+      quizzesForWeekNumber.some((q) => doneQuizIds.has(q.id)) ||
+      idsForThisWeekNumber.some((wid) => doneWeekIds.has(wid));
+    if (weekCompleted) continue;
 
     missing.push({
       weekId: week.id,
@@ -459,7 +605,7 @@ export async function getMissingWeeklyQuizzes(userId: string, cohortId?: string)
       weekTitle: week.title,
       quizId: activeQuiz.id,
       quizTitle: activeQuiz.title,
-      lessonsRemaining: weekLessons.filter((l) => l.weekId === week.id && !completedLessonIds.has(l.id)).length,
+      lessonsRemaining: weekLessons.filter((l) => idsForThisWeekNumber.includes(l.weekId) && !completedLessonIds.has(l.id)).length,
     });
   }
   return missing;
@@ -2972,12 +3118,36 @@ examsRouter.get("/eligibility", async (req: Request, res: Response) => {
       cohortId = user?.cohortMembers?.[0]?.cohortId || user?.cohortId;
     }
 
-    const attendanceCheck = await checkWeeks1To12Attendance(userId, cohortId);
-    const missingQuizzes = await getMissingWeeklyQuizzes(userId, cohortId);
-    const ready = attendanceCheck.isComplete && missingQuizzes.length === 0;
+    const [attendanceCheck, missingQuizzes, manualOverride] = await Promise.all([
+      checkWeeks1To12Attendance(userId, cohortId),
+      getMissingWeeklyQuizzes(userId, cohortId),
+      getActiveEligibilityOverride(userId, cohortId),
+    ]);
+
+    const systemReady = attendanceCheck.isComplete && missingQuizzes.length === 0;
+    const ready = systemReady || Boolean(manualOverride);
+    const eligibilitySource = systemReady
+      ? "SYSTEM_VERIFIED"
+      : manualOverride
+      ? "ADMIN_MANUAL_OVERRIDE"
+      : "INELIGIBLE";
 
     return res.json({
       ready,
+      eligible: ready,
+      eligibilitySource,
+      manualOverride: manualOverride
+        ? {
+            id: manualOverride.id,
+            reason: manualOverride.reason,
+            grantedBy: manualOverride.grantedBy,
+            grantedByName: manualOverride.grantedByName,
+            cohortId: manualOverride.cohortId,
+            examId: manualOverride.examId,
+            expiresAt: manualOverride.expiresAt,
+            createdAt: manualOverride.createdAt,
+          }
+        : null,
       attendanceComplete: attendanceCheck.isComplete,
       missingAttendanceWeeks: attendanceCheck.missingWeeks,
       attendedWeeks: attendanceCheck.attendedWeeks,
@@ -2992,6 +3162,135 @@ examsRouter.get("/eligibility", async (req: Request, res: Response) => {
   }
 });
 
+// GET /lms/exams/admin/eligibility-overrides
+// List audited manual eligibility overrides (Admin only)
+examsRouter.get("/admin/eligibility-overrides", async (req: Request, res: Response) => {
+  if (!isAdminRole(req)) {
+    return res.status(403).json({ error: "Forbidden. Administrator access required." });
+  }
+  try {
+    const traineeId = req.query.traineeId as string | undefined;
+    const activeOnly = req.query.activeOnly === "true";
+
+    const conditions: any[] = [];
+    if (traineeId && z.string().uuid().safeParse(traineeId).success) {
+      conditions.push(eq(examEligibilityOverrides.traineeId, traineeId));
+    }
+    if (activeOnly) {
+      conditions.push(eq(examEligibilityOverrides.isActive, true));
+    }
+
+    const rows = conditions.length > 0
+      ? await db.select().from(examEligibilityOverrides).where(and(...conditions)).orderBy(desc(examEligibilityOverrides.createdAt))
+      : await db.select().from(examEligibilityOverrides).orderBy(desc(examEligibilityOverrides.createdAt));
+
+    return res.json(rows);
+  } catch (err) {
+    console.error("[examsRouter GET /admin/eligibility-overrides] error:", err);
+    return res.status(500).json({ error: "Failed to fetch eligibility overrides" });
+  }
+});
+
+// POST /lms/exams/admin/eligibility-override
+// Grant an audited manual exam eligibility override without altering attendance or quiz records
+examsRouter.post("/admin/eligibility-override", async (req: Request, res: Response) => {
+  if (!isAdminRole(req)) {
+    return res.status(403).json({ error: "Forbidden. Administrator access required." });
+  }
+
+  const actor = getRequestActor(req);
+  if (!actor.userId || !z.string().uuid().safeParse(actor.userId).success) {
+    return res.status(401).json({ error: "Authenticated administrator ID is required." });
+  }
+
+  const schema = z.object({
+    traineeId: z.string().uuid(),
+    reason: z.string().trim().min(5, "A detailed audit reason (min 5 characters) is required."),
+    cohortId: z.string().uuid().optional().nullable(),
+    examId: z.string().uuid().optional().nullable(),
+    expiresAt: z.string().datetime().optional().nullable(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+  }
+
+  try {
+    let grantedByName: string | null = null;
+    try {
+      const adminUser = await fetchUser(actor.userId);
+      if (adminUser) {
+        grantedByName = `${adminUser.firstName || ""} ${adminUser.lastName || ""}`.trim() || adminUser.email;
+      }
+    } catch {}
+
+    const [created] = await db
+      .insert(examEligibilityOverrides)
+      .values({
+        traineeId: parsed.data.traineeId,
+        cohortId: parsed.data.cohortId || null,
+        examId: parsed.data.examId || null,
+        grantedBy: actor.userId,
+        grantedByName,
+        reason: parsed.data.reason,
+        isActive: true,
+        expiresAt: parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null,
+      })
+      .returning();
+
+    return res.status(201).json(created);
+  } catch (err) {
+    console.error("[examsRouter POST /admin/eligibility-override] error:", err);
+    return res.status(500).json({ error: "Failed to create eligibility override" });
+  }
+});
+
+// DELETE /lms/exams/admin/eligibility-override/:overrideId
+// Revoke an audited manual eligibility override (soft-revoke preserves audit trail)
+examsRouter.delete("/admin/eligibility-override/:overrideId", async (req: Request, res: Response) => {
+  if (!isAdminRole(req)) {
+    return res.status(403).json({ error: "Forbidden. Administrator access required." });
+  }
+
+  const actor = getRequestActor(req);
+  if (!actor.userId || !z.string().uuid().safeParse(actor.userId).success) {
+    return res.status(401).json({ error: "Authenticated administrator ID is required." });
+  }
+
+  if (!z.string().uuid().safeParse(req.params.overrideId).success) {
+    return res.status(400).json({ error: "Invalid override ID" });
+  }
+
+  try {
+    const revokeReason =
+      typeof req.body?.reason === "string" && req.body.reason.trim().length > 0
+        ? req.body.reason.trim()
+        : "Revoked by administrator";
+
+    const [updated] = await db
+      .update(examEligibilityOverrides)
+      .set({
+        isActive: false,
+        revokedBy: actor.userId,
+        revokedAt: new Date(),
+        revokeReason,
+        updatedAt: new Date(),
+      })
+      .where(eq(examEligibilityOverrides.id, req.params.overrideId))
+      .returning();
+
+    if (!updated) {
+      return res.status(404).json({ error: "Eligibility override not found" });
+    }
+
+    return res.json(updated);
+  } catch (err) {
+    console.error("[examsRouter DELETE /admin/eligibility-override/:overrideId] error:", err);
+    return res.status(500).json({ error: "Failed to revoke eligibility override" });
+  }
+});
+
 // GET /lms/exams/:id/quiz-requirements
 // Weekly quizzes (Weeks 1–12) and Physical Attendance (Weeks 1–12) required before starting this exam.
 examsRouter.get("/:id/quiz-requirements", async (req: Request, res: Response) => {
@@ -3001,9 +3300,19 @@ examsRouter.get("/:id/quiz-requirements", async (req: Request, res: Response) =>
     const [exam] = await db.select().from(exams).where(eq(exams.id, req.params.id)).limit(1);
     if (!exam) return res.status(404).json({ error: "Exam not found" });
 
-    const attendanceCheck = await checkWeeks1To12Attendance(userId, exam.cohortId);
-    const missingQuizzes = await getMissingWeeklyQuizzes(userId, exam.cohortId);
-    const ready = attendanceCheck.isComplete && missingQuizzes.length === 0;
+    const [attendanceCheck, missingQuizzes, manualOverride] = await Promise.all([
+      checkWeeks1To12Attendance(userId, exam.cohortId),
+      getMissingWeeklyQuizzes(userId, exam.cohortId),
+      getActiveEligibilityOverride(userId, exam.cohortId, exam.id),
+    ]);
+
+    const systemReady = attendanceCheck.isComplete && missingQuizzes.length === 0;
+    const ready = systemReady || Boolean(manualOverride);
+    const eligibilitySource = systemReady
+      ? "SYSTEM_VERIFIED"
+      : manualOverride
+      ? "ADMIN_MANUAL_OVERRIDE"
+      : "INELIGIBLE";
 
     // Check if user has already taken or started this exam (strict 1-attempt policy)
     const [existingSession] = await db
@@ -3030,6 +3339,18 @@ examsRouter.get("/:id/quiz-requirements", async (req: Request, res: Response) =>
 
     return res.json({
       ready,
+      eligible: ready,
+      eligibilitySource,
+      manualOverride: manualOverride
+        ? {
+            id: manualOverride.id,
+            reason: manualOverride.reason,
+            grantedBy: manualOverride.grantedBy,
+            grantedByName: manualOverride.grantedByName,
+            expiresAt: manualOverride.expiresAt,
+            createdAt: manualOverride.createdAt,
+          }
+        : null,
       attendanceComplete: attendanceCheck.isComplete,
       missingAttendanceWeeks: attendanceCheck.missingWeeks,
       attendedWeeks: attendanceCheck.attendedWeeks,
@@ -3335,8 +3656,11 @@ examsRouter.post(
       if (!exam)
         return res.status(404).json({ error: "Exam not found or not published" });
 
-      const attendanceCheck = await checkWeeks1To12Attendance(userId, exam.cohortId);
-      if (!attendanceCheck.isComplete) {
+      const [attendanceCheck, manualOverride] = await Promise.all([
+        checkWeeks1To12Attendance(userId, exam.cohortId),
+        getActiveEligibilityOverride(userId, exam.cohortId, exam.id),
+      ]);
+      if (!attendanceCheck.isComplete && !manualOverride) {
         return res.status(403).json({
           error: `Physical practical attendance for Weeks 1–12 must be complete before taking this exam. Missing attendance for Week(s): ${attendanceCheck.missingWeeks.join(", ")}.`,
           code: "ATTENDANCE_INCOMPLETE",
@@ -3445,7 +3769,7 @@ examsRouter.post(
 
       // Every unlocked weekly quiz (Weeks 1–12) must be taken before a new exam session starts
       const missingQuizzes = await getMissingWeeklyQuizzes(userId, exam.cohortId);
-      if (missingQuizzes.length > 0) {
+      if (missingQuizzes.length > 0 && !manualOverride) {
         const list = missingQuizzes.map((q) => `Week ${q.weekNumber}: ${q.quizTitle}`).join(", ");
         return res.status(403).json({
           error: `All weekly quizzes (Weeks 1–12) must be completed before taking this exam. Missing: ${list}.`,

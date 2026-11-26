@@ -531,3 +531,24 @@ export const trainerReportAuditLogs = pgTable("trainer_report_audit_logs", {
   idxReportAuditReport: index("idx_report_audit_report").on(table.reportId),
 }));
 
+// ─── Audited Manual Exam Eligibility Overrides ────────────────────────────────
+export const examEligibilityOverrides = pgTable("exam_eligibility_overrides", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  traineeId: uuid("trainee_id").notNull(),
+  cohortId: uuid("cohort_id"),
+  examId: uuid("exam_id"),
+  grantedBy: uuid("granted_by").notNull(),
+  grantedByName: varchar("granted_by_name", { length: 255 }),
+  reason: text("reason").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  expiresAt: timestamp("expires_at"),
+  revokedBy: uuid("revoked_by"),
+  revokedAt: timestamp("revoked_at"),
+  revokeReason: text("revoke_reason"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  idxExamEligOverrideTrainee: index("idx_exam_elig_override_trainee").on(table.traineeId),
+  idxExamEligOverrideActive: index("idx_exam_elig_override_active").on(table.traineeId, table.isActive),
+}));
+

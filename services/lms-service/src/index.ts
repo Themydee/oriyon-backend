@@ -299,6 +299,24 @@ async function ensureDbColumns() {
       CREATE INDEX IF NOT EXISTS idx_trainer_reports_cohort ON trainer_lesson_reports (cohort_id);
       CREATE INDEX IF NOT EXISTS idx_trainer_reports_group ON trainer_lesson_reports (group_id);
       CREATE INDEX IF NOT EXISTS idx_trainer_reports_status ON trainer_lesson_reports (status);
+      CREATE TABLE IF NOT EXISTS exam_eligibility_overrides (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        trainee_id uuid NOT NULL,
+        cohort_id uuid,
+        exam_id uuid,
+        granted_by uuid NOT NULL,
+        granted_by_name varchar(255),
+        reason text NOT NULL,
+        is_active boolean NOT NULL DEFAULT true,
+        expires_at timestamp,
+        revoked_by uuid,
+        revoked_at timestamp,
+        revoke_reason text,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_exam_elig_override_trainee ON exam_eligibility_overrides (trainee_id);
+      CREATE INDEX IF NOT EXISTS idx_exam_elig_override_active ON exam_eligibility_overrides (trainee_id, is_active);
     `);
     console.log("[lms-service] Auto-migration: ensured community & trainer report tables exist.");
   } catch (err) {
