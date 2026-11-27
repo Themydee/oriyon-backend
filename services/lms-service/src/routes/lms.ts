@@ -13,11 +13,35 @@ import {
   generateSignedAttachmentAccessUrl,
   deleteCloudinaryAttachment,
 } from "../services/cloudinaryReports";
+import {
+  resolveEffectiveRevisionForCohort,
+  getLatestPublishedRevision,
+  overlayCohortSchedules,
+} from "./masterCurriculum";
 
 type WeekRow = InferModel<typeof weeks>;
 
 const STAFF_ROLES = ["admin", "sub_admin", "trainer", "lead_trainer"];
 const ADMIN_ROLES = ["admin", "sub_admin"];
+const MASTER_CURRICULUM_ADMIN_ROLES = ["admin"];
+
+export function isMasterCurriculumAdmin(req: Request): boolean {
+  const headerRole = req.headers["x-user-role"];
+  if (typeof headerRole === "string" && MASTER_CURRICULUM_ADMIN_ROLES.includes(headerRole.trim().toLowerCase())) {
+    return true;
+  }
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ") && process.env.JWT_SECRET) {
+    try {
+      const token = authHeader.split(" ")[1];
+      const payload = jwt.verify(token, process.env.JWT_SECRET) as { role?: string };
+      if (payload?.role && MASTER_CURRICULUM_ADMIN_ROLES.includes(payload.role.toLowerCase())) {
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
 
 export function isStaffRole(req: Request): boolean {
   const headerRole = req.headers["x-user-role"];
@@ -498,20 +522,43 @@ export async function getMissingWeeklyQuizzes(userId: string, cohortId?: string,
   }
 
   const now = new Date();
+  const effectiveRev = effectiveCohortId
+    ? (await resolveEffectiveRevisionForCohort(effectiveCohortId)).revision
+    : await getLatestPublishedRevision();
+
   const weekConditions: any[] = [
     eq(weeks.isPublished, true),
-    or(isNull(weeks.unlockDate), lte(weeks.unlockDate, now)),
+    eq(weeks.isArchived, false),
   ];
 
   if (effectiveCohortId && isUuid(effectiveCohortId)) {
-    weekConditions.push(eq(weeks.cohortId, effectiveCohortId));
+    if (effectiveRev) {
+      weekConditions.push(
+        or(eq(weeks.curriculumRevisionId, effectiveRev.id), eq(weeks.cohortId, effectiveCohortId))
+      );
+    } else {
+      weekConditions.push(eq(weeks.cohortId, effectiveCohortId));
+    }
+  } else if (effectiveRev) {
+    weekConditions.push(eq(weeks.curriculumRevisionId, effectiveRev.id));
   }
 
-  const rawCohortWeeks = await db
-    .select({ id: weeks.id, weekNumber: weeks.weekNumber, title: weeks.title })
+  const fetchedWeeks = await db
+    .select({
+      id: weeks.id,
+      weekNumber: weeks.weekNumber,
+      title: weeks.title,
+      unlockDate: weeks.unlockDate,
+      curriculumRevisionId: weeks.curriculumRevisionId,
+    })
     .from(weeks)
     .where(and(...weekConditions))
     .orderBy(weeks.weekNumber);
+
+  const weeksWithSchedules = await overlayCohortSchedules(fetchedWeeks, effectiveCohortId);
+  const rawCohortWeeks = weeksWithSchedules.filter(
+    (w) => !w.unlockDate || new Date(w.unlockDate) <= now
+  );
 
   if (!rawCohortWeeks.length) return [];
 
@@ -641,26 +688,58 @@ export async function getMissingWeeklyQuizzes(userId: string, cohortId?: string,
 // WEEKS
 // ─────────────────────────────────────────────
 
-// GET /lms/weeks?cohortId=&showAll=true
+// GET /lms/weeks?cohortId=&showAll=true&revisionId=
 weeksRouter.get("/", async (req: Request, res: Response) => {
   try {
-    const { cohortId, showAll } = req.query;
+    const { cohortId, showAll, revisionId } = req.query;
     const includeAll = showAll === "true";
+    const isUuidStr = (v: unknown): v is string =>
+      typeof v === "string" &&
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(v);
 
-    const condition = cohortId
-      ? includeAll
-        ? eq(weeks.cohortId, cohortId as string)
-        : and(
-            eq(weeks.cohortId, cohortId as string),
-            eq(weeks.isPublished, true)
-          )
-      : includeAll
-      ? undefined
-      : eq(weeks.isPublished, true);
+    let condition: any;
+    let resolvedRevId: string | null = null;
 
-    const allWeeks = condition
-      ? await db.select().from(weeks).where(condition).orderBy(weeks.weekNumber)
-      : await db.select().from(weeks).orderBy(weeks.weekNumber);
+    if (isUuidStr(revisionId)) {
+      resolvedRevId = revisionId;
+      condition = includeAll
+        ? and(eq(weeks.curriculumRevisionId, revisionId), eq(weeks.isArchived, false))
+        : and(eq(weeks.curriculumRevisionId, revisionId), eq(weeks.isPublished, true), eq(weeks.isArchived, false));
+    } else if (isUuidStr(cohortId)) {
+      const { revision } = await resolveEffectiveRevisionForCohort(cohortId);
+      resolvedRevId = revision?.id || null;
+      const scopeCond = revision
+        ? or(eq(weeks.curriculumRevisionId, revision.id), eq(weeks.cohortId, cohortId))
+        : eq(weeks.cohortId, cohortId);
+      condition = includeAll
+        ? and(scopeCond, eq(weeks.isArchived, false))
+        : and(scopeCond, eq(weeks.isPublished, true), eq(weeks.isArchived, false));
+    } else {
+      const latestPublished = await getLatestPublishedRevision();
+      resolvedRevId = latestPublished?.id || null;
+      if (latestPublished) {
+        condition = includeAll
+          ? and(eq(weeks.curriculumRevisionId, latestPublished.id), eq(weeks.isArchived, false))
+          : and(eq(weeks.curriculumRevisionId, latestPublished.id), eq(weeks.isPublished, true), eq(weeks.isArchived, false));
+      } else {
+        condition = includeAll ? eq(weeks.isArchived, false) : and(eq(weeks.isPublished, true), eq(weeks.isArchived, false));
+      }
+    }
+
+    const rawWeeks = await db.select().from(weeks).where(condition).orderBy(weeks.weekNumber);
+
+    // Deduplicate by weekNumber when merging revision + legacy cohort weeks (prefer revision-bound row)
+    const dedupedByNumber = new Map<number, (typeof rawWeeks)[number]>();
+    for (const w of rawWeeks) {
+      const existing = dedupedByNumber.get(w.weekNumber);
+      if (!existing || (resolvedRevId && w.curriculumRevisionId === resolvedRevId && existing.curriculumRevisionId !== resolvedRevId)) {
+        dedupedByNumber.set(w.weekNumber, w);
+      }
+    }
+    const orderedWeeks = Array.from(dedupedByNumber.values()).sort((a, b) => a.weekNumber - b.weekNumber);
+    const allWeeks = isUuidStr(cohortId)
+      ? await overlayCohortSchedules(orderedWeeks, cohortId)
+      : orderedWeeks;
 
     if (!allWeeks || allWeeks.length === 0) {
       return res.json([]);
@@ -733,8 +812,13 @@ weeksRouter.get("/:id", async (req: Request, res: Response) => {
 
 // POST /lms/weeks
 weeksRouter.post("/", async (req: Request, res: Response) => {
+  if (!isMasterCurriculumAdmin(req)) {
+    return res.status(403).json({ error: "Forbidden. Only administrators can modify the master curriculum." });
+  }
   const schema = z.object({
-    cohortId: z.string().uuid(),
+    cohortId: z.string().uuid().optional(),
+    curriculumRevisionId: z.string().uuid().optional(),
+    moduleId: z.string().uuid().nullable().optional(),
     title: z.string().min(1),
     description: z.string().optional(),
     weekNumber: z.number().int().positive(),
@@ -746,8 +830,16 @@ weeksRouter.post("/", async (req: Request, res: Response) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
+    let targetRevId = parsed.data.curriculumRevisionId || null;
+    if (!targetRevId) {
+      const latestPub = await getLatestPublishedRevision();
+      targetRevId = latestPub?.id || null;
+    }
+
     const values = {
       ...parsed.data,
+      cohortId: parsed.data.cohortId || "00000000-0000-0000-0000-000000000000",
+      curriculumRevisionId: targetRevId,
       unlockDate: parsed.data.unlockDate ? new Date(parsed.data.unlockDate) : null,
     };
     const [week] = await db.insert(weeks).values(values).returning();
@@ -759,6 +851,9 @@ weeksRouter.post("/", async (req: Request, res: Response) => {
 
 // PATCH /lms/weeks/:id
 weeksRouter.patch("/:id", async (req: Request, res: Response) => {
+  if (!isMasterCurriculumAdmin(req)) {
+    return res.status(403).json({ error: "Forbidden. Only administrators can modify the master curriculum." });
+  }
   const schema = z.object({
     cohortId: z.string().uuid().optional(),
     title: z.string().min(1).optional(),

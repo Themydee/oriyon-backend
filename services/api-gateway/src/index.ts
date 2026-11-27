@@ -1348,6 +1348,16 @@ app.patch(
 );
 
 // ─────────────────────────────────────────────
+// LMS — Master Curriculum & Cohort Schedules
+// ─────────────────────────────────────────────
+app.use(
+  "/api/lms/curriculum",
+  authenticate,
+  keepPath,
+  createProxyMiddleware({ target: LMS_SERVICE_URL, changeOrigin: true }),
+);
+
+// ─────────────────────────────────────────────
 // LMS — lessons
 // ─────────────────────────────────────────────
 app.get(

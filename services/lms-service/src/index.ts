@@ -20,6 +20,7 @@ import {
   readingsRouter,
   trainerReportsRouter,
 } from "./routes/lms";
+import { masterCurriculumRouter } from "./routes/masterCurriculum";
 import statsRouter from "./routes/stats";
 import communityRouter from "./routes/community";
 import { progress, lessons, weeks } from "./db/schema";
@@ -62,6 +63,7 @@ app.use("/lms/practical", practicalRouter);
 app.use("/lms/appeals", appealsRouter);
 app.use("/lms/readings", readingsRouter);
 app.use("/lms/trainer-reports", trainerReportsRouter);
+app.use("/lms/curriculum", masterCurriculumRouter);
 app.use("/lms/community", communityRouter);
 app.use("/api/lms/quizzes", quizzesRouter);
 app.use("/api/lms/exams", examsRouter);
@@ -76,6 +78,7 @@ app.use("/api/lms/practical", practicalRouter);
 app.use("/api/lms/appeals", appealsRouter);
 app.use("/api/lms/readings", readingsRouter);
 app.use("/api/lms/trainer-reports", trainerReportsRouter);
+app.use("/api/lms/curriculum", masterCurriculumRouter);
 app.use("/api/lms/community", communityRouter);    
 
 async function setupConsumers() {
